@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hmac
 import logging
+import os
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -30,6 +32,8 @@ from services import (
 from services import ensure_default_users
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rail_dashboard.api")
+
+SYNC_SECRET = os.getenv("SYNC_SECRET", "")
 
 
 app = FastAPI(title="Rail Dashboard API")
@@ -87,7 +91,22 @@ def health() -> dict[str, object]:
 
 
 @app.post("/api/sync")
-def sync(_: User = Depends(require_roles("admin", "editor"))) -> dict[str, object]:
+def sync(request: Request, _: User = Depends(require_roles("admin", "editor"))) -> dict[str, object]:
+    try:
+        return envelope(rebuild_db(), "synchronized")
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/internal/sync")
+def internal_sync(request: Request) -> dict[str, object]:
+    if not SYNC_SECRET:
+        raise HTTPException(status_code=500, detail="SYNC_SECRET is not configured")
+
+    provided = request.headers.get("x-sync-secret", "")
+    if not provided or not hmac.compare_digest(provided, SYNC_SECRET):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
     try:
         return envelope(rebuild_db(), "synchronized")
     except Exception as exc:  # pragma: no cover
