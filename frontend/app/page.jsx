@@ -15,7 +15,8 @@ import {
   Wrench,
 } from "lucide-react";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL;
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://sbcnav.onrender.com";
+const SYNC_TOKEN = process.env.NEXT_PUBLIC_SYNC_TOKEN || "";
 
 const money = (value) => `INR ${Number(value || 0).toLocaleString("en-IN")}`;
 const pretty = (value) => (value === null || value === undefined || value === "" ? "NA" : String(value));
@@ -258,7 +259,20 @@ export default function Page() {
     setLoading(true);
     setSyncStatus("Syncing from Google Sheets...");
     try {
-      await fetch(`${API_URL}/api/sync`, { method: "POST" });
+      if (SYNC_TOKEN) {
+        const syncResponse = await fetch(`${API_URL}/api/sync`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${SYNC_TOKEN}`,
+          },
+        });
+        if (!syncResponse.ok) {
+          const syncJson = await syncResponse.json().catch(() => null);
+          throw new Error(syncJson?.message || `Sync failed: ${syncResponse.status}`);
+        }
+      } else {
+        setSyncStatus("Sync skipped: no sync token configured");
+      }
 
       const [statsData, stationsData, unitsData, earningsData, worksData] =
         await Promise.all([
@@ -274,9 +288,9 @@ export default function Page() {
       setEarnings(earningsData.items || []);
       setWorks(worksData.items || []);
       setLastSyncAt(new Date().toLocaleString());
-      setSyncStatus("Synced successfully");
+      setSyncStatus(SYNC_TOKEN ? "Synced successfully" : "Loaded data without sync token");
     } catch (error) {
-      setSyncStatus(error.message);
+      setSyncStatus(error?.message || "Sync failed");
     } finally {
       setLoading(false);
     }
