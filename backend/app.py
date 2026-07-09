@@ -35,7 +35,13 @@ logger = logging.getLogger("rail_dashboard.api")
 app = FastAPI(title="Rail Dashboard API")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:3000", "http://localhost:3000", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://127.0.0.1:3000", 
+        "http://localhost:3000", 
+        "http://127.0.0.1:5173",
+      # Vercel
+        "https://sbcnav.vercel.app",   # your production domain (if used)
+        "https://sbcnav-38t2-2doxwtr6h-anil-b-hs-projects.vercel.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
