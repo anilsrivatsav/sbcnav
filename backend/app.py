@@ -7,12 +7,9 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from auth import get_current_user, get_token_payload, require_roles
 from database import SessionLocal, engine, is_sqlite_fallback
 from models import Base
-from models import User
 from api_utils import envelope, exception_response, filter_search, paginate, sort_items
-from schemas import LoginRequest
 from services import (
     earnings_sort_map,
     get_stats,
@@ -20,13 +17,10 @@ from services import (
     list_stations,
     list_units,
     list_works,
-    login_user,
     rebuild_db,
-    revoke_session,
     station_sort_map,
     unit_sort_map,
     work_sort_map,
-    ensure_default_users,
 )
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rail_dashboard.api")
@@ -66,13 +60,6 @@ async def http_exception_handler(_: Request, exc: HTTPException):
 def startup() -> None:
     Base.metadata.create_all(bind=engine)
 
-    session = SessionLocal()
-    try:
-        with session.begin():
-            ensure_default_users(session)
-    finally:
-        session.close()
-
     if is_sqlite_fallback():
         logger.info("SQLite fallback detected; local cache available.")
     else:
@@ -82,30 +69,6 @@ def startup() -> None:
 @app.get("/api/health")
 def health() -> dict[str, object]:
     return envelope({"status": "ok"}, "ok")
-
-
-@app.post("/api/auth/login")
-def auth_login(payload: LoginRequest):
-    session = SessionLocal()
-    try:
-        with session.begin():
-            token, role = login_user(session, payload.username, payload.password)
-        return envelope({"access_token": token, "token_type": "bearer", "role": role}, "login successful")
-    except ValueError as exc:
-        raise HTTPException(status_code=401, detail=str(exc)) from exc
-    finally:
-        session.close()
-
-
-@app.post("/api/auth/logout")
-def auth_logout(payload: dict = Depends(get_token_payload)):
-    session = SessionLocal()
-    try:
-        with session.begin():
-            revoke_session(session, int(payload["sid"]))
-        return envelope({"status": "ok"}, "logout successful")
-    finally:
-        session.close()
 
 
 @app.get("/api/stats")

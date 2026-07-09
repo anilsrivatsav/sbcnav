@@ -11,22 +11,13 @@ from typing import Any
 import requests
 from sqlalchemy import func, select
 
-from auth import create_access_token, hash_password, verify_password
 from database import SessionLocal
-from models import AuthSession, Earning, EarningLink, Station, SyncRun, Unit, User, Work, WorkLink
+from models import Earning, EarningLink, Station, SyncRun, Unit, Work, WorkLink
 
 STATIONS_SHEET = "1UdRgQQPEkak1fUTuVH7jIn5R4sE3szAhM4VZJOdFIOU"
 WORKS_SHEET = "1rJbfhcnEVuGMwGkT8yBObb9Bk5Hx0uU224EGxfplGRc"
 WORKS_GID = "590791228"
 EARNINGS_GID = "1453342147"
-
-DEFAULT_ADMIN_USERNAME = os.getenv("DEFAULT_ADMIN_USERNAME", "admin")
-DEFAULT_ADMIN_PASSWORD = os.getenv("DEFAULT_ADMIN_PASSWORD", "admin123")
-DEFAULT_EDITOR_USERNAME = os.getenv("DEFAULT_EDITOR_USERNAME", "editor")
-DEFAULT_EDITOR_PASSWORD = os.getenv("DEFAULT_EDITOR_PASSWORD", "editor123")
-DEFAULT_VIEWER_USERNAME = os.getenv("DEFAULT_VIEWER_USERNAME", "viewer")
-DEFAULT_VIEWER_PASSWORD = os.getenv("DEFAULT_VIEWER_PASSWORD", "viewer123")
-
 
 def clean(value: Any) -> str:
     text = "" if value is None else str(value).strip()
@@ -349,37 +340,6 @@ def rebuild_db() -> dict[str, int]:
         session.close()
 
     return {"stations": len(stations), "units": len(units), "works": len(works), "earnings": len(earnings), "links": len(links) + len(earning_links)}
-
-
-def ensure_default_users(session) -> None:
-    defaults = [
-        (DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD, "admin"),
-        (DEFAULT_EDITOR_USERNAME, DEFAULT_EDITOR_PASSWORD, "editor"),
-        (DEFAULT_VIEWER_USERNAME, DEFAULT_VIEWER_PASSWORD, "viewer"),
-    ]
-    for username, password, role in defaults:
-        exists_user = session.execute(select(User.id).where(User.username == username)).scalar_one_or_none()
-        if not exists_user:
-            session.add(User(username=username, password_hash=hash_password(password), role=role, is_active=True))
-
-
-def login_user(session, username: str, password: str) -> tuple[str, str]:
-    user = session.execute(select(User).where(User.username == username, User.is_active.is_(True))).scalar_one_or_none()
-    if not user or not verify_password(password, user.password_hash):
-        raise ValueError("Invalid username or password")
-    token_jti = hashlib.sha256(f"{username}:{datetime.now(timezone.utc).timestamp()}".encode()).hexdigest()
-    auth_session = AuthSession(user_id=user.id, token_jti=token_jti)
-    session.add(auth_session)
-    session.flush()
-    token = create_access_token(subject=user.username, role=user.role, session_id=auth_session.id)
-    return token, user.role
-
-
-def revoke_session(session, session_id: int) -> None:
-    auth_session = session.get(AuthSession, session_id)
-    if auth_session:
-        auth_session.revoked_at = datetime.now(timezone.utc)
-        session.add(auth_session)
 
 
 def row_to_dict(row) -> dict[str, Any]:
