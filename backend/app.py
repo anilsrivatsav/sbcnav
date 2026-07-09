@@ -6,7 +6,6 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-
 from database import SessionLocal, engine, is_sqlite_fallback
 from models import Base
 from api_utils import envelope, exception_response, filter_search, paginate, sort_items
@@ -74,13 +73,12 @@ def health() -> dict[str, object]:
 import traceback
 
 @app.post("/api/sync")
-def sync(_: User = Depends(require_roles("admin", "editor"))):
+def sync():
     try:
         return envelope(rebuild_db(), "synchronized")
     except Exception as exc:
         logger.exception("SYNC FAILED")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/api/stats")
