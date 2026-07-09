@@ -15,7 +15,7 @@ import {
   Wrench,
 } from "lucide-react";
 
-const API = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+const API = process.env.NEXT_PUBLIC_API_BASE_URL || "http://sbcnav.onrender.com";
 
 const money = (value) => `INR ${Number(value || 0).toLocaleString("en-IN")}`;
 const pretty = (value) => (value === null || value === undefined || value === "" ? "NA" : String(value));
