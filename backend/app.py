@@ -62,14 +62,22 @@ async def request_logger(request: Request, call_next):
 async def http_exception_handler(_: Request, exc: HTTPException):
     return JSONResponse(status_code=exc.status_code, content=envelope(None, exc.detail, False))
 
+from services import ensure_default_users
 
 @app.on_event("startup")
-def startup() -> None:
+def startup():
     Base.metadata.create_all(bind=engine)
+
+    session = SessionLocal()
+
+    try:
+        with session.begin():
+            ensure_default_users(session)
+    finally:
+        session.close()
+
     if is_sqlite_fallback():
-        logger.info("SQLite fallback detected; local cache available.")
-    else:
-        logger.info("API startup complete; Google Sheets sync is manual.")
+        logger.info("SQLite fallback detected.")
 
 
 @app.get("/api/health")

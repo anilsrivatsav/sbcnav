@@ -149,9 +149,8 @@ function NavButton({ active, icon: Icon, label, hint, onClick }) {
     <button
       type="button"
       onClick={onClick}
-      className={`flex w-full items-start gap-3 rounded-xl border px-3 py-3 text-left transition ${
-        active ? "border-accent bg-accentSoft text-accent-strong" : "border-line bg-white text-ink hover:border-accent"
-      }`}
+      className={`flex w-full items-start gap-3 rounded-xl border px-3 py-3 text-left transition ${active ? "border-accent bg-accentSoft text-accent-strong" : "border-line bg-white text-ink hover:border-accent"
+        }`}
     >
       <Icon size={17} className="mt-0.5 shrink-0" />
       <span className="min-w-0">
@@ -259,14 +258,16 @@ export default function Page() {
     setLoading(true);
     setSyncStatus("Syncing from Google Sheets...");
     try {
-      await fetch(`${API}/api/sync`, { method: "POST" });
-      const [statsData, stationsData, unitsData, earningsData, worksData] = await Promise.all([
-        fetchJson(`${API}/api/stats`),
-        fetchJson(`${API}/api/stations?page=1&page_size=5000&sort_by=station_name`),
-        fetchJson(`${API}/api/units?page=1&page_size=5000&sort_by=unit_no`),
-        fetchJson(`${API}/api/earnings?page=1&page_size=5000&sort_by=date_of_receipt&sort_order=desc`),
-        fetchJson(`${API}/api/works?page=1&page_size=5000&sort_by=project_id`),
-      ]);
+      await fetch(`${API_URL}/api/sync`, { method: "POST" });
+
+      const [statsData, stationsData, unitsData, earningsData, worksData] =
+        await Promise.all([
+          fetchJson(`${API_URL}/api/stats`),
+          fetchJson(`${API_URL}/api/stations?page=1&page_size=5000&sort_by=station_name`),
+          fetchJson(`${API_URL}/api/units?page=1&page_size=5000&sort_by=unit_no`),
+          fetchJson(`${API_URL}/api/earnings?page=1&page_size=5000&sort_by=date_of_receipt&sort_order=desc`),
+          fetchJson(`${API_URL}/api/works?page=1&page_size=5000&sort_by=project_id`)
+        ]);
       setStats(statsData);
       setStations(stationsData.items || []);
       setUnits(unitsData.items || []);

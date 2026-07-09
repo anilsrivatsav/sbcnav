@@ -49,9 +49,13 @@ def normalize(text: str) -> str:
 
 def fetch_csv(sheet_id: str, query: str) -> str:
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&{query}"
-    response = requests.get(url, timeout=90)
-    response.raise_for_status()
-    return response.text
+
+    try:
+        response = requests.get(url, timeout=90)
+        response.raise_for_status()
+        return response.text
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Unable to fetch Google Sheet: {sheet_id}") from exc
 
 
 def parse_csv(text: str) -> list[list[str]]:
@@ -284,7 +288,7 @@ def rebuild_db() -> dict[str, int]:
 
     try:
         with session.begin():
-            ensure_default_users(session)
+           
             station_rows = [{**row, **audit_fields(now), "source_hash": hash_row("station", row)} for row in stations]
             unit_rows = [{**row, **audit_fields(now), "source_hash": hash_row("unit", row)} for row in units]
             work_rows = [{**row, **audit_fields(now), "source_hash": hash_row("work", row)} for row in works]
