@@ -71,12 +71,16 @@ def health() -> dict[str, object]:
     return envelope({"status": "ok"}, "ok")
 
 
+import traceback
+
 @app.post("/api/sync")
-def sync() -> dict[str, object]:
+def sync(_: User = Depends(require_roles("admin", "editor"))):
     try:
         return envelope(rebuild_db(), "synchronized")
-    except Exception as exc:  # pragma: no cover
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("SYNC FAILED")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.get("/api/stats")
