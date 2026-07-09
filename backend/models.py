@@ -120,8 +120,8 @@ class Earning(Base, AuditMixin):
     receipt_key: Mapped[str] = mapped_column(String(128), index=True)
     sl_no: Mapped[int | None] = mapped_column(Integer)
     date_of_receipt: Mapped[str | None] = mapped_column(Text, index=True)
-    unit_no = Column(
-    String,
+    unit_no: Mapped[str | None] = mapped_column(
+    String(50),
     nullable=True,
     index=True,
 )
