@@ -27,7 +27,7 @@ from services import (
     unit_sort_map,
     work_sort_map,
 )
-
+from services import ensure_default_users
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rail_dashboard.api")
 
@@ -65,11 +65,10 @@ async def http_exception_handler(_: Request, exc: HTTPException):
 from services import ensure_default_users
 
 @app.on_event("startup")
-def startup():
+def startup() -> None:
     Base.metadata.create_all(bind=engine)
 
     session = SessionLocal()
-
     try:
         with session.begin():
             ensure_default_users(session)
@@ -77,7 +76,9 @@ def startup():
         session.close()
 
     if is_sqlite_fallback():
-        logger.info("SQLite fallback detected.")
+        logger.info("SQLite fallback detected; local cache available.")
+    else:
+        logger.info("API startup complete.")
 
 
 @app.get("/api/health")
