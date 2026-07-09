@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Station Finder</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Railway dashboard</p>
+          <h1 id="app-title">Station and catering intelligence</h1>
+          <p class="hero-copy">Search stations, inspect units, and switch between operating views from one place.</p>
+        </div>
+        <div class="hero-status">
+          <div class="count-pill" id="resultCount">0</div>
+          <button id="syncButton" class="sync-button" type="button">Fetch latest data</button>
+          <p id="syncStatus">Using local starter data</p>
+        </div>
+      </header>
+
+      <div class="dashboard-shell">
+        <aside class="side-nav" aria-label="Dashboard navigation">
+          <button class="nav-item is-active" type="button" data-view="stations">Stations</button>
+          <button class="nav-item" type="button" data-view="units">Catering units</button>
+          <button class="nav-item" type="button" data-view="works">Sanctioned works</button>
+        </aside>
+
+        <section class="search-panel" aria-labelledby="app-title">
+          <div class="title-row">
+            <div>
+              <p class="eyebrow" id="viewEyebrow">Station database</p>
+              <h2 id="viewTitle">Find stations</h2>
+              <p class="hero-copy" id="viewHint"></p>
+            </div>
+          </div>
+
+          <label class="search-box" for="searchInput">
+            <span class="search-icon" aria-hidden="true"></span>
+            <input id="searchInput" type="search" autocomplete="off" placeholder="Search code, name, section, category..." />
+          </label>
+
+          <div class="filter-grid">
+            <label>
+              <span id="categoryLabel">Category</span>
+              <select id="categoryFilter"></select>
+            </label>
+            <label>
+              <span id="divisionLabel">Division</span>
+              <select id="divisionFilter"></select>
+            </label>
+            <label>
+              <span id="sectionLabel">Section</span>
+              <select id="sectionFilter"></select>
+            </label>
+            <label>
+              <span id="platformLabel">Platform</span>
+              <select id="platformFilter"></select>
+            </label>
+          </div>
+
+          <div class="quick-chips" id="categoryChips" aria-label="Quick category filters"></div>
+        </section>
+      </div>
+
+      <section class="content-grid">
+        <aside class="summary-strip" aria-label="Dashboard summary">
+          <div>
+            <span id="totalStations">0</span>
+            <p>Stations</p>
+          </div>
+          <div>
+            <span id="totalCategories">0</span>
+            <p>Categories</p>
+          </div>
+          <div>
+            <span id="totalUnits">0</span>
+            <p>Units</p>
+          </div>
+          <div>
+            <span id="totalFootfall">0</span>
+            <p>Footfall</p>
+          </div>
+        </aside>
+
+        <section class="results-panel" aria-live="polite">
+          <div class="results-toolbar">
+            <h2 id="resultsTitle">Results</h2>
+            <select id="sortSelect" aria-label="Sort results">
+              <option value="name">Name</option>
+              <option value="code">Code</option>
+              <option value="footfall">Footfall</option>
+              <option value="platforms">Platforms</option>
+            </select>
+          </div>
+          <div id="results" class="results-list"></div>
+          <div id="emptyState" class="empty-state" hidden>
+            <h3>No results found</h3>
+            <p>Try a station code, category, section, division, or unit field.</p>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <dialog id="stationDialog">
+      <div class="dialog-head">
+        <div>
+          <p id="dialogCode" class="eyebrow"></p>
+          <h2 id="dialogTitle"></h2>
+        </div>
+        <button id="closeDialog" class="icon-button" type="button" aria-label="Close details"></button>
+      </div>
+      <div id="dialogDetails" class="detail-grid"></div>
+    </dialog>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
