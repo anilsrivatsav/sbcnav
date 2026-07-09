@@ -71,6 +71,14 @@ def health() -> dict[str, object]:
     return envelope({"status": "ok"}, "ok")
 
 
+@app.post("/api/sync")
+def sync() -> dict[str, object]:
+    try:
+        return envelope(rebuild_db(), "synchronized")
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @app.get("/api/stats")
 def stats():
     return envelope(get_stats(), "ok")

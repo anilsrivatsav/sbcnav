@@ -256,8 +256,14 @@ export default function Page() {
 
   const loadData = async () => {
     setLoading(true);
-    setSyncStatus("Refreshing data...");
+    setSyncStatus("Syncing from Google Sheets...");
     try {
+      const syncResponse = await fetch(`${API_URL}/api/sync`, { method: "POST" });
+      if (!syncResponse.ok) {
+        const syncJson = await syncResponse.json().catch(() => null);
+        throw new Error(syncJson?.message || `Sync failed: ${syncResponse.status}`);
+      }
+
       const [statsData, stationsData, unitsData, earningsData, worksData] =
         await Promise.all([
           fetchJson(`${API_URL}/api/stats`),
@@ -272,9 +278,9 @@ export default function Page() {
       setEarnings(earningsData.items || []);
       setWorks(worksData.items || []);
       setLastSyncAt(new Date().toLocaleString());
-      setSyncStatus("Data refreshed successfully");
+      setSyncStatus("Synced successfully");
     } catch (error) {
-      setSyncStatus(error?.message || "Refresh failed");
+      setSyncStatus(error?.message || "Sync failed");
     } finally {
       setLoading(false);
     }
