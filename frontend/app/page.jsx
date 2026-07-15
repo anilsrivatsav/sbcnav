@@ -5,10 +5,13 @@ import {
   BarChart3,
   CircleAlert,
   ChevronRight,
+  Pencil,
+  Plus,
   RefreshCw,
   Search,
   TrainFront,
   TrendingUp,
+  Trash2,
   Users,
   Wallet,
   X,
@@ -230,7 +233,108 @@ function KeyValueGrid({ rows }) {
   );
 }
 
+function RecordForm({ fields, value, onChange, onSubmit, onCancel, saving, mode }) {
+  return (
+    <form onSubmit={onSubmit} className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-2">
+        {fields.map((field) => (
+          <label key={field.name} className="grid gap-1">
+            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-muted">{field.label}</span>
+            <input
+              type={field.type || "text"}
+              value={value[field.name] ?? ""}
+              onChange={(event) => onChange({ ...value, [field.name]: event.target.value })}
+              disabled={field.readOnly && mode === "edit"}
+              required={field.required}
+              className="h-11 rounded-xl border border-line bg-white px-3 text-sm outline-none disabled:bg-slate-100 disabled:text-muted focus:border-accent"
+            />
+          </label>
+        ))}
+      </div>
+      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        <button type="button" onClick={onCancel} className="rounded-xl border border-line bg-white px-4 py-2 text-sm font-bold text-ink">
+          Cancel
+        </button>
+        <button type="submit" disabled={saving} className="rounded-xl bg-accent px-4 py-2 text-sm font-bold text-white disabled:opacity-70">
+          {saving ? "Saving..." : "Save"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function DetailActions({ onEdit, onDelete, saving }) {
+  return (
+    <div className="flex flex-wrap justify-end gap-2">
+      <button type="button" onClick={onEdit} className="inline-flex items-center gap-2 rounded-xl border border-line bg-white px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-ink">
+        <Pencil size={14} />
+        Edit
+      </button>
+      <button type="button" onClick={onDelete} disabled={saving} className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-red-700 disabled:opacity-60">
+        <Trash2 size={14} />
+        Delete
+      </button>
+    </div>
+  );
+}
+
 export default function Page() {
+  const crudFields = {
+    stations: [
+      { name: "station_code", label: "Station Code", required: true, readOnly: true },
+      { name: "station_name", label: "Station Name", required: true },
+      { name: "division", label: "Division" },
+      { name: "zone", label: "Zone" },
+      { name: "section", label: "Section" },
+      { name: "categorisation", label: "Category" },
+      { name: "platform_type", label: "Platform Type" },
+      { name: "passenger_footfall", label: "Passenger Footfall", type: "number" },
+      { name: "earnings_per_day", label: "Earnings Per Day", type: "number" },
+      { name: "footfalls_per_day", label: "Footfalls Per Day", type: "number" },
+    ],
+    units: [
+      { name: "unit_no", label: "Unit No.", required: true, readOnly: true },
+      { name: "station_code", label: "Station Code" },
+      { name: "type_of_unit", label: "Type of Unit" },
+      { name: "station_category", label: "Station Category" },
+      { name: "licensee_name", label: "Licensee Name" },
+      { name: "license_fee", label: "License Fee" },
+      { name: "unit_status", label: "Unit Status" },
+      { name: "contract_from", label: "Contract From" },
+      { name: "contract_to", label: "Contract To" },
+      { name: "pf_no", label: "PF No." },
+    ],
+    earnings: [
+      { name: "receipt_key", label: "Receipt Key", readOnly: true },
+      { name: "unit_no", label: "Unit No.", required: true },
+      { name: "station_code", label: "Station Code" },
+      { name: "licensee_name", label: "Licensee Name" },
+      { name: "date_of_receipt", label: "Date of Receipt" },
+      { name: "payment_head", label: "Payment Head" },
+      { name: "payment_sub_head", label: "Payment Sub-head" },
+      { name: "amount", label: "Amount", type: "number" },
+      { name: "gst", label: "GST", type: "number" },
+      { name: "receipt_type", label: "Receipt Type" },
+      { name: "mr_no", label: "MR No." },
+      { name: "mr_date", label: "MR Date" },
+    ],
+    works: [
+      { name: "project_id", label: "Project ID", required: true, readOnly: true },
+      { name: "short_name_of_work", label: "Short Name of Work", required: true },
+      { name: "status", label: "Status" },
+      { name: "date_of_sanction", label: "Date of Sanction" },
+      { name: "block_section_station", label: "Block Section Station" },
+      { name: "section", label: "Section" },
+      { name: "allocation", label: "Allocation" },
+      { name: "anticipated_expenditure", label: "Anticipated Expenditure", type: "number" },
+      { name: "remarks", label: "Remarks" },
+      { name: "engg_remarks", label: "Engineering Remarks" },
+    ],
+  };
+
+  const resourcePath = { stations: "stations", units: "units", earnings: "earnings", works: "works" };
+  const keyField = { stations: "station_code", units: "unit_no", earnings: "receipt_key", works: "project_id" };
+
   const [stats, setStats] = useState(null);
   const [stations, setStations] = useState([]);
   const [units, setUnits] = useState([]);
@@ -238,8 +342,8 @@ export default function Page() {
   const [works, setWorks] = useState([]);
   const [view, setView] = useState("dashboard");
   const [loading, setLoading] = useState(false);
-  const [syncStatus, setSyncStatus] = useState("Ready to fetch data");
-  const [lastSyncAt, setLastSyncAt] = useState(null);
+  const [activityStatus, setActivityStatus] = useState("Ready");
+  const [lastRefreshAt, setLastRefreshAt] = useState(null);
   const [search, setSearch] = useState({ dashboard: "", stations: "", units: "", earnings: "", works: "" });
   const [filters, setFilters] = useState({
     stationCategory: "All",
@@ -253,41 +357,42 @@ export default function Page() {
     workStatus: "All",
   });
   const [modal, setModal] = useState({ open: false, type: null, record: null });
+  const [formModal, setFormModal] = useState({ open: false, type: "stations", mode: "create", data: {} });
+  const [importModal, setImportModal] = useState({ open: false, resource: "stations", csvText: "", url: "", result: null });
+  const [saving, setSaving] = useState(false);
+
+  const loadFromDb = async () => {
+    const [statsData, stationsData, unitsData, earningsData, worksData] =
+      await Promise.all([
+        fetchJson(`${API_URL}/api/stats`),
+        fetchJson(`${API_URL}/api/stations?page=1&page_size=5000&sort_by=station_name`),
+        fetchJson(`${API_URL}/api/units?page=1&page_size=5000&sort_by=unit_no`),
+        fetchJson(`${API_URL}/api/earnings?page=1&page_size=5000&sort_by=date_of_receipt&sort_order=desc`),
+        fetchJson(`${API_URL}/api/works?page=1&page_size=5000&sort_by=project_id`)
+      ]);
+    setStats(statsData);
+    setStations(stationsData.items || []);
+    setUnits(unitsData.items || []);
+    setEarnings(earningsData.items || []);
+    setWorks(worksData.items || []);
+    setLastRefreshAt(new Date().toLocaleString());
+  };
 
   const loadData = async () => {
     setLoading(true);
-    setSyncStatus("Syncing from Google Sheets...");
+    setActivityStatus("Refreshing database data...");
     try {
-      const syncResponse = await fetch(`${API_URL}/api/sync`, { method: "POST" });
-      if (!syncResponse.ok) {
-        const syncJson = await syncResponse.json().catch(() => null);
-        throw new Error(syncJson?.message || `Sync failed: ${syncResponse.status}`);
-      }
-
-      const [statsData, stationsData, unitsData, earningsData, worksData] =
-        await Promise.all([
-          fetchJson(`${API_URL}/api/stats`),
-          fetchJson(`${API_URL}/api/stations?page=1&page_size=5000&sort_by=station_name`),
-          fetchJson(`${API_URL}/api/units?page=1&page_size=5000&sort_by=unit_no`),
-          fetchJson(`${API_URL}/api/earnings?page=1&page_size=5000&sort_by=date_of_receipt&sort_order=desc`),
-          fetchJson(`${API_URL}/api/works?page=1&page_size=5000&sort_by=project_id`)
-        ]);
-      setStats(statsData);
-      setStations(stationsData.items || []);
-      setUnits(unitsData.items || []);
-      setEarnings(earningsData.items || []);
-      setWorks(worksData.items || []);
-      setLastSyncAt(new Date().toLocaleString());
-      setSyncStatus("Synced successfully");
+      await loadFromDb();
+      setActivityStatus("Data refreshed successfully");
     } catch (error) {
-      setSyncStatus(error?.message || "Sync failed");
+      setActivityStatus(error?.message || "Refresh failed");
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    setSyncStatus("Ready to fetch data");
+    setActivityStatus("Ready");
   }, []);
 
   const completedWorks = useMemo(() => works.filter((work) => /complete|done/i.test(String(work.status || ""))).length, [works]);
@@ -472,6 +577,131 @@ export default function Page() {
 
   const closeModal = () => setModal({ open: false, type: null, record: null });
 
+  const typeToView = { station: "stations", unit: "units", earning: "earnings", work: "works" };
+  const recordForType = (type) => {
+    if (type === "stations") return {};
+    if (type === "units") return {};
+    if (type === "earnings") return {};
+    if (type === "works") return {};
+    return {};
+  };
+
+  const openCreate = (type = view) => {
+    if (!crudFields[type]) return;
+    setFormModal({ open: true, type, mode: "create", data: recordForType(type) });
+  };
+
+  const openEdit = (type, data) => {
+    setFormModal({ open: true, type, mode: "edit", data: { ...data } });
+  };
+
+  const closeForm = () => setFormModal({ open: false, type: "stations", mode: "create", data: {} });
+
+  const submitForm = async (event) => {
+    event.preventDefault();
+    const type = formModal.type;
+    const key = keyField[type];
+    const path = resourcePath[type];
+    const keyValue = formModal.data[key];
+    const isEdit = formModal.mode === "edit";
+    setSaving(true);
+    try {
+      const response = await fetch(`${API_URL}/api/${path}${isEdit ? `/${encodeURIComponent(keyValue)}` : ""}`, {
+        method: isEdit ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(formModal.data),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || payload?.success === false) {
+        throw new Error(payload?.message || `Save failed: ${response.status}`);
+      }
+      closeForm();
+      closeModal();
+      await loadFromDb();
+      setActivityStatus(`${viewConfig.title} saved`);
+    } catch (error) {
+      setActivityStatus(error?.message || "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteRecord = async (type, data) => {
+    const key = keyField[type];
+    const path = resourcePath[type];
+    const keyValue = data?.[key];
+    if (!keyValue || !window.confirm(`Delete ${keyValue}?`)) return;
+    setSaving(true);
+    try {
+      const response = await fetch(`${API_URL}/api/${path}/${encodeURIComponent(keyValue)}`, { method: "DELETE" });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || payload?.success === false) {
+        throw new Error(payload?.message || `Delete failed: ${response.status}`);
+      }
+      closeModal();
+      await loadFromDb();
+      setActivityStatus(`${keyValue} deleted`);
+    } catch (error) {
+      setActivityStatus(error?.message || "Delete failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const importPayload = () => ({
+    csv_text: importModal.csvText,
+    url: importModal.url,
+  });
+
+  const validateImport = async () => {
+    setSaving(true);
+    try {
+      const response = await fetch(`${API_URL}/api/import/${importModal.resource}/validate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(importPayload()),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || payload?.success === false) {
+        throw new Error(payload?.message || payload?.detail?.message || `Validation failed: ${response.status}`);
+      }
+      setImportModal((prev) => ({ ...prev, result: payload.data }));
+      setActivityStatus(payload.data.valid ? "Import validation passed" : "Import validation found errors");
+    } catch (error) {
+      setActivityStatus(error?.message || "Validation failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const applyImport = async () => {
+    setSaving(true);
+    try {
+      const response = await fetch(`${API_URL}/api/import/${importModal.resource}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(importPayload()),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || payload?.success === false) {
+        throw new Error(typeof payload?.detail === "string" ? payload.detail : payload?.message || `Import failed: ${response.status}`);
+      }
+      setImportModal({ open: false, resource: "stations", csvText: "", url: "", result: null });
+      await loadFromDb();
+      setActivityStatus(`Imported ${payload.data.upserted} ${payload.data.resource} rows`);
+    } catch (error) {
+      setActivityStatus(error?.message || "Import failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const readCsvFile = async (file) => {
+    if (!file) return;
+    const text = await file.text();
+    setImportModal((prev) => ({ ...prev, csvText: text, url: "", result: null }));
+  };
+
   return (
     <main className="min-h-screen px-3 py-3 sm:px-4 lg:px-6">
       <section className="mx-auto grid max-w-7xl gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
@@ -488,12 +718,20 @@ export default function Page() {
           </div>
           <button type="button" onClick={loadData} disabled={loading} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-3 text-sm font-extrabold text-white shadow-soft disabled:cursor-wait disabled:opacity-70">
             <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
-            {loading ? "Fetching..." : "Fetch latest data"}
+            {loading ? "Refreshing..." : "Refresh data"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setImportModal({ open: true, resource: view === "dashboard" ? "stations" : view, csvText: "", url: "", result: null })}
+            className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-accent bg-white px-4 py-3 text-sm font-extrabold text-accent"
+          >
+            <Plus size={16} />
+            Import CSV
           </button>
           <div className="mt-4 rounded-xl border border-line bg-white p-3">
-            <div className="text-[11px] font-black uppercase tracking-[0.18em] text-muted">Sync</div>
-            <div className="mt-1 text-sm font-semibold text-ink">{syncStatus}</div>
-            <div className="mt-1 text-xs text-muted">{lastSyncAt || "No sync yet"}</div>
+            <div className="text-[11px] font-black uppercase tracking-[0.18em] text-muted">Activity</div>
+            <div className="mt-1 text-sm font-semibold text-ink">{activityStatus}</div>
+            <div className="mt-1 text-xs text-muted">{lastRefreshAt || "No refresh yet"}</div>
           </div>
         </aside>
 
@@ -553,6 +791,14 @@ export default function Page() {
           <Panel
             title={viewConfig.title}
             subtitle={view === "stations" ? "Station master with filtering and search." : view === "units" ? "Catering units linked to stations." : view === "earnings" ? "Earnings linked to units and station codes." : view === "works" ? "Sanctioned works with scope and status." : "Dashboard summary"}
+            action={
+              crudFields[view] ? (
+                <button type="button" onClick={() => openCreate(view)} className="inline-flex items-center gap-2 rounded-xl bg-accent px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-white">
+                  <Plus size={15} />
+                  Add
+                </button>
+              ) : null
+            }
           >
             <div className="mb-3 text-xs font-semibold text-muted">{view === "dashboard" ? "Summary view" : `${dashboardCount} records shown`}</div>
 
@@ -712,6 +958,11 @@ export default function Page() {
       >
         {modal.type === "station" ? (
           <div className="space-y-4">
+            <DetailActions
+              saving={saving}
+              onEdit={() => openEdit("stations", modal.record.station)}
+              onDelete={() => deleteRecord("stations", modal.record.station)}
+            />
             <KeyValueGrid
               rows={[
                 ["Station Code", modal.record.station.station_code],
@@ -768,6 +1019,11 @@ export default function Page() {
           </div>
         ) : modal.type === "unit" ? (
           <div className="space-y-4">
+            <DetailActions
+              saving={saving}
+              onEdit={() => openEdit("units", modal.record.unit)}
+              onDelete={() => deleteRecord("units", modal.record.unit)}
+            />
             <KeyValueGrid
               rows={[
                 ["Unit No.", modal.record.unit.unit_no],
@@ -797,27 +1053,39 @@ export default function Page() {
             </Panel>
           </div>
         ) : modal.type === "earning" ? (
-          <KeyValueGrid
-            rows={[
-              ["Receipt Key", modal.record.earning.receipt_key],
-              ["Unit No.", modal.record.earning.unit_no],
-              ["Station Code", modal.record.earning.station_code],
-              ["Licensee", modal.record.earning.licensee_name],
-              ["Receipt Type", modal.record.earning.receipt_type],
-              ["Payment Head", modal.record.earning.payment_head],
-              ["Payment Sub-head", modal.record.earning.payment_sub_head],
-              ["Date of Receipt", modal.record.earning.date_of_receipt],
-              ["Period From", modal.record.earning.period_from],
-              ["Period To", modal.record.earning.period_to],
-              ["Amount", money(modal.record.earning.amount)],
-              ["GST", modal.record.earning.gst],
-              ["MR No.", modal.record.earning.mr_no],
-              ["MR Date", modal.record.earning.mr_date],
-              ["UA Case", modal.record.earning.ua_case],
-            ]}
-          />
+          <div className="space-y-4">
+            <DetailActions
+              saving={saving}
+              onEdit={() => openEdit("earnings", modal.record.earning)}
+              onDelete={() => deleteRecord("earnings", modal.record.earning)}
+            />
+            <KeyValueGrid
+              rows={[
+                ["Receipt Key", modal.record.earning.receipt_key],
+                ["Unit No.", modal.record.earning.unit_no],
+                ["Station Code", modal.record.earning.station_code],
+                ["Licensee", modal.record.earning.licensee_name],
+                ["Receipt Type", modal.record.earning.receipt_type],
+                ["Payment Head", modal.record.earning.payment_head],
+                ["Payment Sub-head", modal.record.earning.payment_sub_head],
+                ["Date of Receipt", modal.record.earning.date_of_receipt],
+                ["Period From", modal.record.earning.period_from],
+                ["Period To", modal.record.earning.period_to],
+                ["Amount", money(modal.record.earning.amount)],
+                ["GST", modal.record.earning.gst],
+                ["MR No.", modal.record.earning.mr_no],
+                ["MR Date", modal.record.earning.mr_date],
+                ["UA Case", modal.record.earning.ua_case],
+              ]}
+            />
+          </div>
         ) : modal.type === "work" ? (
           <div className="space-y-4">
+            <DetailActions
+              saving={saving}
+              onEdit={() => openEdit("works", modal.record.work)}
+              onDelete={() => deleteRecord("works", modal.record.work)}
+            />
             <KeyValueGrid
               rows={[
                 ["Project ID", modal.record.work.project_id],
@@ -836,6 +1104,96 @@ export default function Page() {
             />
           </div>
         ) : null}
+      </Modal>
+      <Modal
+        open={formModal.open}
+        title={`${formModal.mode === "edit" ? "Edit" : "Add"} ${formModal.type}`}
+        subtitle="Changes are saved directly to the application database."
+        onClose={closeForm}
+      >
+        <RecordForm
+          fields={crudFields[formModal.type] || []}
+          value={formModal.data}
+          onChange={(data) => setFormModal((prev) => ({ ...prev, data }))}
+          onSubmit={submitForm}
+          onCancel={closeForm}
+          saving={saving}
+          mode={formModal.mode}
+        />
+      </Modal>
+      <Modal
+        open={importModal.open}
+        title="Import Data"
+        subtitle="Upload CSV text/file or provide a public Google Sheet CSV export URL. Validate before applying."
+        onClose={() => setImportModal({ open: false, resource: "stations", csvText: "", url: "", result: null })}
+      >
+        <div className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="grid gap-1">
+              <span className="text-[11px] font-black uppercase tracking-[0.16em] text-muted">Module</span>
+              <select
+                value={importModal.resource}
+                onChange={(event) => setImportModal((prev) => ({ ...prev, resource: event.target.value, result: null }))}
+                className="h-11 rounded-xl border border-line bg-white px-3 text-sm outline-none focus:border-accent"
+              >
+                <option value="stations">Stations</option>
+                <option value="units">Units</option>
+                <option value="works">Works</option>
+                <option value="earnings">Earnings</option>
+              </select>
+            </label>
+            <label className="grid gap-1">
+              <span className="text-[11px] font-black uppercase tracking-[0.16em] text-muted">CSV File</span>
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                onChange={(event) => readCsvFile(event.target.files?.[0])}
+                className="h-11 rounded-xl border border-line bg-white px-3 py-2 text-sm outline-none focus:border-accent"
+              />
+            </label>
+          </div>
+          <label className="grid gap-1">
+            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-muted">Google Sheet CSV URL</span>
+            <input
+              value={importModal.url}
+              onChange={(event) => setImportModal((prev) => ({ ...prev, url: event.target.value, csvText: "", result: null }))}
+              placeholder="https://docs.google.com/spreadsheets/d/.../gviz/tq?tqx=out:csv&gid=..."
+              className="h-11 rounded-xl border border-line bg-white px-3 text-sm outline-none focus:border-accent"
+            />
+          </label>
+          <label className="grid gap-1">
+            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-muted">CSV Text</span>
+            <textarea
+              value={importModal.csvText}
+              onChange={(event) => setImportModal((prev) => ({ ...prev, csvText: event.target.value, url: "", result: null }))}
+              rows={8}
+              className="rounded-xl border border-line bg-white px-3 py-2 text-sm outline-none focus:border-accent"
+            />
+          </label>
+          {importModal.result ? (
+            <div className="rounded-xl border border-line bg-white p-3 text-sm">
+              <div className="font-bold text-ink">{importModal.result.rows} rows checked - {importModal.result.valid ? "valid" : "errors found"}</div>
+              {importModal.result.errors?.length ? (
+                <div className="mt-2 max-h-32 overflow-auto text-xs text-red-700">
+                  {importModal.result.errors.map((error, index) => (
+                    <div key={`${error.row}-${error.field}-${index}`}>Row {error.row}: {error.field} - {error.message}</div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <button type="button" onClick={() => setImportModal({ open: false, resource: "stations", csvText: "", url: "", result: null })} className="rounded-xl border border-line bg-white px-4 py-2 text-sm font-bold text-ink">
+              Cancel
+            </button>
+            <button type="button" onClick={validateImport} disabled={saving} className="rounded-xl border border-accent bg-white px-4 py-2 text-sm font-bold text-accent disabled:opacity-70">
+              Validate
+            </button>
+            <button type="button" onClick={applyImport} disabled={saving || importModal.result?.valid === false} className="rounded-xl bg-accent px-4 py-2 text-sm font-bold text-white disabled:opacity-70">
+              Apply Import
+            </button>
+          </div>
+        </div>
       </Modal>
     </main>
   );

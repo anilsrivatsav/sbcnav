@@ -149,41 +149,14 @@ class EarningLink(Base):
     match_status: Mapped[str | None] = mapped_column(Text, index=True)
 
 
-class SyncRun(Base):
-    __tablename__ = "sync_runs"
+class DataChangeLog(Base):
+    __tablename__ = "data_change_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    status: Mapped[str] = mapped_column(String(32), default="running", nullable=False)
-    stations_upserted: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    units_upserted: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    works_upserted: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    earnings_upserted: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    links_upserted: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    error_message: Mapped[str | None] = mapped_column(Text)
+    resource: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    record_key: Mapped[str | None] = mapped_column(String(128), index=True)
+    action: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    source: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    details: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 
-
-class User(Base):
-    __tablename__ = "users"
-    __table_args__ = (UniqueConstraint("username", name="uq_users_username"),)
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    username: Mapped[str] = mapped_column(String(150), nullable=False, index=True)
-    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    role: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
-
-
-class AuthSession(Base):
-    __tablename__ = "auth_sessions"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    token_jti: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
-    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

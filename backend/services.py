@@ -3,21 +3,14 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
-import os
 import re
 from datetime import datetime, timezone
 from typing import Any
 
-import requests
 from sqlalchemy import func, select
 
 from database import SessionLocal
-from models import Earning, EarningLink, Station, SyncRun, Unit, Work, WorkLink
-
-STATIONS_SHEET = "1UdRgQQPEkak1fUTuVH7jIn5R4sE3szAhM4VZJOdFIOU"
-WORKS_SHEET = "1rJbfhcnEVuGMwGkT8yBObb9Bk5Hx0uU224EGxfplGRc"
-WORKS_GID = "590791228"
-EARNINGS_GID = "1453342147"
+from models import Earning, EarningLink, Station, Unit, Work, WorkLink
 
 def clean(value: Any) -> str:
     text = "" if value is None else str(value).strip()
@@ -36,17 +29,6 @@ def to_int(value: Any) -> int | None:
 
 def normalize(text: str) -> str:
     return re.sub(r"\s+", " ", clean(text).lower())
-
-
-def fetch_csv(sheet_id: str, query: str) -> str:
-    url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&{query}"
-
-    try:
-        response = requests.get(url, timeout=90)
-        response.raise_for_status()
-        return response.text
-    except requests.RequestException as exc:
-        raise RuntimeError(f"Unable to fetch Google Sheet: {sheet_id}") from exc
 
 
 def parse_csv(text: str) -> list[list[str]]:
@@ -175,7 +157,7 @@ def parse_earnings(text: str) -> list[dict[str, Any]]:
 
 def parse_works(text: str) -> list[dict[str, Any]]:
     rows = parse_csv(text)
-    header_idx = next(i for i, row in enumerate(rows) if "PROJECTID" in row)
+    header_idx = next(i for i, row in enumerate(rows) if any(normalize(cell) == "projectid" for cell in row))
     headers = [normalize(h) for h in rows[header_idx]]
     out: list[dict[str, Any]] = []
     for row in rows[header_idx + 1 :]:
@@ -242,104 +224,6 @@ def upsert_many(session, model, rows, conflict_cols, update_cols):
         session.flush()
         written += 1
     return written
-
-
-def rebuild_db() -> dict[str, int]:
-    stations = parse_stations(fetch_csv(STATIONS_SHEET, "sheet=stations"))
-    units = parse_units(fetch_csv(STATIONS_SHEET, "sheet=Units"))
-    earnings = parse_earnings(fetch_csv(STATIONS_SHEET, f"gid={EARNINGS_GID}"))
-    works = parse_works(fetch_csv(WORKS_SHEET, f"gid={WORKS_GID}"))
-
-    station_codes = {row["station_code"] for row in stations}
-    unit_codes = {row["unit_no"] for row in units}
-
-    links: list[dict[str, Any]] = []
-    for work in works:
-        scopes = split_scopes(work.get("block_section_station", ""))
-        if not scopes:
-            links.append({"project_id": work["project_id"], "scope_type": "Other", "scope_value": work.get("block_section_station", ""), "station_code": None, "match_status": "Unparsed"})
-            continue
-        for scope in scopes:
-            if scope["scope_type"] == "Station":
-                codes = [code.strip() for code in re.split(r"\s*&\s*|,\s*|\s+AND\s+", scope["scope_value"], flags=re.I) if code.strip()]
-                for code in codes or [scope["scope_value"]]:
-                    links.append({"project_id": work["project_id"], "scope_type": "Station", "scope_value": code, "station_code": code, "match_status": "Matched" if code in station_codes else "Missing station"})
-            else:
-                links.append({"project_id": work["project_id"], "scope_type": scope["scope_type"], "scope_value": scope["scope_value"], "station_code": None, "match_status": scope["scope_type"]})
-
-    earning_links = []
-    for earning in earnings:
-        earning_links.append({"receipt_key": earning["receipt_key"], "unit_no": earning.get("unit_no"), "station_code": earning.get("station_code", ""), "match_status": "Matched" if earning.get("unit_no") in unit_codes else "Missing unit"})
-
-    now = datetime.now(timezone.utc)
-    session = SessionLocal()
-    sync_run = SyncRun(started_at=now, status="running")
-    session.add(sync_run)
-    session.commit()
-
-    try:
-        with session.begin():
-           
-            station_rows = [{**row, **audit_fields(now), "source_hash": hash_row("station", row)} for row in stations]
-            unit_rows = [{**row, **audit_fields(now), "source_hash": hash_row("unit", row)} for row in units]
-            work_rows = [{**row, **audit_fields(now), "source_hash": hash_row("work", row)} for row in works]
-            earning_rows = [{**row, **audit_fields(now), "source_hash": hash_row("earning", row)} for row in earnings]
-            stations_count = upsert_many(
-                session,
-                Station,
-                station_rows,
-                [Station.station_code],
-                [c.name for c in Station.__table__.columns if c.name not in {"station_code", "created_at", "first_seen_at"}],
-            )
-            units_count = upsert_many(
-                session,
-                Unit,
-                unit_rows,
-                [Unit.unit_no],
-                [c.name for c in Unit.__table__.columns if c.name not in {"unit_no", "created_at", "first_seen_at"}],
-            )
-            works_count = upsert_many(
-                session,
-                Work,
-                work_rows,
-                [Work.project_id],
-                [c.name for c in Work.__table__.columns if c.name not in {"work_key", "project_id", "created_at", "first_seen_at"}],
-            )
-            earnings_count = upsert_many(
-                session,
-                Earning,
-                earning_rows,
-                [Earning.receipt_key],
-                [c.name for c in Earning.__table__.columns if c.name not in {"earning_key", "receipt_key", "created_at", "first_seen_at"}],
-            )
-
-            session.query(WorkLink).delete()
-            session.query(EarningLink).delete()
-            session.bulk_insert_mappings(WorkLink, links)
-            session.bulk_insert_mappings(EarningLink, earning_links)
-
-            sync_run.status = "success"
-            sync_run.finished_at = now
-            sync_run.updated_at = now
-            sync_run.created_at = sync_run.created_at or now
-            sync_run.stations_upserted = stations_count
-            sync_run.units_upserted = units_count
-            sync_run.works_upserted = works_count
-            sync_run.earnings_upserted = earnings_count
-            sync_run.links_upserted = len(links) + len(earning_links)
-    except Exception as exc:
-        session.rollback()
-        sync_run.status = "failed"
-        sync_run.error_message = str(exc)
-        sync_run.finished_at = datetime.now(timezone.utc)
-        sync_run.updated_at = sync_run.finished_at
-        session.add(sync_run)
-        session.commit()
-        raise
-    finally:
-        session.close()
-
-    return {"stations": len(stations), "units": len(units), "works": len(works), "earnings": len(earnings), "links": len(links) + len(earning_links)}
 
 
 def row_to_dict(row) -> dict[str, Any]:

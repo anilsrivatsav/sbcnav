@@ -4,8 +4,5 @@ requests
 SQLAlchemy
 alembic
 psycopg2-binary
-python-jose[cryptography]
-passlib[bcrypt]
-python-multipart
 uvicorn[standard]
 gunicorn
