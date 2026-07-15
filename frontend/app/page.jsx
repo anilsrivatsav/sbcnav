@@ -5,13 +5,18 @@ import {
   BarChart3,
   CircleAlert,
   ChevronRight,
+  Database,
+  Home,
+  Moon,
   Pencil,
   Plus,
   RefreshCw,
   Search,
+  Sun,
   TrainFront,
   TrendingUp,
   Trash2,
+  UploadCloud,
   Users,
   Wallet,
   X,
@@ -41,7 +46,7 @@ function Card({ icon: Icon, label, value, subtext }) {
           <div className="text-[11px] font-black uppercase tracking-[0.18em] text-muted">{label}</div>
           <div className="mt-2 text-2xl font-black text-ink">{value}</div>
         </div>
-        <div className="rounded-xl bg-accentSoft p-3 text-[#0b5f59]">
+        <div className="rounded-xl bg-accentSoft p-3 text-accentStrong shadow-glow">
           <Icon size={18} />
         </div>
       </div>
@@ -88,7 +93,7 @@ function Donut({ series, totalLabel }) {
   return (
     <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-center">
       <svg viewBox="0 0 100 100" className="h-40 w-40">
-        <circle cx="50" cy="50" r="42" fill="none" stroke="#e5eef3" strokeWidth="12" />
+        <circle cx="50" cy="50" r="42" fill="none" className="stroke-line" strokeWidth="12" />
         {series.map((slice) => {
           const start = cumulative / total;
           cumulative += slice.value;
@@ -152,7 +157,7 @@ function NavButton({ active, icon: Icon, label, hint, onClick }) {
     <button
       type="button"
       onClick={onClick}
-      className={`flex w-full items-start gap-3 rounded-xl border px-3 py-3 text-left transition ${active ? "border-accent bg-accentSoft text-accent-strong" : "border-line bg-white text-ink hover:border-accent"
+      className={`flex w-full items-start gap-3 rounded-xl border px-3 py-3 text-left transition ${active ? "border-accent bg-accentSoft text-accentStrong shadow-glow" : "border-line bg-surface/80 text-ink hover:border-accent hover:bg-surfaceStrong"
         }`}
     >
       <Icon size={17} className="mt-0.5 shrink-0" />
@@ -171,7 +176,7 @@ function SearchInput({ value, onChange, placeholder = "Search current view" }) {
       <input
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-11 w-full rounded-xl border border-line bg-white pl-10 pr-3 text-sm outline-none placeholder:text-muted focus:border-accent"
+        className="h-11 w-full rounded-xl border border-line bg-surface/85 pl-10 pr-3 text-sm outline-none placeholder:text-muted focus:border-accent"
         placeholder={placeholder}
       />
     </label>
@@ -182,12 +187,40 @@ function FilterSelect({ label, value, onChange, options }) {
   return (
     <label className="grid gap-1">
       <span className="text-[11px] font-black uppercase tracking-[0.18em] text-muted">{label}</span>
-      <select value={value} onChange={(e) => onChange(e.target.value)} className="h-11 rounded-xl border border-line bg-white px-3 text-sm outline-none focus:border-accent">
+      <select value={value} onChange={(e) => onChange(e.target.value)} className="h-11 rounded-xl border border-line bg-surface/85 px-3 text-sm outline-none focus:border-accent">
         {options.map((item) => (
           <option key={item} value={item}>{item}</option>
         ))}
       </select>
     </label>
+  );
+}
+
+function Breadcrumbs({ title }) {
+  return (
+    <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-2 text-xs font-black uppercase tracking-[0.16em] text-muted">
+      <span className="inline-flex items-center gap-1 text-accent">
+        <Home size={13} />
+        Rail Dashboard
+      </span>
+      <ChevronRight size={13} />
+      <span className="text-ink">{title}</span>
+    </nav>
+  );
+}
+
+function ThemeToggle({ theme, onToggle }) {
+  const isDark = theme === "dark";
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-line bg-surface/85 px-3 text-sm font-extrabold text-ink transition hover:border-accent"
+      aria-label={`Switch to ${isDark ? "light" : "dark"} theme`}
+    >
+      {isDark ? <Sun size={16} /> : <Moon size={16} />}
+      <span>{isDark ? "Light" : "Dark"}</span>
+    </button>
   );
 }
 
@@ -203,14 +236,14 @@ function Modal({ open, title, subtitle, onClose, children }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-3">
-      <div className="max-h-[92vh] w-full max-w-5xl overflow-hidden rounded-2xl border border-line bg-[#f8fbfd] shadow-2xl">
-        <div className="flex items-start justify-between gap-4 border-b border-line bg-white px-4 py-4">
+      <div className="max-h-[92vh] w-full max-w-5xl overflow-hidden rounded-2xl border border-line bg-surfaceStrong shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-line bg-surface px-4 py-4">
           <div>
             <div className="text-[11px] font-black uppercase tracking-[0.2em] text-accent">Detail view</div>
             <h3 className="mt-1 text-xl font-black text-ink">{title}</h3>
             {subtitle ? <p className="mt-1 text-sm text-muted">{subtitle}</p> : null}
           </div>
-          <button type="button" onClick={onClose} className="rounded-full border border-line bg-white p-2 text-ink hover:border-accent">
+          <button type="button" onClick={onClose} className="rounded-full border border-line bg-surface p-2 text-ink hover:border-accent">
             <X size={18} />
           </button>
         </div>
@@ -224,7 +257,7 @@ function KeyValueGrid({ rows }) {
   return (
     <dl className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
       {rows.map(([label, value]) => (
-        <div key={label} className="rounded-xl border border-line bg-white p-3">
+        <div key={label} className="rounded-xl border border-line bg-surface p-3">
           <dt className="text-[11px] font-black uppercase tracking-[0.16em] text-muted">{label}</dt>
           <dd className="mt-1 text-sm font-semibold text-ink">{pretty(value)}</dd>
         </div>
@@ -246,13 +279,13 @@ function RecordForm({ fields, value, onChange, onSubmit, onCancel, saving, mode 
               onChange={(event) => onChange({ ...value, [field.name]: event.target.value })}
               disabled={field.readOnly && mode === "edit"}
               required={field.required}
-              className="h-11 rounded-xl border border-line bg-white px-3 text-sm outline-none disabled:bg-slate-100 disabled:text-muted focus:border-accent"
+              className="h-11 rounded-xl border border-line bg-surface px-3 text-sm outline-none disabled:bg-surfaceStrong disabled:text-muted focus:border-accent"
             />
           </label>
         ))}
       </div>
       <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-        <button type="button" onClick={onCancel} className="rounded-xl border border-line bg-white px-4 py-2 text-sm font-bold text-ink">
+        <button type="button" onClick={onCancel} className="rounded-xl border border-line bg-surface px-4 py-2 text-sm font-bold text-ink">
           Cancel
         </button>
         <button type="submit" disabled={saving} className="rounded-xl bg-accent px-4 py-2 text-sm font-bold text-white disabled:opacity-70">
@@ -266,11 +299,11 @@ function RecordForm({ fields, value, onChange, onSubmit, onCancel, saving, mode 
 function DetailActions({ onEdit, onDelete, saving }) {
   return (
     <div className="flex flex-wrap justify-end gap-2">
-      <button type="button" onClick={onEdit} className="inline-flex items-center gap-2 rounded-xl border border-line bg-white px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-ink">
+      <button type="button" onClick={onEdit} className="inline-flex items-center gap-2 rounded-xl border border-line bg-surface px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-ink">
         <Pencil size={14} />
         Edit
       </button>
-      <button type="button" onClick={onDelete} disabled={saving} className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-red-700 disabled:opacity-60">
+      <button type="button" onClick={onDelete} disabled={saving} className="inline-flex items-center gap-2 rounded-xl border border-red-300/70 bg-surface px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-red-600 disabled:opacity-60">
         <Trash2 size={14} />
         Delete
       </button>
@@ -341,6 +374,7 @@ export default function Page() {
   const [earnings, setEarnings] = useState([]);
   const [works, setWorks] = useState([]);
   const [view, setView] = useState("dashboard");
+  const [theme, setTheme] = useState("light");
   const [loading, setLoading] = useState(false);
   const [activityStatus, setActivityStatus] = useState("Ready");
   const [lastRefreshAt, setLastRefreshAt] = useState(null);
@@ -394,6 +428,20 @@ export default function Page() {
   useEffect(() => {
     setActivityStatus("Ready");
   }, []);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem("rail-dashboard-theme");
+    if (stored === "dark" || stored === "light") {
+      setTheme(stored);
+    }
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    window.localStorage.setItem("rail-dashboard-theme", theme);
+  }, [theme]);
+
+  const toggleTheme = () => setTheme((current) => (current === "dark" ? "light" : "dark"));
 
   const completedWorks = useMemo(() => works.filter((work) => /complete|done/i.test(String(work.status || ""))).length, [works]);
   const pendingWorks = useMemo(() => works.filter((work) => !/complete|done/i.test(String(work.status || ""))).length, [works]);
@@ -703,18 +751,28 @@ export default function Page() {
   };
 
   return (
-    <main className="min-h-screen px-3 py-3 sm:px-4 lg:px-6">
+    <main className="min-h-screen px-3 py-3 text-ink sm:px-4 lg:px-6">
       <section className="mx-auto grid max-w-7xl gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
-        <aside className="glass rounded-2xl border border-line p-4 shadow-soft">
-          <div className="text-xs font-black uppercase tracking-[0.22em] text-accent">Rail dashboard</div>
-          <div className="mt-2 text-xl font-black text-ink">Navigation</div>
-          <p className="mt-1 text-sm text-muted">Dashboard, stations, units, earnings, and works.</p>
+        <aside className="glass rounded-2xl border border-line p-4 shadow-soft lg:sticky lg:top-4 lg:h-[calc(100vh-2rem)] lg:overflow-auto">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-xs font-black uppercase tracking-[0.22em] text-accent">Rail dashboard</div>
+              <div className="mt-2 text-xl font-black text-ink">Navigation</div>
+              <p className="mt-1 text-sm text-muted">Stations, catering units, earnings, and works.</p>
+            </div>
+            <div className="rounded-2xl border border-line bg-surface/80 p-2 text-accent">
+              <Database size={18} />
+            </div>
+          </div>
           <div className="mt-4 space-y-2">
             <NavButton active={view === "dashboard"} icon={BarChart3} label="Dashboard" hint="KPI cards and charts" onClick={() => setView("dashboard")} />
             <NavButton active={view === "stations"} icon={TrainFront} label="Stations" hint="Station master and search" onClick={() => setView("stations")} />
             <NavButton active={view === "units"} icon={Users} label="Units" hint="Catering units linked to stations" onClick={() => setView("units")} />
             <NavButton active={view === "earnings"} icon={Wallet} label="Earnings" hint="Unit payments and dues" onClick={() => setView("earnings")} />
             <NavButton active={view === "works"} icon={Wrench} label="Works" hint="Sanctioned works and links" onClick={() => setView("works")} />
+          </div>
+          <div className="mt-4">
+            <ThemeToggle theme={theme} onToggle={toggleTheme} />
           </div>
           <button type="button" onClick={loadData} disabled={loading} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-3 text-sm font-extrabold text-white shadow-soft disabled:cursor-wait disabled:opacity-70">
             <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
@@ -723,12 +781,12 @@ export default function Page() {
           <button
             type="button"
             onClick={() => setImportModal({ open: true, resource: view === "dashboard" ? "stations" : view, csvText: "", url: "", result: null })}
-            className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-accent bg-white px-4 py-3 text-sm font-extrabold text-accent"
+            className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-accent bg-surface/85 px-4 py-3 text-sm font-extrabold text-accent hover:bg-accentSoft"
           >
-            <Plus size={16} />
+            <UploadCloud size={16} />
             Import CSV
           </button>
-          <div className="mt-4 rounded-xl border border-line bg-white p-3">
+          <div className="mt-4 rounded-xl border border-line bg-surface/80 p-3">
             <div className="text-[11px] font-black uppercase tracking-[0.18em] text-muted">Activity</div>
             <div className="mt-1 text-sm font-semibold text-ink">{activityStatus}</div>
             <div className="mt-1 text-xs text-muted">{lastRefreshAt || "No refresh yet"}</div>
@@ -739,12 +797,15 @@ export default function Page() {
           <div className="glass rounded-2xl border border-line p-5 shadow-soft">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div>
-                <div className="text-xs font-black uppercase tracking-[0.22em] text-accent">Rail dashboard</div>
+                <Breadcrumbs title={viewConfig.title} />
                 <h1 className="mt-2 text-3xl font-black tracking-tight text-ink sm:text-4xl">{viewConfig.title}</h1>
                 <p className="mt-2 max-w-3xl text-sm text-muted">{viewConfig.subtitle}</p>
               </div>
-              <div className="w-full sm:w-[360px]">
+              <div className="flex w-full flex-col gap-2 sm:w-[360px]">
                 <SearchInput value={activeSearch} onChange={setActiveSearch} placeholder={`Search ${viewConfig.title.toLowerCase()}`} />
+                <div className="text-right text-[11px] font-bold uppercase tracking-[0.14em] text-muted">
+                  {view === "dashboard" ? "Overview" : `${dashboardCount} records`}
+                </div>
               </div>
             </div>
             {viewConfig.filters.length ? (
@@ -809,7 +870,7 @@ export default function Page() {
                     key={station.station_code}
                     type="button"
                     onClick={() => openStation(station)}
-                    className="group w-full cursor-pointer rounded-xl border border-line bg-white p-4 text-left transition hover:-translate-y-0.5 hover:border-accent hover:shadow-md"
+                    className="group w-full cursor-pointer rounded-xl border border-line bg-surface/85 p-4 text-left transition hover:-translate-y-0.5 hover:border-accent hover:bg-surfaceStrong hover:shadow-md"
                     aria-label={`Open station details for ${pretty(station.station_code)}`}
                   >
                     <div className="flex items-start justify-between gap-3">
@@ -838,7 +899,7 @@ export default function Page() {
                     key={unit.unit_no}
                     type="button"
                     onClick={() => openUnit(unit)}
-                    className="group w-full cursor-pointer rounded-xl border border-line bg-white p-4 text-left transition hover:-translate-y-0.5 hover:border-accent hover:shadow-md"
+                    className="group w-full cursor-pointer rounded-xl border border-line bg-surface/85 p-4 text-left transition hover:-translate-y-0.5 hover:border-accent hover:bg-surfaceStrong hover:shadow-md"
                     aria-label={`Open unit details for ${pretty(unit.unit_no)}`}
                   >
                     <div className="flex items-start justify-between gap-3">
@@ -873,7 +934,7 @@ export default function Page() {
                       key={row.earning_key || `${row.unit_no}-${row.date_of_receipt}`}
                       type="button"
                       onClick={() => openEarning(row)}
-                      className="group w-full cursor-pointer rounded-xl border border-line bg-white p-4 text-left transition hover:-translate-y-0.5 hover:border-accent hover:shadow-md"
+                      className="group w-full cursor-pointer rounded-xl border border-line bg-surface/85 p-4 text-left transition hover:-translate-y-0.5 hover:border-accent hover:bg-surfaceStrong hover:shadow-md"
                       aria-label={`Open earnings details for ${pretty(row.unit_no)}`}
                     >
                       <div className="flex items-start justify-between gap-3">
@@ -903,13 +964,13 @@ export default function Page() {
                     key={work.project_id}
                     type="button"
                     onClick={() => openWork(work)}
-                    className="group w-full cursor-pointer rounded-xl border border-line bg-white p-4 text-left transition hover:-translate-y-0.5 hover:border-accent hover:shadow-md"
+                    className="group w-full cursor-pointer rounded-xl border border-line bg-surface/85 p-4 text-left transition hover:-translate-y-0.5 hover:border-accent hover:bg-surfaceStrong hover:shadow-md"
                     aria-label={`Open work details for ${pretty(work.project_id)}`}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <div className="text-xs font-semibold uppercase tracking-wide text-blue">{work.project_id}</div>
-                        <div className="mt-1 text-sm font-semibold text-ink">{pretty(work.short_name_of_work)}</div>
+                        <div className="mt-1 text-sm font-medium leading-snug text-ink">{pretty(work.short_name_of_work)}</div>
                       </div>
                       <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.16em] text-muted">
                         Open
@@ -979,7 +1040,7 @@ export default function Page() {
               <Panel title="Linked Units" subtitle="Units using the same station code">
                 <div className="space-y-2">
                   {modal.record.units.length ? modal.record.units.map((unit) => (
-                    <button key={unit.unit_no} type="button" onClick={() => openUnit(unit)} className="flex w-full items-start justify-between gap-3 rounded-xl border border-line bg-white px-3 py-3 text-left">
+                    <button key={unit.unit_no} type="button" onClick={() => openUnit(unit)} className="flex w-full items-start justify-between gap-3 rounded-xl border border-line bg-surface px-3 py-3 text-left hover:border-accent">
                       <div className="min-w-0">
                         <div className="text-sm font-semibold text-ink">{pretty(unit.unit_no)}</div>
                         <div className="mt-0.5 text-xs text-muted">{pretty(unit.licensee_name)}</div>
@@ -992,7 +1053,7 @@ export default function Page() {
               <Panel title="Linked Earnings" subtitle="Earnings rows matching station code">
                 <div className="space-y-2">
                   {modal.record.earnings.length ? modal.record.earnings.map((row) => (
-                    <button key={row.earning_key || `${row.unit_no}-${row.date_of_receipt}`} type="button" onClick={() => openEarning(row)} className="flex w-full items-start justify-between gap-3 rounded-xl border border-line bg-white px-3 py-3 text-left">
+                    <button key={row.earning_key || `${row.unit_no}-${row.date_of_receipt}`} type="button" onClick={() => openEarning(row)} className="flex w-full items-start justify-between gap-3 rounded-xl border border-line bg-surface px-3 py-3 text-left hover:border-accent">
                       <div className="min-w-0">
                         <div className="text-sm font-semibold text-ink">{pretty(row.unit_no)}</div>
                         <div className="mt-0.5 text-xs text-muted">{pretty(row.licensee_name)}</div>
@@ -1005,7 +1066,7 @@ export default function Page() {
               <Panel title="Linked Works" subtitle="Works mapped to this station code">
                 <div className="space-y-2">
                   {modal.record.works.length ? modal.record.works.map((work) => (
-                    <button key={work.project_id} type="button" onClick={() => openWork(work)} className="flex w-full items-start justify-between gap-3 rounded-xl border border-line bg-white px-3 py-3 text-left">
+                    <button key={work.project_id} type="button" onClick={() => openWork(work)} className="flex w-full items-start justify-between gap-3 rounded-xl border border-line bg-surface px-3 py-3 text-left hover:border-accent">
                       <div className="min-w-0">
                         <div className="text-sm font-semibold text-ink">{pretty(work.project_id)}</div>
                         <div className="mt-0.5 text-xs text-muted">{pretty(work.short_name_of_work)}</div>
@@ -1041,7 +1102,7 @@ export default function Page() {
             <Panel title="Linked Earnings" subtitle="Earnings rows linked by unit number">
               <div className="space-y-2">
                 {modal.record.earnings.length ? modal.record.earnings.map((row) => (
-                  <button key={row.earning_key || `${row.unit_no}-${row.date_of_receipt}`} type="button" onClick={() => openEarning(row)} className="flex w-full items-start justify-between gap-3 rounded-xl border border-line bg-white px-3 py-3 text-left">
+                  <button key={row.earning_key || `${row.unit_no}-${row.date_of_receipt}`} type="button" onClick={() => openEarning(row)} className="flex w-full items-start justify-between gap-3 rounded-xl border border-line bg-surface px-3 py-3 text-left hover:border-accent">
                     <div className="min-w-0">
                       <div className="text-sm font-semibold text-ink">{pretty(row.date_of_receipt)}</div>
                       <div className="mt-0.5 text-xs text-muted">{pretty(row.payment_head)} / {pretty(row.payment_sub_head)}</div>
@@ -1134,7 +1195,7 @@ export default function Page() {
               <select
                 value={importModal.resource}
                 onChange={(event) => setImportModal((prev) => ({ ...prev, resource: event.target.value, result: null }))}
-                className="h-11 rounded-xl border border-line bg-white px-3 text-sm outline-none focus:border-accent"
+                className="h-11 rounded-xl border border-line bg-surface px-3 text-sm outline-none focus:border-accent"
               >
                 <option value="stations">Stations</option>
                 <option value="units">Units</option>
@@ -1148,7 +1209,7 @@ export default function Page() {
                 type="file"
                 accept=".csv,text/csv"
                 onChange={(event) => readCsvFile(event.target.files?.[0])}
-                className="h-11 rounded-xl border border-line bg-white px-3 py-2 text-sm outline-none focus:border-accent"
+                className="h-11 rounded-xl border border-line bg-surface px-3 py-2 text-sm outline-none focus:border-accent"
               />
             </label>
           </div>
@@ -1158,7 +1219,7 @@ export default function Page() {
               value={importModal.url}
               onChange={(event) => setImportModal((prev) => ({ ...prev, url: event.target.value, csvText: "", result: null }))}
               placeholder="https://docs.google.com/spreadsheets/d/.../gviz/tq?tqx=out:csv&gid=..."
-              className="h-11 rounded-xl border border-line bg-white px-3 text-sm outline-none focus:border-accent"
+              className="h-11 rounded-xl border border-line bg-surface px-3 text-sm outline-none focus:border-accent"
             />
           </label>
           <label className="grid gap-1">
@@ -1167,11 +1228,11 @@ export default function Page() {
               value={importModal.csvText}
               onChange={(event) => setImportModal((prev) => ({ ...prev, csvText: event.target.value, url: "", result: null }))}
               rows={8}
-              className="rounded-xl border border-line bg-white px-3 py-2 text-sm outline-none focus:border-accent"
+              className="rounded-xl border border-line bg-surface px-3 py-2 text-sm outline-none focus:border-accent"
             />
           </label>
           {importModal.result ? (
-            <div className="rounded-xl border border-line bg-white p-3 text-sm">
+            <div className="rounded-xl border border-line bg-surface p-3 text-sm">
               <div className="font-bold text-ink">{importModal.result.rows} rows checked - {importModal.result.valid ? "valid" : "errors found"}</div>
               {importModal.result.errors?.length ? (
                 <div className="mt-2 max-h-32 overflow-auto text-xs text-red-700">
@@ -1183,10 +1244,10 @@ export default function Page() {
             </div>
           ) : null}
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <button type="button" onClick={() => setImportModal({ open: false, resource: "stations", csvText: "", url: "", result: null })} className="rounded-xl border border-line bg-white px-4 py-2 text-sm font-bold text-ink">
+            <button type="button" onClick={() => setImportModal({ open: false, resource: "stations", csvText: "", url: "", result: null })} className="rounded-xl border border-line bg-surface px-4 py-2 text-sm font-bold text-ink">
               Cancel
             </button>
-            <button type="button" onClick={validateImport} disabled={saving} className="rounded-xl border border-accent bg-white px-4 py-2 text-sm font-bold text-accent disabled:opacity-70">
+            <button type="button" onClick={validateImport} disabled={saving} className="rounded-xl border border-accent bg-surface px-4 py-2 text-sm font-bold text-accent disabled:opacity-70">
               Validate
             </button>
             <button type="button" onClick={applyImport} disabled={saving || importModal.result?.valid === false} className="rounded-xl bg-accent px-4 py-2 text-sm font-bold text-white disabled:opacity-70">

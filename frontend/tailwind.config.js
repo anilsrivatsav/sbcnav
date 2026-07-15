@@ -4,16 +4,20 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        ink: "#122033",
-        muted: "#667085",
-        line: "#d9e2ec",
-        page: "#eef3f7",
-        accent: "#0f766e",
-        accentSoft: "#d9f2ee",
-        blue: "#234e70",
+        ink: "rgb(var(--color-ink) / <alpha-value>)",
+        muted: "rgb(var(--color-muted) / <alpha-value>)",
+        line: "rgb(var(--color-line) / <alpha-value>)",
+        page: "rgb(var(--color-page) / <alpha-value>)",
+        surface: "rgb(var(--color-surface) / <alpha-value>)",
+        surfaceStrong: "rgb(var(--color-surface-strong) / <alpha-value>)",
+        accent: "rgb(var(--color-accent) / <alpha-value>)",
+        accentSoft: "rgb(var(--color-accent-soft) / <alpha-value>)",
+        accentStrong: "rgb(var(--color-accent-strong) / <alpha-value>)",
+        blue: "rgb(var(--color-blue) / <alpha-value>)",
       },
       boxShadow: {
-        soft: "0 18px 48px rgba(18, 32, 51, 0.12)",
+        soft: "var(--shadow-soft)",
+        glow: "var(--shadow-glow)",
       },
     },
   },

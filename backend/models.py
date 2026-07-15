@@ -120,7 +120,11 @@ class Earning(Base, AuditMixin):
     receipt_key: Mapped[str] = mapped_column(String(128), index=True)
     sl_no: Mapped[int | None] = mapped_column(Integer)
     date_of_receipt: Mapped[str | None] = mapped_column(Text, index=True)
-    unit_no: Mapped[str | None] = mapped_column(String(64), ForeignKey("units.unit_no", ondelete="SET NULL"), index=True)
+    unit_no: Mapped[str | None] = mapped_column(
+    String(50),
+    nullable=True,
+    index=True,
+)
     station_code: Mapped[str | None] = mapped_column(String(64), ForeignKey("stations.station_code", ondelete="SET NULL"), index=True)
     pf_no: Mapped[str | None] = mapped_column(Text)
     licensee_name: Mapped[str | None] = mapped_column(Text, index=True)
