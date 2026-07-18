@@ -14,10 +14,10 @@
   --color-accent-soft: 217 242 238;
   --color-accent-strong: 11 95 89;
   --color-blue: 35 78 112;
-  --shadow-soft: 0 18px 48px rgba(18, 32, 51, 0.12);
-  --shadow-glow: 0 22px 70px rgba(15, 118, 110, 0.16);
-  --glass-bg: rgba(255, 255, 255, 0.82);
-  --glass-border: rgba(217, 226, 236, 0.92);
+  --shadow-soft: 0 18px 48px rgba(18, 32, 51, 0.1);
+  --shadow-glow: 0 22px 70px rgba(15, 118, 110, 0.14);
+  --glass-bg: linear-gradient(145deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.52));
+  --glass-border: rgba(255, 255, 255, 0.9);
   --page-background:
     linear-gradient(135deg, rgba(15, 118, 110, 0.13), transparent 34%),
     linear-gradient(225deg, rgba(35, 78, 112, 0.11), transparent 42%),
@@ -36,10 +36,10 @@
   --color-accent-soft: 18 68 64;
   --color-accent-strong: 153 246 228;
   --color-blue: 147 197 253;
-  --shadow-soft: 0 22px 60px rgba(0, 0, 0, 0.34);
+  --shadow-soft: 0 22px 60px rgba(0, 0, 0, 0.28);
   --shadow-glow: 0 24px 80px rgba(45, 212, 191, 0.13);
-  --glass-bg: rgba(16, 28, 40, 0.78);
-  --glass-border: rgba(78, 101, 120, 0.7);
+  --glass-bg: linear-gradient(145deg, rgba(21, 36, 50, 0.82), rgba(12, 23, 34, 0.56));
+  --glass-border: rgba(148, 180, 202, 0.28);
   --page-background:
     linear-gradient(135deg, rgba(45, 212, 191, 0.12), transparent 35%),
     linear-gradient(225deg, rgba(147, 197, 253, 0.1), transparent 42%),
@@ -59,6 +59,10 @@ body {
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -66,8 +70,16 @@ body {
 .glass {
   background: var(--glass-bg);
   border-color: var(--glass-border);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.46),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.08),
+    var(--shadow-soft);
+}
+
+.glass::before {
+  pointer-events: none;
 }
 
 button,
@@ -80,4 +92,33 @@ textarea {
 ::selection {
   background: rgb(var(--color-accent-soft));
   color: rgb(var(--color-ink));
+}
+
+.soft-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--color-muted) / 0.42) transparent;
+}
+
+.soft-scroll::-webkit-scrollbar {
+  height: 10px;
+  width: 10px;
+}
+
+.soft-scroll::-webkit-scrollbar-thumb {
+  background: rgb(var(--color-muted) / 0.34);
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+.soft-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.focus-ring {
+  outline: none;
+}
+
+.focus-ring:focus-visible {
+  box-shadow: 0 0 0 3px rgb(var(--color-accent) / 0.22);
 }

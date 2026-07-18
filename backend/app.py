@@ -7,23 +7,55 @@ import requests
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from sqlalchemy import Integer
+from ai_service import query_ai
 from database import SessionLocal, engine, is_sqlite_fallback
-from models import Base, DataChangeLog, Earning, EarningLink, Station, Unit, Work, WorkLink
+from models import (
+    AmenityNorm,
+    Base,
+    DataChangeLog,
+    Earning,
+    EarningLink,
+    PassengerAmenityWork,
+    PlatformExtensionSummary,
+    PlatformDetail,
+    Station,
+    StationInfra,
+    StationPlatformExtensionStatus,
+    TrolleyPath,
+    Unit,
+    WheelChairAvailability,
+    Work,
+    WorkLink,
+)
 from api_utils import envelope, exception_response, filter_search, paginate, sort_items
 from services import (
     audit_fields,
     earnings_sort_map,
+    get_reports,
+    get_passenger_amenity_reports,
+    get_station_detail,
     get_stats,
     hash_row,
     list_earnings,
+    list_passenger_amenities,
     list_stations,
     list_units,
     list_works,
     parse_earnings,
+    parse_amenity_norms,
+    parse_fob_works,
+    parse_pf_extension_works,
+    parse_platform_extension_workbook,
+    parse_platform_details,
     parse_stations,
+    parse_station_infra,
+    parse_trolley_paths,
     parse_units,
+    parse_wheel_chairs,
     parse_works,
+    passenger_amenity_sort_map,
     row_to_dict,
     split_scopes,
     station_sort_map,
@@ -33,6 +65,19 @@ from services import (
 )
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rail_dashboard.api")
+
+PA_INFRA_SPREADSHEET_ID = "1UdRgQQPEkak1fUTuVH7jIn5R4sE3szAhM4VZJOdFIOU"
+DEFAULT_PF_EXTENSION_WORKBOOK = r"C:\Users\CMI PA\Downloads\FOB & PF Extn Works (1).xlsx"
+PA_INFRA_TABS = {
+    "norms": {"gid": "596063365", "model": AmenityNorm, "parser": parse_amenity_norms, "conflict": ["category", "amenity", "norm"], "skip": {"norm_key"}},
+    "infra": {"gid": "652681143", "model": StationInfra, "parser": parse_station_infra, "conflict": ["station_code"], "skip": {"infra_key"}},
+    "platforms": {"gid": "244744816", "model": PlatformDetail, "parser": parse_platform_details, "conflict": ["station_code", "platform"], "skip": {"platform_key"}},
+    "wheelchairs": {"gid": "658113254", "model": WheelChairAvailability, "parser": parse_wheel_chairs, "conflict": ["station_code"], "skip": {"wheel_chair_key"}},
+    "trolley": {"gid": "977860642", "model": TrolleyPath, "parser": parse_trolley_paths, "conflict": ["station_code"], "skip": {"trolley_path_key"}},
+    "fob_works": {"gid": "1044004842", "model": PassengerAmenityWork, "parser": parse_fob_works, "conflict": ["work_type", "station_code", "work_name"], "skip": {"pa_work_key"}},
+    "pf_extension": {"gid": "149152202", "model": PassengerAmenityWork, "parser": lambda text: parse_pf_extension_works(text, "PF Extension"), "conflict": ["work_type", "station_code", "work_name"], "skip": {"pa_work_key"}},
+    "has": {"gid": "1583406196", "model": PassengerAmenityWork, "parser": lambda text: parse_pf_extension_works(text, "HAS"), "conflict": ["work_type", "station_code", "work_name"], "skip": {"pa_work_key"}},
+}
 
 
 app = FastAPI(title="Rail Dashboard API")
@@ -65,6 +110,12 @@ async def request_logger(request: Request, call_next):
 async def http_exception_handler(_: Request, exc: HTTPException):
     return JSONResponse(status_code=exc.status_code, content=envelope(None, exc.detail, False))
 
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(_: Request, exc: RequestValidationError):
+    return JSONResponse(status_code=422, content=envelope({"errors": exc.errors()}, "Validation failed", False))
+
+
 @app.on_event("startup")
 def startup() -> None:
     Base.metadata.create_all(bind=engine)
@@ -88,6 +139,29 @@ def activity(limit: int = 50):
         return envelope([row_to_dict(row) for row in rows], "ok")
     finally:
         session.close()
+
+
+@app.post("/api/ai/query")
+def ai_query(payload: dict):
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=422, detail="Request body must be a JSON object")
+    question = str(payload.get("question") or "").strip()
+    context = payload.get("context") or {}
+    if context is None:
+        context = {}
+    if not isinstance(context, dict):
+        raise HTTPException(status_code=422, detail="context must be an object")
+    if not question:
+        raise HTTPException(status_code=422, detail="question is required")
+    if len(question) > 2000:
+        raise HTTPException(status_code=422, detail="question must be 2000 characters or fewer")
+    try:
+        return envelope(query_ai(question, context), "ok")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("AI query failed")
+        raise HTTPException(status_code=500, detail=f"AI query failed: {exc}") from exc
 
 
 def _clean_payload(payload: dict) -> dict:
@@ -169,6 +243,77 @@ def _apply_import(resource: str, rows: list[dict]) -> int:
                 _log_change(session, resource, None, "import", "csv", f"{count} rows")
                 return count
         raise HTTPException(status_code=404, detail="Unknown import resource")
+    finally:
+        session.close()
+
+
+def _pa_export_url(gid: str) -> str:
+    return f"https://docs.google.com/spreadsheets/d/{PA_INFRA_SPREADSHEET_ID}/export?format=csv&gid={gid}"
+
+
+def _apply_pa_rows(session, tab_key: str, rows: list[dict]) -> int:
+    config = PA_INFRA_TABS[tab_key]
+    model = config["model"]
+    now = datetime.now(timezone.utc)
+    prepared = [{**row, **audit_fields(now), "source_hash": hash_row(f"pa_{tab_key}", row)} for row in rows]
+    conflict_cols = [getattr(model, name) for name in config["conflict"]]
+    skip = set(config["skip"]) | set(config["conflict"]) | {"created_at", "first_seen_at"}
+    update_cols = [column.name for column in model.__table__.columns if column.name not in skip]
+    return upsert_many(session, model, prepared, conflict_cols, update_cols)
+
+
+def _import_passenger_amenity_tabs(tab: str = "all") -> dict:
+    selected = PA_INFRA_TABS.keys() if tab == "all" else [tab]
+    unknown = [item for item in selected if item not in PA_INFRA_TABS]
+    if unknown:
+        raise HTTPException(status_code=404, detail=f"Unknown passenger amenity tab: {unknown[0]}")
+    results = {}
+    session = SessionLocal()
+    try:
+        with session.begin():
+            for tab_key in selected:
+                config = PA_INFRA_TABS[tab_key]
+                response = requests.get(_pa_export_url(config["gid"]), timeout=90)
+                response.raise_for_status()
+                rows = config["parser"](response.text)
+                count = _apply_pa_rows(session, tab_key, rows)
+                results[tab_key] = {"rows": len(rows), "upserted": count}
+            _log_change(session, "passenger_amenities", None, "import", "google_sheet", str(results))
+        return results
+    finally:
+        session.close()
+
+
+def _import_pf_extension_workbook(path: str) -> dict:
+    parsed = parse_platform_extension_workbook(path)
+    now = datetime.now(timezone.utc)
+    summary_rows = [
+        {**row, **audit_fields(now), "source_hash": hash_row("pf_extension_summary", row)}
+        for row in parsed["summaries"]
+    ]
+    status_rows = [
+        {**row, **audit_fields(now), "source_hash": hash_row("pf_extension_status", row)}
+        for row in parsed["statuses"]
+    ]
+    session = SessionLocal()
+    try:
+        with session.begin():
+            summary_count = upsert_many(
+                session,
+                PlatformExtensionSummary,
+                summary_rows,
+                [PlatformExtensionSummary.summary_type, PlatformExtensionSummary.category],
+                [column.name for column in PlatformExtensionSummary.__table__.columns if column.name not in {"summary_key", "summary_type", "category", "created_at", "first_seen_at"}],
+            )
+            status_count = upsert_many(
+                session,
+                StationPlatformExtensionStatus,
+                status_rows,
+                [StationPlatformExtensionStatus.station_code],
+                [column.name for column in StationPlatformExtensionStatus.__table__.columns if column.name not in {"status_key", "station_code", "created_at", "first_seen_at"}],
+            )
+            _log_change(session, "passenger_amenities", None, "import_pf_extension", "xlsx", f"{summary_count} summaries, {status_count} station statuses")
+        return {"summary_rows": len(summary_rows), "summary_upserted": summary_count, "station_status_rows": len(status_rows), "station_status_upserted": status_count}
     finally:
         session.close()
 
@@ -326,12 +471,58 @@ def stats():
     return envelope(get_stats(), "ok")
 
 
+@app.get("/api/reports")
+def reports():
+    return envelope(get_reports(), "ok")
+
+
+@app.get("/api/passenger-amenities")
+def passenger_amenities(kind: str = "summary", q: str | None = None, station_code: str | None = None, page: int = 1, page_size: int = 25, sort_by: str | None = None, sort_order: str = "asc", search: str | None = None):
+    items = filter_search(list_passenger_amenities(kind=kind, q=q, station_code=station_code), search or q)
+    items = sort_items(items, sort_by if sort_by in passenger_amenity_sort_map() else None, sort_order)
+    page_data = paginate(items, page, page_size)
+    return envelope({"items": page_data.items, "pagination": {"total": page_data.total, "page": page_data.page, "page_size": page_data.page_size}}, "ok")
+
+
+@app.get("/api/passenger-amenities/reports")
+def passenger_amenity_reports():
+    return envelope(get_passenger_amenity_reports(), "ok")
+
+
+@app.post("/api/passenger-amenities/import")
+def import_passenger_amenities(payload: dict | None = None):
+    tab = (payload or {}).get("tab", "all")
+    try:
+        return envelope(_import_passenger_amenity_tabs(tab), "passenger amenity data imported")
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=400, detail=f"Unable to fetch PA Infra Google Sheet: {exc}") from exc
+
+
+@app.post("/api/passenger-amenities/import-pf-extension")
+def import_pf_extension(payload: dict | None = None):
+    path = (payload or {}).get("path") or DEFAULT_PF_EXTENSION_WORKBOOK
+    try:
+        return envelope(_import_pf_extension_workbook(path), "platform extension workbook imported")
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"Workbook not found: {path}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @app.get("/api/stations")
 def stations(q: str | None = None, category: str | None = None, page: int = 1, page_size: int = 25, sort_by: str | None = None, sort_order: str = "asc", search: str | None = None):
     items = filter_search(list_stations(q=q, category=category), search or q)
     items = sort_items(items, sort_by if sort_by in station_sort_map() else None, sort_order)
     page_data = paginate(items, page, page_size)
     return envelope({"items": page_data.items, "pagination": {"total": page_data.total, "page": page_data.page, "page_size": page_data.page_size}}, "ok")
+
+
+@app.get("/api/stations/{station_code}/detail")
+def station_detail(station_code: str):
+    detail = get_station_detail(station_code)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Station not found")
+    return envelope(detail, "ok")
 
 
 @app.get("/api/units")

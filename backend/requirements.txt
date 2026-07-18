@@ -4,5 +4,8 @@ requests
 SQLAlchemy
 alembic
 psycopg2-binary
+openpyxl
+langgraph
+openai
 uvicorn[standard]
 gunicorn

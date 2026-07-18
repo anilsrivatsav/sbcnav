@@ -1,0 +1,42 @@
+INFO:     Started server process [14212]
+INFO:     Waiting for application startup.
+INFO:rail_dashboard.api:SQLite fallback detected; local cache available.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:rail_dashboard.api:GET /api/health -> 200
+INFO:rail_dashboard.api:POST /api/ai/query -> 200
+INFO:rail_dashboard.api:GET /api/stations -> 200
+INFO:rail_dashboard.api:GET /api/works -> 200
+INFO:rail_dashboard.api:GET /api/stats -> 200
+INFO:rail_dashboard.api:GET /api/passenger-amenities -> 200
+INFO:rail_dashboard.api:GET /api/units -> 200
+INFO:rail_dashboard.api:GET /api/passenger-amenities -> 200
+INFO:rail_dashboard.api:GET /api/passenger-amenities -> 200
+INFO:rail_dashboard.api:GET /api/passenger-amenities -> 200
+INFO:rail_dashboard.api:GET /api/passenger-amenities -> 200
+INFO:rail_dashboard.api:GET /api/passenger-amenities -> 200
+INFO:rail_dashboard.api:GET /api/passenger-amenities -> 200
+INFO:rail_dashboard.api:GET /api/passenger-amenities -> 200
+INFO:rail_dashboard.api:GET /api/stations -> 200
+INFO:rail_dashboard.api:GET /api/works -> 200
+INFO:rail_dashboard.api:GET /api/units -> 200
+INFO:rail_dashboard.api:GET /api/stats -> 200
+INFO:rail_dashboard.api:GET /api/passenger-amenities -> 200
+INFO:rail_dashboard.api:GET /api/passenger-amenities -> 200
+INFO:rail_dashboard.api:GET /api/passenger-amenities -> 200
+INFO:rail_dashboard.api:GET /api/passenger-amenities -> 200
+INFO:rail_dashboard.api:GET /api/passenger-amenities -> 200
+INFO:rail_dashboard.api:GET /api/passenger-amenities/reports -> 200
+INFO:rail_dashboard.api:GET /api/passenger-amenities -> 200
+INFO:rail_dashboard.api:GET /api/passenger-amenities -> 200
+INFO:rail_dashboard.api:GET /api/reports -> 200
+INFO:rail_dashboard.api:GET /api/passenger-amenities/reports -> 200
+INFO:rail_dashboard.api:GET /api/passenger-amenities -> 200
+INFO:rail_dashboard.api:GET /api/earnings -> 200
+INFO:rail_dashboard.api:GET /api/reports -> 200
+INFO:rail_dashboard.api:GET /api/earnings -> 200
+INFO:rail_dashboard.api:OPTIONS /api/ai/query -> 200
+INFO:rail_dashboard.api:POST /api/ai/query -> 200
+INFO:rail_dashboard.api:GET /api/stations/KSM/detail -> 200
+INFO:rail_dashboard.api:GET /api/stations/AEK/detail -> 200
+INFO:rail_dashboard.api:POST /api/ai/query -> 200

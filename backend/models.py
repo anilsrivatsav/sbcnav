@@ -109,6 +109,168 @@ class WorkLink(Base):
     match_status: Mapped[str | None] = mapped_column(Text, index=True)
 
 
+class AmenityNorm(Base, AuditMixin):
+    __tablename__ = "amenity_norms"
+    __table_args__ = (
+        UniqueConstraint("category", "amenity", "norm", name="uq_amenity_norms_category_amenity_norm"),
+    )
+
+    norm_key: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    category: Mapped[str] = mapped_column(String(64), index=True)
+    amenity: Mapped[str | None] = mapped_column(Text, index=True)
+    norm: Mapped[str] = mapped_column(Text, index=True)
+    norm_quantity: Mapped[str | None] = mapped_column(Text)
+
+
+class StationInfra(Base, AuditMixin):
+    __tablename__ = "station_infra"
+    __table_args__ = (
+        UniqueConstraint("station_code", name="uq_station_infra_station_code"),
+    )
+
+    infra_key: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    station_code: Mapped[str] = mapped_column(String(64), index=True)
+    station_name: Mapped[str | None] = mapped_column(Text, index=True)
+    category: Mapped[str | None] = mapped_column(Text, index=True)
+    platform_list: Mapped[str | None] = mapped_column(Text)
+    platform_count: Mapped[int | None] = mapped_column(Integer, index=True)
+    platform_level: Mapped[str | None] = mapped_column(Text, index=True)
+    fob_details: Mapped[str | None] = mapped_column(Text)
+    shelter_details: Mapped[str | None] = mapped_column(Text)
+    remarks: Mapped[str | None] = mapped_column(Text)
+
+
+class PlatformDetail(Base, AuditMixin):
+    __tablename__ = "platform_details"
+    __table_args__ = (
+        UniqueConstraint("station_code", "platform", name="uq_platform_details_station_platform"),
+    )
+
+    platform_key: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    station_code: Mapped[str] = mapped_column(String(64), index=True)
+    platform: Mapped[str] = mapped_column(String(64), index=True)
+    length_m: Mapped[int | None] = mapped_column(Integer, index=True)
+    lifts: Mapped[str | None] = mapped_column(Text)
+    escalators: Mapped[str | None] = mapped_column(Text)
+    ramp: Mapped[str | None] = mapped_column(Text)
+
+
+class WheelChairAvailability(Base, AuditMixin):
+    __tablename__ = "wheel_chair_availability"
+    __table_args__ = (
+        UniqueConstraint("station_code", name="uq_wheel_chair_station_code"),
+    )
+
+    wheel_chair_key: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    station_code: Mapped[str] = mapped_column(String(64), index=True)
+    station_name: Mapped[str | None] = mapped_column(Text, index=True)
+    section: Mapped[str | None] = mapped_column(Text, index=True)
+    category: Mapped[str | None] = mapped_column(Text, index=True)
+    available_good_condition: Mapped[int | None] = mapped_column(Integer, index=True)
+
+
+class TrolleyPath(Base, AuditMixin):
+    __tablename__ = "trolley_paths"
+    __table_args__ = (
+        UniqueConstraint("station_code", name="uq_trolley_paths_station_code"),
+    )
+
+    trolley_path_key: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    station_code: Mapped[str] = mapped_column(String(64), index=True)
+    station_name: Mapped[str | None] = mapped_column(Text, index=True)
+    division: Mapped[str | None] = mapped_column(Text, index=True)
+    zone: Mapped[str | None] = mapped_column(Text)
+    section: Mapped[str | None] = mapped_column(Text, index=True)
+    categorisation: Mapped[str | None] = mapped_column(Text, index=True)
+    passenger_footfall: Mapped[int | None] = mapped_column(Integer, index=True)
+    platforms: Mapped[str | None] = mapped_column(Text)
+    number_of_platforms: Mapped[str | None] = mapped_column(Text)
+    platform_type: Mapped[str | None] = mapped_column(Text, index=True)
+    trolley_path: Mapped[str | None] = mapped_column(Text, index=True)
+    trolley_path_sanction: Mapped[str | None] = mapped_column(Text)
+
+
+class PassengerAmenityWork(Base, AuditMixin):
+    __tablename__ = "passenger_amenity_works"
+    __table_args__ = (
+        UniqueConstraint("work_type", "station_code", "work_name", name="uq_pa_works_type_station_name"),
+    )
+
+    pa_work_key: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    work_type: Mapped[str] = mapped_column(String(64), index=True)
+    station_code: Mapped[str | None] = mapped_column(String(64), index=True)
+    project_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    station_category: Mapped[str | None] = mapped_column(Text, index=True)
+    platform_level: Mapped[str | None] = mapped_column(Text)
+    work_name: Mapped[str] = mapped_column(Text, index=True)
+    tender_status: Mapped[str | None] = mapped_column(Text, index=True)
+    loa_date: Mapped[str | None] = mapped_column(Text)
+    sanction_date: Mapped[str | None] = mapped_column(Text, index=True)
+    executive_agency: Mapped[str | None] = mapped_column(Text, index=True)
+    progress: Mapped[str | None] = mapped_column(Text)
+    physical_progress: Mapped[str | None] = mapped_column(Text)
+    tdc: Mapped[str | None] = mapped_column(Text, index=True)
+    cost: Mapped[str | None] = mapped_column(Text)
+    existing_platform_length: Mapped[str | None] = mapped_column(Text)
+
+
+class PlatformExtensionSummary(Base, AuditMixin):
+    __tablename__ = "platform_extension_summaries"
+    __table_args__ = (
+        UniqueConstraint("summary_type", "category", name="uq_pf_extension_summary_type_category"),
+    )
+
+    summary_key: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    summary_type: Mapped[str] = mapped_column(String(64), index=True)
+    category: Mapped[str] = mapped_column(String(64), index=True)
+    station_count: Mapped[int | None] = mapped_column(Integer, index=True)
+    full_length_platforms: Mapped[int | None] = mapped_column(Integer)
+    work_under_progress: Mapped[str | None] = mapped_column(Text)
+    pf_extension_proposed: Mapped[str | None] = mapped_column(Text)
+    raising_extension_proposed: Mapped[str | None] = mapped_column(Text)
+    platform_extension_work_proposed: Mapped[str | None] = mapped_column(Text)
+    existing_length: Mapped[str | None] = mapped_column(Text)
+    required_length: Mapped[str | None] = mapped_column(Text)
+    fob_ramps_stairs_available: Mapped[str | None] = mapped_column(Text)
+    stations_without_fob: Mapped[str | None] = mapped_column(Text)
+    stations_with_fob_ramp: Mapped[str | None] = mapped_column(Text)
+    stations_fob_wip: Mapped[str | None] = mapped_column(Text)
+    stations_with_lift: Mapped[str | None] = mapped_column(Text)
+    stations_lift_proposed: Mapped[str | None] = mapped_column(Text)
+    stations_ramp_proposed: Mapped[str | None] = mapped_column(Text)
+    stations_not_feasible_lift_ramp: Mapped[str | None] = mapped_column(Text)
+    remarks: Mapped[str | None] = mapped_column(Text)
+    source_row: Mapped[int | None] = mapped_column(Integer)
+
+
+class StationPlatformExtensionStatus(Base, AuditMixin):
+    __tablename__ = "station_platform_extension_status"
+    __table_args__ = (
+        UniqueConstraint("station_code", name="uq_station_pf_extension_status_station_code"),
+    )
+
+    status_key: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    station_code: Mapped[str] = mapped_column(String(64), index=True)
+    category: Mapped[str | None] = mapped_column(Text, index=True)
+    source_category: Mapped[str | None] = mapped_column(Text, index=True)
+    station_detail_category_code: Mapped[str | None] = mapped_column(Text, index=True)
+    pf_extension_wip: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    pf_extension_proposed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    raising_extension_proposed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    platform_extension_work_proposed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    ramp_feasible: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    fob_without: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    fob_ramp_available: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    fob_wip: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    lift_available: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    lift_proposed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    ramp_proposed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    not_feasible_lift_ramp: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    source_rows: Mapped[str | None] = mapped_column(Text)
+    status_text: Mapped[str | None] = mapped_column(Text)
+    remarks: Mapped[str | None] = mapped_column(Text)
+
+
 class Earning(Base, AuditMixin):
     __tablename__ = "earnings"
     __table_args__ = (
