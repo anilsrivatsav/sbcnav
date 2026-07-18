@@ -87,6 +87,7 @@ app.add_middleware(
         "http://127.0.0.1:3000", 
         "http://localhost:3000", 
         "http://127.0.0.1:5173",
+        "https://sbcnav-38t2.vercel.app/",
       # Vercel
         "https://sbcnav.vercel.app",   # your production domain (if used)
         "https://sbcnav-38t2-2doxwtr6h-anil-b-hs-projects.vercel.app"],
