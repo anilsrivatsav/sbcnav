@@ -168,16 +168,23 @@ class AppDatabase {
   }
 
   Future<void> _seedBundledOfflinePack() async {
+    final raw = await rootBundle.loadString(
+      'assets/offline_station_pack.json',
+    );
+    final pack = jsonDecode(raw) as Map<String, dynamic>;
+    final bundledVersion = '${pack['generated_at'] ?? ''}';
+    final installedVersion = await metadata('bundled_offline_pack_at');
     final stationCount = Sqflite.firstIntValue(
           await db.rawQuery('SELECT COUNT(*) FROM stations'),
         ) ??
         0;
     final detailCount = await offlineStationDetailCount();
-    if (stationCount > 0 && detailCount > 0) return;
-    final raw = await rootBundle.loadString(
-      'assets/offline_station_pack.json',
-    );
-    final pack = jsonDecode(raw) as Map<String, dynamic>;
+    if (stationCount > 0 &&
+        detailCount > 0 &&
+        bundledVersion.isNotEmpty &&
+        bundledVersion == installedVersion) {
+      return;
+    }
     await cacheBootstrap(pack);
     final details = pack['station_details'] as List? ?? const [];
     await cacheStationDetails(
