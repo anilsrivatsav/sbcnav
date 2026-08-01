@@ -1430,6 +1430,25 @@ def get_station_detail(station_code: str) -> dict[str, Any] | None:
 
         works = list_works(station_code=code)
         commercial_contracts = list_commercial_contracts(station_code=code)
+        commercial_keys = {
+            row.get("contract_key")
+            for row in commercial_contracts
+            if row.get("contract_key") is not None
+        }
+        commercial_payments: dict[Any, list[dict[str, Any]]] = {}
+        if commercial_keys:
+            payment_rows = (
+                session.query(CommercialContractPayment)
+                .filter(CommercialContractPayment.contract_key.in_(commercial_keys))
+                .order_by(CommercialContractPayment.payment_month)
+                .all()
+            )
+            for payment in payment_rows:
+                commercial_payments.setdefault(payment.contract_key, []).append(row_to_dict(payment))
+        for contract in commercial_contracts:
+            payments = commercial_payments.get(contract.get("contract_key"), [])
+            contract["payments"] = payments
+            contract["payment_total"] = sum(to_money(row.get("amount_paid")) for row in payments)
         infra = session.query(StationInfra).filter(StationInfra.station_code == code).one_or_none()
         platforms = session.query(PlatformDetail).filter(PlatformDetail.station_code == code).order_by(PlatformDetail.platform).all()
         wheelchairs = session.query(WheelChairAvailability).filter(WheelChairAvailability.station_code == code).one_or_none()

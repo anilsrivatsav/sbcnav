@@ -84,6 +84,16 @@ class SyncScreen extends ConsumerWidget {
                       icon: Icons.sync_rounded,
                       label: 'Sync now',
                     ),
+                    const SizedBox(height: AppSpacing.x1),
+                    AppButton(
+                      expand: true,
+                      kind: AppButtonKind.secondary,
+                      onPressed: () => ref
+                          .read(syncControllerProvider.notifier)
+                          .refreshFromServer(),
+                      icon: Icons.cloud_download_rounded,
+                      label: 'Fetch latest PostgreSQL data',
+                    ),
                   ],
                 ),
               ),

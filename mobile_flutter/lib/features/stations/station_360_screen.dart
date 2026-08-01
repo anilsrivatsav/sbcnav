@@ -1235,12 +1235,12 @@ class _ContractList extends StatelessWidget {
     }
     return Column(
       children: [
-        for (final contract in contracts.take(8))
+        for (final contract in contracts)
           Padding(
             padding: const EdgeInsets.only(bottom: 9),
             child: _InfoRow(
               icon: Icons.storefront_rounded,
-              title: contract.name,
+              title: '${contract.name} · ${contractValidityLabel(contract)}',
               subtitle:
                   '${contract.type}  •  ${formatCurrency(contract.earnings)}',
               trailing: contract.status,
@@ -1297,7 +1297,7 @@ class _GroupedWorkList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final groups = <String, List<WorkSummary>>{};
-    for (final work in works.take(40)) {
+    for (final work in works) {
       final status = work.status.toLowerCase();
       final group = (work.progress ?? 0) >= 100 ||
               status.contains('complete') ||
@@ -1650,6 +1650,11 @@ Future<void> _showContractDetails(
       _DetailGroup(title: 'Contract summary', rows: [
         MapEntry('Type', contract.type),
         MapEntry('Earnings / license fee', formatCurrency(contract.earnings)),
+        MapEntry('Validity', contractValidityLabel(contract)),
+        if (contract.validFrom != null)
+          MapEntry('Valid from', formatContractDate(contract.validFrom!)),
+        if (contract.validTo != null)
+          MapEntry('Valid till', formatContractDate(contract.validTo!)),
       ]),
       if (details.isNotEmpty)
         _DetailGroup(

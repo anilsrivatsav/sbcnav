@@ -36,7 +36,7 @@ class _MobileShellState extends State<MobileShell> {
       selectedIcon: Icons.fact_check_rounded,
     ),
     _Destination(
-      label: 'Reports',
+      label: 'Findings',
       icon: Icons.bar_chart_outlined,
       selectedIcon: Icons.bar_chart_rounded,
     ),
@@ -338,7 +338,7 @@ class _NavItem extends StatelessWidget {
       'Home' => colors.tertiary,
       'Stations' => colors.primary,
       'Inspect' => colors.secondary,
-      'Reports' => statusTone('pending'),
+      'Findings' => statusTone('pending'),
       _ => colors.primary,
     };
   }

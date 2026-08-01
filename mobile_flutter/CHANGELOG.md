@@ -13,3 +13,8 @@
 - Added explicit PostgreSQL data refresh from the home and settings surfaces.
 - Refreshes the mobile cache when the bundled station data version changes.
 - Built the release APK against the deployed API host for physical devices.
+## 0.7.2+9 - 2026-08-01
+- Added offline contract expiry notifications and notification centre.
+- Added contract validity dates and remaining-day indicators.
+- Added commercial contract payment history to station detail responses.
+- Clarified Findings and PostgreSQL refresh actions.

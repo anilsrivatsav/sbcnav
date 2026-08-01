@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
@@ -25,7 +26,7 @@ class AppDatabase {
     final root = await getDatabasesPath();
     _db = await openDatabase(
       join(root, 'rail_inspect.db'),
-      version: 3,
+      version: 4,
       onConfigure: (database) => database.execute('PRAGMA foreign_keys = ON'),
       onUpgrade: (database, oldVersion, _) async {
         if (oldVersion < 2) {
@@ -40,6 +41,9 @@ class AppDatabase {
         }
         if (oldVersion < 3) {
           await _createFieldRecordTables(database);
+        }
+        if (oldVersion < 4) {
+          await _createNotificationTable(database);
         }
       },
       onCreate: (database, _) async {
@@ -161,6 +165,7 @@ class AppDatabase {
           'ON sync_queue(entity_type, entity_id)',
         );
         await _createFieldRecordTables(database);
+        await _createNotificationTable(database);
       },
     );
     await _seedBundledOfflinePack();
@@ -390,6 +395,7 @@ class AppDatabase {
           'cached_at': DateTime.now().toUtc().toIso8601String(),
         },
         conflictAlgorithm: ConflictAlgorithm.replace);
+    await _createContractNotifications(db, stationCode, detail);
   }
 
   Future<void> cacheStationDetails(
@@ -412,6 +418,7 @@ class AppDatabase {
           },
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
+        await _createContractNotifications(txn, code, detail);
       }
       final count = Sqflite.firstIntValue(
             await txn.rawQuery('SELECT COUNT(*) FROM station_details'),
@@ -440,6 +447,120 @@ class AppDatabase {
           await db.rawQuery('SELECT COUNT(*) FROM station_details'),
         ) ??
         0;
+  }
+
+  Future<List<Map<String, dynamic>>> notifications({bool unreadOnly = false}) {
+    return db.query(
+      'notifications',
+      where: unreadOnly ? 'is_read = 0' : null,
+      orderBy: 'created_at DESC',
+    );
+  }
+
+  Future<int> unreadNotificationCount() async {
+    return Sqflite.firstIntValue(
+          await db.rawQuery('SELECT COUNT(*) FROM notifications WHERE is_read = 0'),
+        ) ??
+        0;
+  }
+
+  Future<void> markNotificationRead(String notificationId) async {
+    await db.update('notifications', {'is_read': 1},
+        where: 'notification_id = ?', whereArgs: [notificationId]);
+  }
+
+  Future<void> markAllNotificationsRead() async {
+    await db.update('notifications', {'is_read': 1});
+  }
+
+  static Future<void> _createNotificationTable(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS notifications (
+        notification_id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        title TEXT NOT NULL,
+        body TEXT NOT NULL,
+        related_type TEXT,
+        related_id TEXT,
+        severity TEXT NOT NULL,
+        is_read INTEGER NOT NULL DEFAULT 0,
+        due_at TEXT,
+        created_at TEXT NOT NULL
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS ix_local_notifications_read '
+      'ON notifications(is_read, created_at)',
+    );
+  }
+
+  static Future<void> _createContractNotifications(
+    DatabaseExecutor db,
+    String stationCode,
+    Object? rawDetail,
+  ) async {
+    if (rawDetail is! Map) return;
+    final detail = Map<String, dynamic>.from(rawDetail);
+    final contracts = <dynamic>[
+      ...(detail['contracts'] is List ? detail['contracts'] as List : const []),
+      ...(detail['commercial_contracts'] is List
+          ? detail['commercial_contracts'] as List
+          : const []),
+    ];
+    final now = DateTime.now();
+    for (final raw in contracts) {
+      if (raw is! Map) continue;
+      final row = Map<String, dynamic>.from(raw);
+      final end = _notificationDate(
+        row['contract_to'] ?? row['contract_upto'] ?? row['contract_period_to'],
+      );
+      if (end == null) continue;
+      final days = end.difference(DateTime(now.year, now.month, now.day)).inDays;
+      if (days > 90) continue;
+      final bucket = days < 0 ? 'expired' : days <= 7 ? '7d' : days <= 30 ? '30d' : '90d';
+      final key = '${row['unit_no'] ?? row['contract_key'] ?? row['contract_name'] ?? 'contract'}';
+      final id = 'contract-expiry-$stationCode-$key-$bucket';
+      final name = '${row['contract_name'] ?? row['licensee_name'] ?? row['unit_no'] ?? 'Contract'}';
+      final body = days < 0
+          ? '$name expired ${-days} days ago at $stationCode.'
+          : '$name expires in $days days at $stationCode.';
+      await db.insert(
+        'notifications',
+        {
+          'notification_id': id,
+          'type': 'contract_expiry',
+          'title': days < 0 ? 'Contract expired' : 'Contract renewal due',
+          'body': body,
+          'related_type': 'contract',
+          'related_id': key,
+          'severity': days < 0 || days <= 7 ? 'critical' : days <= 30 ? 'high' : 'medium',
+          'is_read': 0,
+          'due_at': end.toIso8601String(),
+          'created_at': DateTime.now().toUtc().toIso8601String(),
+        },
+        conflictAlgorithm: ConflictAlgorithm.ignore,
+      );
+    }
+  }
+
+  static DateTime? _notificationDate(Object? value) {
+    final text = value?.toString().trim() ?? '';
+    if (text.isEmpty || text == '-' || text.toLowerCase() == 'n/a') return null;
+    final iso = DateTime.tryParse(text);
+    if (iso != null) return DateTime(iso.year, iso.month, iso.day);
+    final match = RegExp(r'^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})').firstMatch(text);
+    if (match != null) {
+      final yearValue = int.parse(match.group(3)!);
+      final year = yearValue < 100 ? 2000 + yearValue : yearValue;
+      return DateTime(year, int.parse(match.group(2)!), int.parse(match.group(1)!));
+    }
+    for (final format in ['dd MMM yyyy', 'dd-MMM-yyyy']) {
+      try {
+        final parsed = DateFormat(format).parseStrict(text);
+        return DateTime(parsed.year, parsed.month, parsed.day);
+      } catch (_) {}
+    }
+    return null;
   }
 
   Future<Map<String, dynamic>?> stationDetail(String stationCode) async {

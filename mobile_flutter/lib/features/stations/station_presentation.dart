@@ -47,6 +47,10 @@ class ContractSummary {
     required this.type,
     required this.earnings,
     required this.status,
+    this.validFrom,
+    this.validTo,
+    this.daysToExpiry,
+    this.renewalState = 'Date unavailable',
     this.details = const {},
     this.payments = const [],
   });
@@ -56,6 +60,10 @@ class ContractSummary {
   final String type;
   final double earnings;
   final String status;
+  final DateTime? validFrom;
+  final DateTime? validTo;
+  final int? daysToExpiry;
+  final String renewalState;
   final Map<String, dynamic> details;
   final List<Map<String, dynamic>> payments;
 }
@@ -276,6 +284,12 @@ List<ContractSummary> buildContracts(
       type: existing.type == 'Commercial' ? item.type : existing.type,
       earnings: math.max(existing.earnings, item.earnings),
       status: _preferredStatus(existing.status, item.status),
+      validFrom: existing.validFrom ?? item.validFrom,
+      validTo: existing.validTo ?? item.validTo,
+      daysToExpiry: existing.daysToExpiry ?? item.daysToExpiry,
+      renewalState: existing.renewalState != 'Date unavailable'
+          ? existing.renewalState
+          : item.renewalState,
       details: existing.details.length >= item.details.length
           ? existing.details
           : item.details,
@@ -308,6 +322,14 @@ List<ContractSummary> buildContracts(
         type: cleanText(row['type_of_unit'], fallback: 'Catering'),
         earnings: earnings,
         status: cleanText(row['unit_status'], fallback: 'Status unavailable'),
+        validFrom: _contractDate(row, ['contract_from', 'contract_period_from']),
+        validTo: _contractDate(row, ['contract_to', 'contract_upto']),
+        renewalState: _renewalState(
+          _contractDate(row, ['contract_to', 'contract_upto']),
+        ),
+        daysToExpiry: _daysToExpiry(
+          _contractDate(row, ['contract_to', 'contract_upto']),
+        ),
         details: row,
         payments: _paymentRows(row),
       ),
@@ -334,6 +356,14 @@ List<ContractSummary> buildContracts(
             numericValue(row['annual_license_fee']) ??
             0,
         status: _contractStatus(row),
+        validFrom: _contractDate(row, ['contract_period_from', 'contract_from']),
+        validTo: _contractDate(row, ['contract_upto', 'contract_to']),
+        renewalState: _renewalState(
+          _contractDate(row, ['contract_upto', 'contract_to']),
+        ),
+        daysToExpiry: _daysToExpiry(
+          _contractDate(row, ['contract_upto', 'contract_to']),
+        ),
         details: row,
         payments: _paymentRows(row),
       ),
@@ -445,10 +475,61 @@ String _contractStatus(Map<String, dynamic> row) {
     fallback: '',
   );
   if (explicit.isNotEmpty) return explicit;
-  final end = DateTime.tryParse(cleanText(row['contract_upto'], fallback: ''));
+  final end = _contractDate(row, ['contract_upto', 'contract_to']);
   if (end == null) return 'Status unavailable';
   return end.isBefore(DateTime.now()) ? 'Expired' : 'Active';
 }
+
+DateTime? _contractDate(Map<String, dynamic> row, List<String> keys) {
+  for (final key in keys) {
+    final value = row[key];
+    if (value is DateTime) return DateTime(value.year, value.month, value.day);
+    final text = cleanText(value, fallback: '');
+    if (text.isEmpty) continue;
+    final iso = DateTime.tryParse(text);
+    if (iso != null) return DateTime(iso.year, iso.month, iso.day);
+    final match = RegExp(r'^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})').firstMatch(text);
+    if (match != null) {
+      final year = int.parse(match.group(3)!) < 100
+          ? 2000 + int.parse(match.group(3)!)
+          : int.parse(match.group(3)!);
+      return DateTime(year, int.parse(match.group(2)!), int.parse(match.group(1)!));
+    }
+    final monthYear = RegExp(r'^(\d{1,2})[/-](\d{4})$').firstMatch(text);
+    if (monthYear != null) {
+      return DateTime(int.parse(monthYear.group(2)!), int.parse(monthYear.group(1)!), 1);
+    }
+  }
+  return null;
+}
+
+int? _daysToExpiry(DateTime? end) {
+  if (end == null) return null;
+  final today = DateTime.now();
+  final current = DateTime(today.year, today.month, today.day);
+  return end.difference(current).inDays;
+}
+
+String _renewalState(DateTime? end) {
+  final days = _daysToExpiry(end);
+  if (days == null) return 'Date unavailable';
+  if (days < 0) return 'Expired';
+  if (days <= 7) return 'Due within 7 days';
+  if (days <= 30) return 'Renewal due within 30 days';
+  if (days <= 90) return 'Renewal upcoming';
+  return 'Active';
+}
+
+String contractValidityLabel(ContractSummary contract) {
+  if (contract.validTo == null) return 'Validity date unavailable';
+  final date = DateFormat('dd MMM yyyy').format(contract.validTo!);
+  final days = contract.daysToExpiry ?? 0;
+  if (days < 0) return 'Expired on $date';
+  if (days == 0) return 'Expires today';
+  return 'Valid till $date · $days days remaining';
+}
+
+String formatContractDate(DateTime date) => DateFormat('dd MMM yyyy').format(date);
 
 int? _progress(Object? value) {
   final number = numericValue(value);

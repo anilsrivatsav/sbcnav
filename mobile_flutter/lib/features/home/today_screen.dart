@@ -5,6 +5,7 @@ import '../../data/local/app_database.dart';
 import '../../data/sync/sync_service.dart';
 import '../../shared/widgets.dart';
 import '../inspections/inspection_form_screen.dart';
+import '../notifications/notifications_screen.dart';
 import '../settings/settings_screen.dart';
 
 class TodayScreen extends ConsumerStatefulWidget {
@@ -23,6 +24,7 @@ class _TodayData {
     required this.openFindings,
     required this.pendingSync,
     required this.inspector,
+    required this.unreadNotifications,
   });
 
   final int stations;
@@ -30,6 +32,7 @@ class _TodayData {
   final int openFindings;
   final int pendingSync;
   final String inspector;
+  final int unreadNotifications;
 
   int get completed =>
       inspections.where((row) => row['status'] == 'submitted').length;
@@ -56,6 +59,7 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
           .where((row) => row['status'] != 'closed')
           .length,
       pendingSync: await database.pendingCount(),
+      unreadNotifications: await database.unreadNotificationCount(),
       inspector: profileName ??
           (inspections.isEmpty
               ? 'Commercial Inspector'
@@ -97,11 +101,16 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
                 inspector: data.inspector,
                 syncBusy: syncBusy,
                 pendingSync: data.pendingSync,
+                unreadNotifications: data.unreadNotifications,
                 onSync: () =>
                     ref.read(syncControllerProvider.notifier).synchronize(),
                 onFetchLatest: () => ref
                     .read(syncControllerProvider.notifier)
                     .refreshFromServer(),
+                onNotifications: () => showGlassBottomSheet<void>(
+                  context,
+                  builder: (_) => const NotificationsSheet(),
+                ),
               ),
               const SizedBox(height: 22),
               _InspectionPulse(data: data),
@@ -162,7 +171,7 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
                     ),
                     _QuickAction(
                       icon: Icons.bar_chart_rounded,
-                      label: 'Reports',
+                      label: 'Findings',
                       tone: const Color(0xFFF59E0B),
                       onTap: () => widget.onNavigate(3),
                     ),
@@ -350,15 +359,19 @@ class _HomeHeader extends StatelessWidget {
     required this.inspector,
     required this.syncBusy,
     required this.pendingSync,
+    required this.unreadNotifications,
     required this.onSync,
     required this.onFetchLatest,
+    required this.onNotifications,
   });
 
   final String inspector;
   final bool syncBusy;
   final int pendingSync;
+  final int unreadNotifications;
   final VoidCallback onSync;
   final VoidCallback onFetchLatest;
+  final VoidCallback onNotifications;
 
   @override
   Widget build(BuildContext context) {
@@ -402,11 +415,11 @@ class _HomeHeader extends StatelessWidget {
               clipBehavior: Clip.none,
               children: [
                 AppIconButton(
-                  tooltip: 'Synchronize',
-                  onPressed: syncBusy ? null : onSync,
+                  tooltip: 'Notifications',
+                  onPressed: onNotifications,
                   icon: Icons.notifications_none_rounded,
                 ),
-                if (pendingSync > 0)
+                if (unreadNotifications > 0)
                   Positioned(
                     right: -2,
                     top: -3,
@@ -417,7 +430,7 @@ class _HomeHeader extends StatelessWidget {
                         shape: BoxShape.circle,
                       ),
                       child: Text(
-                        pendingSync > 9 ? '9+' : '$pendingSync',
+                        unreadNotifications > 9 ? '9+' : '$unreadNotifications',
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 9,
