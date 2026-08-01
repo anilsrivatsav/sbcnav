@@ -9,8 +9,8 @@ export default function Error({ error, reset }) {
   }, [error]);
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[var(--bg)] p-4 text-ink">
-      <section className="glass max-w-xl rounded-3xl border p-6 text-center">
+    <main className="flex min-h-screen items-center justify-center bg-page p-4 text-ink">
+      <section className="soft-surface max-w-xl rounded-lg border p-6 text-center">
         <div className="text-xs font-black uppercase tracking-[0.2em] text-accent">Rail Dashboard</div>
         <h1 className="mt-3 text-2xl font-black">Something went wrong in the screen.</h1>
         <p className="mt-2 text-sm text-muted">
@@ -19,7 +19,7 @@ export default function Error({ error, reset }) {
         <button
           type="button"
           onClick={reset}
-          className="focus-ring mt-5 inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-accent px-4 text-sm font-extrabold text-white shadow-glow hover:bg-accent/90"
+          className="focus-ring mt-5 inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-accent bg-accent px-4 text-sm font-extrabold text-white shadow-raised hover:bg-accentStrong active:shadow-pressed"
         >
           <RefreshCw size={16} />
           Retry

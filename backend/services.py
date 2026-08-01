@@ -13,6 +13,9 @@ from sqlalchemy import func, select
 from database import SessionLocal
 from models import (
     AmenityNorm,
+    CommercialContract,
+    CommercialContractPayment,
+    CommercialContractStationLink,
     Earning,
     EarningLink,
     PassengerAmenityWork,
@@ -81,6 +84,15 @@ def parse_date_value(value: Any) -> date | None:
     return None
 
 
+def date_text(value: Any) -> str | None:
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    parsed = parse_date_value(value)
+    return parsed.isoformat() if parsed else clean(value) or None
+
+
 def month_end(value: date) -> date:
     if value.month == 12:
         return date(value.year, 12, 31)
@@ -145,6 +157,8 @@ def parse_stations(text: str) -> list[dict[str, Any]]:
                 "cmi": "cmi",
                 "den": "den",
                 "sr.den": "sr_den",
+                "sr den": "sr_den",
+                "sr den name": "sr_den",
                 "categorisation": "categorisation",
                 "earnings range": "earnings_range",
                 "passenger range": "passenger_range",
@@ -237,12 +251,14 @@ def parse_works(text: str) -> list[dict[str, Any]]:
     rows = parse_csv(text)
     header_idx = next(i for i, row in enumerate(rows) if any(normalize(cell) == "projectid" for cell in row))
     headers = [normalize(h) for h in rows[header_idx]]
-    out: list[dict[str, Any]] = []
+    parsed: list[dict[str, Any]] = []
+    last_sn = 0
     for row in rows[header_idx + 1 :]:
         item: dict[str, Any] = {}
         for idx, header in enumerate(headers):
             value = row[idx] if idx < len(row) else ""
             mapping = {
+                "sn": "source_sn",
                 "projectid": "project_id",
                 "year of sanction": "year_of_sanction",
                 "year ub works": "year_ub_works",
@@ -251,18 +267,39 @@ def parse_works(text: str) -> list[dict[str, Any]]:
                 "short name of work": "short_name_of_work",
                 "block section station": "block_section_station",
                 "allocation": "allocation",
-                "engg. remarks": "engg_remarks",
+                "cost": "cost",
+                "expenditure upto date": "expenditure_upto_date",
+                "physical progress in %": "physical_progress",
+                "financial progress": "financial_progress",
                 "if ub?": "if_ub",
                 "parent work": "parent_work",
                 "section": "section",
-                "anticipated expenditure": "anticipated_expenditure",
                 "remarks": "remarks",
             }
-            if header in mapping:
-                item[mapping[header]] = to_int(value) if header == "anticipated expenditure" else clean(value)
+            if header.startswith("engg remarks"):
+                item["engg_remarks"] = clean(value)
+            elif header.startswith("anticipated expenditure"):
+                item["anticipated_expenditure"] = to_int(value)
+            elif header in mapping:
+                target = mapping[header]
+                item[target] = to_int(value) if target in {"source_sn", "cost", "expenditure_upto_date"} else clean(value)
+        if item.get("source_sn"):
+            if last_sn and item["source_sn"] <= last_sn:
+                break
+            last_sn = item["source_sn"]
         if item.get("project_id") and normalize(item["project_id"]) != "projectid":
-            out.append(item)
-    return out
+            item["project_id"] = re.sub(r"\s+", "", clean(item["project_id"]))
+            item["source_project_id"] = item["project_id"]
+            parsed.append(item)
+
+    counts: dict[str, int] = {}
+    for item in parsed:
+        counts[item["source_project_id"]] = counts.get(item["source_project_id"], 0) + 1
+    for index, item in enumerate(parsed, start=1):
+        if counts.get(item["source_project_id"], 0) > 1:
+            suffix = item.get("source_sn") or index
+            item["project_id"] = f"{item['source_project_id']}__SN{suffix}"
+    return parsed
 
 
 def _header_map(headers: list[str]) -> dict[str, int]:
@@ -608,23 +645,51 @@ def parse_platform_extension_workbook(path: str | Path) -> dict[str, list[dict[s
     return {"summaries": summaries, "statuses": list(statuses.values())}
 
 
-def split_scopes(raw: str) -> list[dict[str, Any]]:
+def split_scopes(raw: str, station_codes: set[str] | None = None) -> list[dict[str, Any]]:
     text = clean(raw)
     if not text:
         return []
+    upper_text = text.upper()
+    category_scopes = []
+    if re.search(r"\bABSS\b", upper_text):
+        category_scopes.append({"scope_type": "ABSS", "scope_value": text, "station_code": None})
+    if re.fullmatch(r"DIVISION|DIV|SEC:\s*DIVISION:?|SEC:\s*DIV:?", upper_text) or re.search(r"\bDIVISION\b", upper_text):
+        category_scopes.append({"scope_type": "Division", "scope_value": text, "station_code": None})
     body = text
+    explicit_station_scope = bool(re.search(r"\bstn:\s*", text, flags=re.I))
     if re.search(r"\bstn:\s*", text, flags=re.I):
         body = re.split(r"\bstn:\s*", text, flags=re.I, maxsplit=1)[1]
-    tokens = [token.strip() for token in re.split(r",|;|/|&|\band\b", body, flags=re.I) if token.strip()]
-    scopes = []
+    elif re.match(r"^\s*sec\s*:", text, flags=re.I):
+        body = re.split(r"^\s*sec\s*:\s*", text, flags=re.I, maxsplit=1)[1]
+    body = re.sub(r"\([^)]*\)", " ", body)
+    tokens = [token.strip() for token in re.split(r",|;|/|&|\band\b|\n", body, flags=re.I) if token.strip()]
+    scopes = [*category_scopes]
+    seen = {(scope["scope_type"], scope["scope_value"], scope["station_code"]) for scope in scopes}
     for token in tokens or [body]:
-        upper = token.upper()
+        upper = clean(token).upper()
         if "ABSS" in upper:
-            scopes.append({"scope_type": "ABSS", "scope_value": token, "station_code": None})
+            scope = {"scope_type": "ABSS", "scope_value": token, "station_code": None}
+            key = (scope["scope_type"], scope["scope_value"], scope["station_code"])
+            if key not in seen:
+                scopes.append(scope)
+                seen.add(key)
         elif re.search(r"\bDIV(ISION)?\b", upper):
-            scopes.append({"scope_type": "Division", "scope_value": token, "station_code": None})
+            scope = {"scope_type": "Division", "scope_value": token, "station_code": None}
+            key = (scope["scope_type"], scope["scope_value"], scope["station_code"])
+            if key not in seen:
+                scopes.append(scope)
+                seen.add(key)
         else:
-            scopes.append({"scope_type": "Station", "scope_value": token, "station_code": token})
+            candidates = re.findall(r"\b[A-Z]{2,5}[A-Z0-9]?\b", upper)
+            matched = candidates if explicit_station_scope else [code for code in candidates if not station_codes or code in station_codes]
+            if station_codes and not matched and upper in station_codes:
+                matched = [upper]
+            for code in matched or ([upper] if not station_codes else []):
+                scope = {"scope_type": "Station", "scope_value": code, "station_code": code}
+                key = (scope["scope_type"], scope["scope_value"], scope["station_code"])
+                if key not in seen:
+                    scopes.append(scope)
+                    seen.add(key)
     return scopes
 
 
@@ -664,7 +729,7 @@ def unit_sort_map() -> set[str]:
 
 
 def work_sort_map() -> set[str]:
-    return {"project_id", "status", "date_of_sanction", "section", "short_name_of_work"}
+    return {"project_id", "source_project_id", "source_sn", "status", "date_of_sanction", "section", "short_name_of_work"}
 
 
 def earnings_sort_map() -> set[str]:
@@ -673,6 +738,188 @@ def earnings_sort_map() -> set[str]:
 
 def passenger_amenity_sort_map() -> set[str]:
     return {"station_code", "station_name", "category", "section", "work_type", "tender_status", "sanction_date", "tdc", "platform_count", "available_good_condition", "ramp_feasible", "lift_proposed"}
+
+
+def commercial_contract_sort_map() -> set[str]:
+    return {"contract_name", "licensee_name", "allocation_code", "policy", "sub_category", "asset_scope", "annual_license_fee", "quarterly_license_fee", "contract_period_from", "contract_upto", "station_code", "station_match_status"}
+
+
+def _canonical_header(value: Any) -> str:
+    return normalize(re.sub(r"[^A-Za-z0-9]+", " ", clean(value))).strip()
+
+
+def _commercial_policy_label(policy: Any) -> str:
+    text = clean(policy).strip(" -").upper()
+    if text == "ADVERTISING":
+        return "Advertising"
+    if text == "MSS":
+        return "MSS"
+    if text == "PARKING":
+        return "Parking"
+    if "ATM" in text or "BANK" in text or "DBU" in text:
+        return "ATM/Banking"
+    if "PAY" in text:
+        return "Pay and Use"
+    if "PMBJK" in text:
+        return "PMBJK"
+    if "MOBILE" in text:
+        return "Mobile Assets"
+    return clean(policy).strip(" -") or "Unclassified"
+
+
+def _commercial_asset_scope(sub_category: Any, station_value: Any) -> str:
+    text = normalize(" ".join([clean(sub_category), clean(station_value)]))
+    if "out of home" in text or "ooh" in text:
+        return "OOH - Out of Home"
+    if "parking" in text or "radio taxi" in text or "ev" in text:
+        return "Parking / Mobility"
+    if "train" in text or "coach" in text or "memu" in text or "interior" in text or "exterior" in text:
+        return "Mobile / Train Assets"
+    if "atm" in text or "dbu" in text or "bank" in text:
+        return "ATM / Banking"
+    if "pay and use" in text or "toilet" in text:
+        return "Pay and Use"
+    if "kiosk" in text or "store" in text or "locker" in text or "pods" in text:
+        return "Station Retail / MSS"
+    return "Station Commercial"
+
+
+def _split_station_tokens(value: Any) -> list[str]:
+    text = clean(value).upper()
+    if not text:
+        return []
+    return [token.strip() for token in re.split(r"[,;/&]+|\band\b", text, flags=re.I) if token.strip()]
+
+
+def _infer_station_codes(contract_name: Any, station_codes: set[str]) -> list[str]:
+    tokens = re.findall(r"\b[A-Z]{2,5}[A-Z0-9]?\b", clean(contract_name).upper())
+    seen = set()
+    matches = []
+    for token in tokens:
+        if token in station_codes and token not in seen:
+            seen.add(token)
+            matches.append(token)
+    return matches
+
+
+def _commercial_station_links(raw_station: Any, contract_name: Any, station_codes: set[str], asset_scope: str) -> tuple[list[dict[str, Any]], str]:
+    raw = clean(raw_station)
+    direct_tokens = _split_station_tokens(raw)
+    direct_matches = []
+    for token in direct_tokens:
+        if token in station_codes and token not in direct_matches:
+            direct_matches.append(token)
+    inferred = [code for code in _infer_station_codes(contract_name, station_codes) if code not in direct_matches]
+
+    links: list[dict[str, Any]] = []
+    if direct_matches:
+        for code in direct_matches:
+            links.append({"station_code": code, "raw_station_value": raw, "match_type": "station_link", "match_status": "Station linked"})
+        return links, "Station linked"
+
+    if inferred and asset_scope != "Mobile / Train Assets":
+        for code in inferred:
+            links.append({"station_code": code, "raw_station_value": raw or clean(contract_name), "match_type": "station_inferred", "match_status": "Station linked"})
+        return links, "Station linked"
+
+    if raw or asset_scope == "Mobile / Train Assets":
+        links.append({"station_code": None, "raw_station_value": raw or clean(contract_name), "match_type": "asset_scope", "match_status": asset_scope})
+        return links, "asset_scope"
+
+    return [], "unmatched"
+
+
+def parse_commercial_contract_workbook(path_or_bytes: str | bytes) -> dict[str, list[dict[str, Any]]]:
+    try:
+        from openpyxl import load_workbook
+    except ImportError as exc:  # pragma: no cover
+        raise RuntimeError("openpyxl is required to import commercial contracts") from exc
+
+    source = io.BytesIO(path_or_bytes) if isinstance(path_or_bytes, bytes) else path_or_bytes
+    workbook = load_workbook(source, read_only=True, data_only=True)
+    sheet_name = "exp yearly" if "exp yearly" in workbook.sheetnames else workbook.sheetnames[0]
+    sheet = workbook[sheet_name]
+    rows = list(sheet.iter_rows(values_only=True))
+    if not rows:
+        return {"contracts": [], "links": [], "payments": []}
+
+    headers = [cell for cell in rows[0]]
+    normalized_headers = [_canonical_header(cell) for cell in headers]
+    station_codes = {row.get("station_code") for row in list_stations() if row.get("station_code")}
+    station_codes = {clean(code).upper() for code in station_codes}
+
+    month_indexes: list[tuple[int, str, str]] = []
+    year_ending_indexes: list[int] = []
+    total_2026_indexes: list[int] = []
+    for index, header in enumerate(headers):
+        parsed = parse_date_value(header)
+        if parsed and parsed.day == 1:
+            month_indexes.append((index, parsed.isoformat(), str(header)))
+        text = _canonical_header(header)
+        if text == "year ending":
+            year_ending_indexes.append(index)
+        if "2026 2027" in text and "total" in text and "license fee" in text:
+            total_2026_indexes.append(index)
+
+    def value_for(row: tuple[Any, ...], header_name: str) -> Any:
+        wanted = _canonical_header(header_name)
+        for index, header in enumerate(normalized_headers):
+            if header == wanted:
+                return row[index] if index < len(row) else None
+        return None
+
+    contracts: list[dict[str, Any]] = []
+    links: list[dict[str, Any]] = []
+    payments: list[dict[str, Any]] = []
+    for row in rows[1:]:
+        contract_name = clean(value_for(row, "Contract Name"))
+        if not contract_name:
+            continue
+
+        raw_station = clean(value_for(row, "Stn"))
+        policy = _commercial_policy_label(value_for(row, "POLICY"))
+        sub_category = clean(value_for(row, "SUB-CATEGORY"))
+        asset_scope = _commercial_asset_scope(sub_category, raw_station)
+        station_links, station_match_status = _commercial_station_links(raw_station, contract_name, station_codes, asset_scope)
+
+        contract = {
+            "source_sl_no": to_int(value_for(row, "sl no")),
+            "raw_station_value": raw_station,
+            "contract_name": contract_name,
+            "licensee_name": clean(value_for(row, "LICENSEE")),
+            "allocation_code": clean(value_for(row, "ALLOCATION CODE")),
+            "contract_allotted_on": date_text(value_for(row, "CONTRACT ALLOTTED ON")),
+            "policy": policy,
+            "sub_category": sub_category,
+            "asset_scope": asset_scope,
+            "space_sq_ft": to_int(value_for(row, "Space Allotted Sq Ft")),
+            "annual_license_fee": to_int(value_for(row, "Annual License fee")),
+            "quarterly_license_fee": to_int(value_for(row, "QUATERLY LICENSE FEE")),
+            "no_of_years": to_int(value_for(row, "No of years")),
+            "contract_period_from": date_text(value_for(row, "Contract period From")),
+            "contract_upto": date_text(value_for(row, "contract Upto")),
+            "cycle": clean(value_for(row, "CYCLE")),
+            "year_ending_amount": to_int(row[year_ending_indexes[0]]) if year_ending_indexes and year_ending_indexes[0] < len(row) else None,
+            "total_license_fee_2026_2027": to_int(row[total_2026_indexes[0]]) if total_2026_indexes and total_2026_indexes[0] < len(row) else None,
+            "station_match_status": station_match_status,
+        }
+        contracts.append(contract)
+        for link in station_links:
+            links.append({"contract_name": contract_name, **link})
+        for index, month, source_column in month_indexes:
+            amount = to_int(row[index]) if index < len(row) else None
+            if amount is None:
+                continue
+            payments.append({
+                "contract_name": contract_name,
+                "payment_month": month,
+                "source_column": source_column,
+                "amount_due": amount,
+                "amount_paid": amount,
+                "payment_status": "Recorded",
+            })
+
+    return {"contracts": contracts, "links": links, "payments": payments}
 
 
 def list_passenger_amenities(kind: str = "summary", q: str | None = None, station_code: str | None = None) -> list[dict[str, Any]]:
@@ -839,6 +1086,8 @@ def get_stats() -> dict[str, Any]:
             "units": session.query(func.count(Unit.unit_no)).scalar() or 0,
             "works": session.query(func.count(Work.work_key)).scalar() or 0,
             "earnings": session.query(func.count(Earning.earning_key)).scalar() or 0,
+            "commercialContracts": session.query(func.count(CommercialContract.contract_key)).scalar() or 0,
+            "commercialRevenue": session.query(func.coalesce(func.sum(CommercialContract.annual_license_fee), 0)).scalar() or 0,
             "links": session.query(func.count(WorkLink.id)).scalar() or 0,
             "earningsTotal": session.query(func.coalesce(func.sum(Earning.amount), 0)).scalar() or 0,
             "footfall": session.query(func.coalesce(func.sum(Station.passenger_footfall), 0)).scalar() or 0,
@@ -952,6 +1201,208 @@ def list_earnings(q: str | None = None, unit_no: str | None = None, station_code
         session.close()
 
 
+def list_commercial_contracts(q: str | None = None, station_code: str | None = None, policy: str | None = None, sub_category: str | None = None, allocation_code: str | None = None) -> list[dict[str, Any]]:
+    session = SessionLocal()
+    try:
+        query = (
+            session.query(CommercialContract, CommercialContractStationLink, Station.station_name, Station.division, Station.section, Station.categorisation)
+            .join(CommercialContractStationLink, CommercialContractStationLink.contract_key == CommercialContract.contract_key, isouter=True)
+            .join(Station, Station.station_code == CommercialContractStationLink.station_code, isouter=True)
+        )
+        if q:
+            like = f"%{q}%"
+            query = query.filter(
+                (CommercialContract.contract_name.ilike(like))
+                | (CommercialContract.licensee_name.ilike(like))
+                | (CommercialContract.policy.ilike(like))
+                | (CommercialContract.sub_category.ilike(like))
+                | (CommercialContract.asset_scope.ilike(like))
+                | (CommercialContract.allocation_code.ilike(like))
+                | (CommercialContract.raw_station_value.ilike(like))
+                | (CommercialContractStationLink.station_code.ilike(like))
+            )
+        if station_code and station_code != "All":
+            query = query.filter(CommercialContractStationLink.station_code == station_code)
+        if policy and policy != "All":
+            query = query.filter(CommercialContract.policy == policy)
+        if sub_category and sub_category != "All":
+            query = query.filter(CommercialContract.sub_category == sub_category)
+        if allocation_code and allocation_code != "All":
+            query = query.filter(CommercialContract.allocation_code == allocation_code)
+
+        rows = []
+        seen_stationless = set()
+        for contract, link, station_name, division, section, categorisation in query.order_by(CommercialContract.policy, CommercialContract.contract_name).all():
+            if not link and contract.contract_key in seen_stationless:
+                continue
+            seen_stationless.add(contract.contract_key)
+            rows.append({
+                **row_to_dict(contract),
+                "station_code": link.station_code if link else None,
+                "station_name": station_name,
+                "division": division,
+                "section": section,
+                "categorisation": categorisation,
+                "station_match_status": "Station linked" if link and link.station_code else contract.station_match_status,
+                "link_raw_station_value": link.raw_station_value if link else contract.raw_station_value,
+                "match_type": link.match_type if link else None,
+                "match_status": link.match_status if link else contract.station_match_status,
+            })
+        return rows
+    finally:
+        session.close()
+
+
+def get_commercial_contract_detail(contract_key: int) -> dict[str, Any] | None:
+    session = SessionLocal()
+    try:
+        contract = session.get(CommercialContract, contract_key)
+        if not contract:
+            return None
+        links = (
+            session.query(CommercialContractStationLink, Station.station_name, Station.division, Station.section, Station.categorisation)
+            .join(Station, Station.station_code == CommercialContractStationLink.station_code, isouter=True)
+            .filter(CommercialContractStationLink.contract_key == contract_key)
+            .order_by(CommercialContractStationLink.station_code)
+            .all()
+        )
+        payments = session.query(CommercialContractPayment).filter(CommercialContractPayment.contract_key == contract_key).order_by(CommercialContractPayment.payment_month).all()
+        return {
+            "contract": row_to_dict(contract),
+            "station_links": [
+                {
+                    **row_to_dict(link),
+                    "station_name": station_name,
+                    "division": division,
+                    "section": section,
+                    "categorisation": categorisation,
+                }
+                for link, station_name, division, section, categorisation in links
+            ],
+            "payments": [row_to_dict(row) for row in payments],
+            "payment_total": sum(to_money(row.amount_paid) for row in payments),
+        }
+    finally:
+        session.close()
+
+
+def get_commercial_contract_reports(today: date | None = None) -> dict[str, Any]:
+    today = today or date.today()
+    next_30 = today + timedelta(days=30)
+    next_90 = today + timedelta(days=90)
+    session = SessionLocal()
+    try:
+        contracts = session.query(CommercialContract).all()
+        payments = session.query(CommercialContractPayment, CommercialContract).join(CommercialContract, CommercialContract.contract_key == CommercialContractPayment.contract_key).all()
+        links = session.query(CommercialContractStationLink).all()
+
+        by_policy: dict[str, int] = {}
+        by_policy_value: dict[str, int] = {}
+        by_sub_category: dict[str, int] = {}
+        by_asset_scope: dict[str, int] = {}
+        expiry_alerts = []
+        unmatched = []
+        for contract in contracts:
+            policy_key = clean(contract.policy) or "Unclassified"
+            sub_key = clean(contract.sub_category) or "Unclassified"
+            scope_key = clean(contract.asset_scope) or "Unclassified"
+            annual = to_money(contract.annual_license_fee)
+            by_policy[policy_key] = by_policy.get(policy_key, 0) + 1
+            by_policy_value[policy_key] = by_policy_value.get(policy_key, 0) + annual
+            by_sub_category[sub_key] = by_sub_category.get(sub_key, 0) + 1
+            by_asset_scope[scope_key] = by_asset_scope.get(scope_key, 0) + 1
+            upto = parse_date_value(contract.contract_upto)
+            if upto and today <= upto <= next_90:
+                bucket = "next_30_days" if upto <= next_30 else "next_90_days"
+                expiry_alerts.append({
+                    "contract_key": contract.contract_key,
+                    "contract_name": contract.contract_name,
+                    "licensee_name": contract.licensee_name,
+                    "policy": contract.policy,
+                    "sub_category": contract.sub_category,
+                    "contract_upto": contract.contract_upto,
+                    "days_to_expiry": (upto - today).days,
+                    "alert_bucket": bucket,
+                })
+            if contract.station_match_status in {"unmatched", "asset_scope"}:
+                unmatched.append({
+                    "contract_key": contract.contract_key,
+                    "contract_name": contract.contract_name,
+                    "raw_station_value": contract.raw_station_value,
+                    "policy": contract.policy,
+                    "sub_category": contract.sub_category,
+                    "asset_scope": contract.asset_scope,
+                    "station_match_status": contract.station_match_status,
+                })
+
+        by_month: dict[str, int] = {}
+        pending_like = []
+        for payment, contract in payments:
+            by_month[payment.payment_month] = by_month.get(payment.payment_month, 0) + to_money(payment.amount_paid)
+            if to_money(payment.amount_due) > to_money(payment.amount_paid):
+                pending_like.append({
+                    **row_to_dict(payment),
+                    "contract_name": contract.contract_name,
+                    "licensee_name": contract.licensee_name,
+                    "policy": contract.policy,
+                    "sub_category": contract.sub_category,
+                    "pending_amount": to_money(payment.amount_due) - to_money(payment.amount_paid),
+                })
+
+        station_link_counts: dict[str, int] = {}
+        for link in links:
+            key = clean(link.station_code) or clean(link.match_status) or "Asset Scope"
+            station_link_counts[key] = station_link_counts.get(key, 0) + 1
+
+        return {
+            "total_contracts": len(contracts),
+            "linked_station_rows": sum(1 for link in links if link.station_code),
+            "asset_scope_rows": sum(1 for link in links if not link.station_code),
+            "annual_license_fee": sum(to_money(row.annual_license_fee) for row in contracts),
+            "recorded_payments": sum(to_money(payment.amount_paid) for payment, _ in payments),
+            "by_policy": [{"label": key, "value": value, "amount": by_policy_value.get(key, 0)} for key, value in sorted(by_policy.items(), key=lambda item: item[1], reverse=True)],
+            "by_sub_category": [{"label": key, "value": value} for key, value in sorted(by_sub_category.items(), key=lambda item: item[1], reverse=True)[:20]],
+            "by_asset_scope": [{"label": key, "value": value} for key, value in sorted(by_asset_scope.items(), key=lambda item: item[1], reverse=True)],
+            "by_month": [{"label": key, "value": value} for key, value in sorted(by_month.items())[-24:]],
+            "by_station": [{"label": key, "value": value} for key, value in sorted(station_link_counts.items(), key=lambda item: item[1], reverse=True)[:20]],
+            "expiry_alerts": sorted(expiry_alerts, key=lambda row: row["days_to_expiry"]),
+            "pending_payments": pending_like,
+            "unmatched_or_asset_scope": unmatched,
+        }
+    finally:
+        session.close()
+
+
+def _fob_access_details(
+    infra: StationInfra | None,
+    status: StationPlatformExtensionStatus | None,
+) -> list[str]:
+    """Convert PA Infra Lifts & Ramp flags into station-facing access modes."""
+    if not infra and not status:
+        return []
+    modes: list[str] = []
+    fob_text = normalize(infra.fob_details if infra else "")
+    if status and status.fob_without:
+        modes.append("FOB not recorded")
+    elif fob_text and fob_text not in {"-", "none", "no"}:
+        modes.append("FOB")
+        if status and status.fob_ramp_available:
+            modes.append("Ramp available")
+        if status and status.lift_available:
+            modes.append("Lift available")
+        if not status or not status.fob_ramp_available and not status.lift_available:
+            modes.append("Stairs")
+    if status and status.fob_wip:
+        modes.append("FOB work in progress")
+    if status and status.ramp_proposed:
+        modes.append("Ramp proposed")
+    if status and status.lift_proposed:
+        modes.append("Lift proposed")
+    if status and status.not_feasible_lift_ramp:
+        modes.append("Lift / ramp not feasible")
+    return list(dict.fromkeys(modes))
+
+
 def get_station_detail(station_code: str) -> dict[str, Any] | None:
     code = clean(station_code).upper()
     session = SessionLocal()
@@ -978,6 +1429,7 @@ def get_station_detail(station_code: str) -> dict[str, Any] | None:
         ]
 
         works = list_works(station_code=code)
+        commercial_contracts = list_commercial_contracts(station_code=code)
         infra = session.query(StationInfra).filter(StationInfra.station_code == code).one_or_none()
         platforms = session.query(PlatformDetail).filter(PlatformDetail.station_code == code).order_by(PlatformDetail.platform).all()
         wheelchairs = session.query(WheelChairAvailability).filter(WheelChairAvailability.station_code == code).one_or_none()
@@ -994,6 +1446,7 @@ def get_station_detail(station_code: str) -> dict[str, Any] | None:
             "trolley": row_to_dict(trolley) if trolley else None,
             "pa_works": [row_to_dict(row) for row in pa_works],
             "pf_extension_status": row_to_dict(pf_extension) if pf_extension else None,
+            "fob_access": _fob_access_details(infra, pf_extension),
             "norms": [row_to_dict(row) for row in norms],
         }
         amenity_summary = {
@@ -1023,6 +1476,7 @@ def get_station_detail(station_code: str) -> dict[str, Any] | None:
             "units": units,
             "earnings": earnings,
             "works": works,
+            "commercial_contracts": commercial_contracts,
             "amenities": amenities,
             "amenity_summary": amenity_summary,
         }
@@ -1199,6 +1653,7 @@ def get_reports(today: date | None = None) -> dict[str, Any]:
             "due_next_90_days": 5,
         }
         alerts.sort(key=lambda row: (bucket_order.get(row["alert_bucket"], 9), row["days_to_contract_end"] is None, row["days_to_contract_end"] or 99999, row["unit_no"] or ""))
+        commercial_reports = get_commercial_contract_reports(today)
 
         return {
             "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -1264,6 +1719,7 @@ def get_reports(today: date | None = None) -> dict[str, Any]:
                 "estimated_overdue_amount": estimated_overdue_amount,
                 "rows": alerts[:300],
             },
+            "commercial_contracts": commercial_reports,
         }
     finally:
         session.close()

@@ -7,12 +7,26 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 
+def load_local_env() -> None:
+    env_path = Path(__file__).resolve().with_name(".env")
+    if not env_path.exists():
+        return
+    for line in env_path.read_text().splitlines():
+        if not line.strip() or line.lstrip().startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip())
+
+
 def get_database_url() -> str:
+    load_local_env()
     url = os.getenv("DATABASE_URL")
     if url:
         return url
-    sqlite_path = Path(__file__).resolve().with_name("rail_dashboard.db")
-    return f"sqlite+pysqlite:///{sqlite_path}"
+    if os.getenv("ALLOW_SQLITE_FALLBACK") == "1":
+        sqlite_path = Path(__file__).resolve().with_name("rail_dashboard.db")
+        return f"sqlite+pysqlite:///{sqlite_path}"
+    raise RuntimeError("DATABASE_URL is required. Configure PostgreSQL before starting the backend.")
 
 
 def make_engine():

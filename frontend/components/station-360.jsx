@@ -4,12 +4,22 @@ import { BarChart3, CircleAlert, Database, TrainFront, Wallet, Wrench } from "lu
 import { Badge, Button, DataTable, Panel, Tabs } from "./ui";
 
 const boolText = (value) => (value ? "Yes" : "No");
+const dailyFootfall = (station) => {
+  const annual = Number(station.passenger_footfall || 0);
+  return annual > 0 ? Math.round(annual / 30).toLocaleString("en-IN") : "NA";
+};
+const platformTotal = (rows = [], fallback = 0) => {
+  const numbers = rows.flatMap((row) => String(row.platform || row.pf_no || "").match(/\d+/g) || [])
+    .map(Number)
+    .filter(Number.isFinite);
+  return numbers.length ? Math.max(...numbers) : Number(fallback || rows.length || 0);
+};
 
 function KeyValueGrid({ rows }) {
   return (
     <dl className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
       {rows.map(([label, value]) => (
-        <div key={label} className="rounded-xl border border-line bg-surface p-3">
+        <div key={label} className="soft-raised rounded-lg border border-line p-3">
           <dt className="text-[11px] font-black uppercase tracking-[0.16em] text-muted">{label}</dt>
           <dd className="mt-1 text-sm font-semibold text-ink">{value === null || value === undefined || value === "" ? "NA" : String(value)}</dd>
         </div>
@@ -20,7 +30,7 @@ function KeyValueGrid({ rows }) {
 
 function StationMetric({ label, value, subtext, tone = "accent" }) {
   return (
-    <div className="rounded-2xl border border-line bg-surface/80 p-4">
+    <div className="soft-surface rounded-lg border p-4">
       <div className="text-[11px] font-black uppercase tracking-[0.16em] text-muted">{label}</div>
       <div className="mt-2 text-2xl font-black text-ink">{value}</div>
       <div className="mt-1 text-xs font-semibold text-muted">{subtext}</div>
@@ -64,7 +74,7 @@ function StationRiskPanel({ record, stationAlerts = [], qualityRows = [] }) {
       <Panel title="License Fee Alerts" subtitle="Rows from the reports module linked to this station.">
         <div className="space-y-2">
           {alerts.length ? alerts.map((row, index) => (
-            <div key={`${row.unit_no}-${index}`} className="rounded-xl border border-line bg-surface p-3">
+            <div key={`${row.unit_no}-${index}`} className="soft-raised rounded-lg border border-line p-3">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-black text-blue">{row.unit_no}</span>
                 <Badge tone={row.alert_bucket === "overdue" ? "danger" : "accent"}>{String(row.alert_bucket || "alert").replaceAll("_", " ")}</Badge>
@@ -89,6 +99,7 @@ export function Station360({
   stationAlerts,
   qualityRows,
   openAmenity,
+  openCommercialContract,
   openUnit,
   openWork,
   money,
@@ -96,11 +107,13 @@ export function Station360({
   const station = record.station || {};
   const amenities = record.amenities || {};
   const summary = record.amenity_summary || {};
+  const totalPlatforms = platformTotal(amenities.platforms, summary.platforms);
   const tabs = [
     { value: "overview", label: "Overview", icon: TrainFront },
     { value: "platforms", label: "Platforms", icon: BarChart3 },
     { value: "amenities", label: "Amenities", icon: Database },
     { value: "contracts", label: "Contracts", icon: Wallet },
+    { value: "commercial", label: "Commercial", icon: Database },
     { value: "works", label: "Works", icon: Wrench },
     { value: "alerts", label: "Risks", icon: CircleAlert },
     { value: "norms", label: "Norms", icon: CircleAlert },
@@ -108,11 +121,10 @@ export function Station360({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-3 rounded-2xl border border-line bg-surface/70 p-4 lg:flex-row lg:items-center lg:justify-between">
+      <div className="soft-inset flex flex-col gap-3 rounded-lg border border-line p-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <div className="text-[11px] font-black uppercase tracking-[0.18em] text-accent">Station 360</div>
-          <div className="mt-1 text-2xl font-black text-ink">{station.station_code} - {station.station_name || "Station"}</div>
-          <div className="mt-1 text-sm text-muted">{station.division || "NA"} | {station.section || "NA"} | {station.categorisation || "NA"}</div>
+          <div className="text-[11px] font-black uppercase tracking-[0.18em] text-accent">Operational profile</div>
+          <div className="mt-1 text-sm font-semibold text-muted">Linked amenities, contracts, commercial assets, works, and risks.</div>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="secondary" size="sm" onClick={onEdit}>Edit Station</Button>
@@ -120,10 +132,11 @@ export function Station360({
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <StationMetric label="Contracts" value={record.contracts?.length ?? record.units?.length ?? 0} subtext="Linked by station code" />
+        <StationMetric label="Commercial" value={record.commercial_contracts?.length ?? 0} subtext="OOH, parking, ATM, mobile" />
         <StationMetric label="Works" value={record.works?.length ?? 0} subtext="Sanctioned works linked" />
-        <StationMetric label="Platforms" value={summary.platforms ?? amenities.platforms?.length ?? 0} subtext={summary.total_platform_length ? `${summary.total_platform_length} m total length` : "Platform details"} />
+        <StationMetric label="Platforms" value={totalPlatforms} subtext={summary.total_platform_length ? `${summary.total_platform_length} m total length` : "Highest platform number"} />
         <StationMetric label="Amenity Risk" value={summary.open_pa_works ?? 0} subtext="Open PA works" tone={summary.open_pa_works ? "danger" : "accent"} />
       </div>
 
@@ -133,13 +146,14 @@ export function Station360({
         <div className="space-y-4">
           <KeyValueGrid
             rows={[
-              ["Station Code", station.station_code],
-              ["Station Name", station.station_name],
               ["Division", station.division],
+              ["Zone", station.zone],
               ["Section", station.section],
               ["Category", station.categorisation],
               ["Platform Type", station.platform_type],
-              ["Footfall", station.passenger_footfall],
+              ["Daily Footfall", dailyFootfall(station)],
+              ["Total Platforms", totalPlatforms],
+              ["Earnings Per Day", station.earnings_per_day],
               ["Passenger Range", station.passenger_range],
               ["Wheel Chairs", summary.wheel_chairs],
               ["Trolley Path", summary.trolley_path],
@@ -218,6 +232,17 @@ export function Station360({
           onRowClick={openUnit}
           emptyTitle="No catering contracts found for this station."
           fileName={`${station.station_code}-contracts.csv`}
+        />
+      ) : null}
+
+      {activeTab === "commercial" ? (
+        <DataTable
+          columns={columns.commercialContractColumns}
+          rows={record.commercial_contracts || []}
+          getKey={(row, index) => `${row.contract_key}-${row.station_code}-${index}`}
+          onRowClick={openCommercialContract}
+          emptyTitle="No non-catering commercial contracts found for this station."
+          fileName={`${station.station_code}-commercial-contracts.csv`}
         />
       ) : null}
 

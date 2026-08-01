@@ -1,11 +1,19 @@
-export const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://sbcnav.onrender.com";
+function resolveApiUrl() {
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  if (typeof window !== "undefined" && ["127.0.0.1", "localhost"].includes(window.location.hostname)) {
+    return "http://127.0.0.1:8000";
+  }
+  return "https://sbcnav.onrender.com";
+}
+
+export const API_URL = resolveApiUrl();
 
 const defaultPage = { items: [], pagination: { total: 0, page: 1, page_size: 0 } };
 
 export async function fetchJson(url, options) {
   let response;
   try {
-    response = await fetch(url, options);
+    response = await fetch(url, { cache: "no-store", ...(options || {}) });
   } catch (error) {
     throw new Error(`Network error while reaching API: ${error?.message || "request failed"}`);
   }
@@ -41,6 +49,8 @@ export async function loadRailDashboardData() {
     fetchOrDefault(`${API_URL}/api/units?page=1&page_size=5000&sort_by=unit_no`, defaultPage),
     fetchOrDefault(`${API_URL}/api/earnings?page=1&page_size=5000&sort_by=date_of_receipt&sort_order=desc`, defaultPage),
     fetchOrDefault(`${API_URL}/api/works?page=1&page_size=5000&sort_by=project_id`, defaultPage),
+    fetchOrDefault(`${API_URL}/api/commercial-contracts?page=1&page_size=5000&sort_by=contract_name`, defaultPage),
+    fetchOrDefault(`${API_URL}/api/commercial-contracts/reports`, {}),
     fetchOrDefault(`${API_URL}/api/reports`, {}),
     fetchOrDefault(`${API_URL}/api/passenger-amenities?kind=summary&page=1&page_size=5000&sort_by=station_code`, defaultPage),
     fetchOrDefault(`${API_URL}/api/passenger-amenities?kind=infra&page=1&page_size=5000&sort_by=station_code`, defaultPage),
@@ -58,6 +68,8 @@ export async function loadRailDashboardData() {
     unitsData,
     earningsData,
     worksData,
+    commercialContractsData,
+    commercialContractReportsData,
     reportsData,
     paSummaryData,
     paInfraData,
@@ -77,6 +89,8 @@ export async function loadRailDashboardData() {
     units: unitsData.items || [],
     earnings: earningsData.items || [],
     works: worksData.items || [],
+    commercialContracts: commercialContractsData.items || [],
+    commercialContractReports: commercialContractReportsData,
     reports: reportsData,
     passengerAmenities: {
       summary: paSummaryData.items || [],
@@ -103,6 +117,18 @@ export function importPassengerAmenitiesUrl() {
 
 export function importPfExtensionUrl() {
   return `${API_URL}/api/passenger-amenities/import-pf-extension`;
+}
+
+export function commercialContractDetailUrl(contractKey) {
+  return `${API_URL}/api/commercial-contracts/${encodeURIComponent(contractKey)}`;
+}
+
+export function importCommercialContractsUrl() {
+  return `${API_URL}/api/commercial-contracts/import`;
+}
+
+export function importSanctionedWorksUrl() {
+  return `${API_URL}/api/works/import-sanctioned`;
 }
 
 export function aiQueryUrl() {

@@ -82,25 +82,26 @@ def upgrade() -> None:
         *audit_columns(),
         sa.UniqueConstraint("station_code", name="uq_station_pf_extension_status_station_code"),
     )
-    for column in [
-        "station_code",
-        "category",
-        "source_category",
-        "station_detail_category_code",
-        "pf_extension_wip",
-        "pf_extension_proposed",
-        "raising_extension_proposed",
-        "platform_extension_work_proposed",
-        "ramp_feasible",
-        "fob_without",
-        "fob_ramp_available",
-        "fob_wip",
-        "lift_available",
-        "lift_proposed",
-        "ramp_proposed",
-        "not_feasible_lift_ramp",
-    ]:
-        op.create_index(f"ix_station_platform_extension_status_{column}", "station_platform_extension_status", [column])
+    status_indexes = {
+        "station_code": "ix_pf_status_station_code",
+        "category": "ix_pf_status_category",
+        "source_category": "ix_pf_status_source_category",
+        "station_detail_category_code": "ix_pf_status_detail_category_code",
+        "pf_extension_wip": "ix_pf_status_pf_extension_wip",
+        "pf_extension_proposed": "ix_pf_status_pf_extension_proposed",
+        "raising_extension_proposed": "ix_pf_status_raising_extension_proposed",
+        "platform_extension_work_proposed": "ix_pf_status_platform_work_proposed",
+        "ramp_feasible": "ix_pf_status_ramp_feasible",
+        "fob_without": "ix_pf_status_fob_without",
+        "fob_ramp_available": "ix_pf_status_fob_ramp_available",
+        "fob_wip": "ix_pf_status_fob_wip",
+        "lift_available": "ix_pf_status_lift_available",
+        "lift_proposed": "ix_pf_status_lift_proposed",
+        "ramp_proposed": "ix_pf_status_ramp_proposed",
+        "not_feasible_lift_ramp": "ix_pf_status_not_feasible_lift_ramp",
+    }
+    for column, index_name in status_indexes.items():
+        op.create_index(index_name, "station_platform_extension_status", [column])
 
 
 def downgrade() -> None:

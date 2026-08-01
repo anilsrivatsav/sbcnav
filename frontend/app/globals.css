@@ -4,46 +4,52 @@
 
 :root {
   color-scheme: light;
-  --color-ink: 18 32 51;
-  --color-muted: 102 112 133;
-  --color-line: 217 226 236;
-  --color-page: 238 243 247;
-  --color-surface: 255 255 255;
-  --color-surface-strong: 248 251 253;
-  --color-accent: 15 118 110;
-  --color-accent-soft: 217 242 238;
-  --color-accent-strong: 11 95 89;
-  --color-blue: 35 78 112;
-  --shadow-soft: 0 18px 48px rgba(18, 32, 51, 0.1);
-  --shadow-glow: 0 22px 70px rgba(15, 118, 110, 0.14);
-  --glass-bg: linear-gradient(145deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.52));
-  --glass-border: rgba(255, 255, 255, 0.9);
-  --page-background:
-    linear-gradient(135deg, rgba(15, 118, 110, 0.13), transparent 34%),
-    linear-gradient(225deg, rgba(35, 78, 112, 0.11), transparent 42%),
-    linear-gradient(180deg, #f7fafc 0%, #eef3f7 52%, #e7eef4 100%);
+  --color-ink: 30 42 53;
+  --color-muted: 94 107 119;
+  --color-line: 197 207 215;
+  --color-page: 232 237 241;
+  --color-surface: 239 243 246;
+  --color-surface-strong: 249 251 252;
+  --color-accent: 16 124 116;
+  --color-accent-soft: 207 235 231;
+  --color-accent-strong: 10 91 85;
+  --color-blue: 45 101 145;
+  --shadow-soft:
+    7px 7px 16px rgba(172, 183, 192, 0.62),
+    -7px -7px 16px rgba(255, 255, 255, 0.9);
+  --shadow-raised:
+    4px 4px 10px rgba(172, 183, 192, 0.56),
+    -4px -4px 10px rgba(255, 255, 255, 0.82);
+  --shadow-pressed:
+    inset 3px 3px 7px rgba(172, 183, 192, 0.52),
+    inset -3px -3px 7px rgba(255, 255, 255, 0.78);
+  --shadow-overlay: 0 18px 50px rgba(30, 42, 53, 0.22);
+  --page-background: rgb(var(--color-page));
 }
 
 [data-theme="dark"] {
   color-scheme: dark;
-  --color-ink: 236 244 248;
-  --color-muted: 157 174 190;
-  --color-line: 47 67 82;
-  --color-page: 9 17 26;
-  --color-surface: 16 28 40;
-  --color-surface-strong: 21 36 50;
-  --color-accent: 45 212 191;
-  --color-accent-soft: 18 68 64;
-  --color-accent-strong: 153 246 228;
-  --color-blue: 147 197 253;
-  --shadow-soft: 0 22px 60px rgba(0, 0, 0, 0.28);
-  --shadow-glow: 0 24px 80px rgba(45, 212, 191, 0.13);
-  --glass-bg: linear-gradient(145deg, rgba(21, 36, 50, 0.82), rgba(12, 23, 34, 0.56));
-  --glass-border: rgba(148, 180, 202, 0.28);
-  --page-background:
-    linear-gradient(135deg, rgba(45, 212, 191, 0.12), transparent 35%),
-    linear-gradient(225deg, rgba(147, 197, 253, 0.1), transparent 42%),
-    linear-gradient(180deg, #09111a 0%, #0e1924 54%, #101c28 100%);
+  --color-ink: 235 240 243;
+  --color-muted: 157 169 178;
+  --color-line: 62 73 81;
+  --color-page: 35 42 47;
+  --color-surface: 40 48 54;
+  --color-surface-strong: 47 56 63;
+  --color-accent: 55 197 184;
+  --color-accent-soft: 35 78 74;
+  --color-accent-strong: 137 235 224;
+  --color-blue: 115 178 224;
+  --shadow-soft:
+    7px 7px 16px rgba(17, 21, 24, 0.72),
+    -7px -7px 16px rgba(64, 75, 83, 0.42);
+  --shadow-raised:
+    4px 4px 10px rgba(17, 21, 24, 0.68),
+    -4px -4px 10px rgba(64, 75, 83, 0.34);
+  --shadow-pressed:
+    inset 3px 3px 7px rgba(16, 20, 23, 0.72),
+    inset -3px -3px 7px rgba(67, 78, 86, 0.32);
+  --shadow-overlay: 0 18px 50px rgba(0, 0, 0, 0.46);
+  --page-background: rgb(var(--color-page));
 }
 
 html,
@@ -57,6 +63,7 @@ body {
   color: rgb(var(--color-ink));
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  overflow-x: hidden;
 }
 
 html {
@@ -67,19 +74,32 @@ html {
   box-sizing: border-box;
 }
 
-.glass {
-  background: var(--glass-bg);
-  border-color: var(--glass-border);
-  backdrop-filter: blur(22px) saturate(140%);
-  -webkit-backdrop-filter: blur(22px) saturate(140%);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.46),
-    inset 0 -1px 0 rgba(255, 255, 255, 0.08),
-    var(--shadow-soft);
+.soft-surface {
+  background: rgb(var(--color-surface));
+  border-color: rgb(var(--color-line));
+  box-shadow: var(--shadow-soft);
 }
 
-.glass::before {
-  pointer-events: none;
+.soft-raised {
+  background: rgb(var(--color-surface));
+  box-shadow: var(--shadow-raised);
+}
+
+.soft-inset {
+  background: rgb(var(--color-surface));
+  box-shadow: var(--shadow-pressed);
+}
+
+.soft-control {
+  background: rgb(var(--color-surface));
+  border: 1px solid rgb(var(--color-line));
+  box-shadow: var(--shadow-raised);
+}
+
+.soft-control:active:not(:disabled),
+.soft-control[aria-pressed="true"] {
+  box-shadow: var(--shadow-pressed);
+  transform: translateY(1px);
 }
 
 button,
@@ -87,6 +107,17 @@ input,
 select,
 textarea {
   color: inherit;
+}
+
+button,
+[role="button"] {
+  -webkit-tap-highlight-color: transparent;
+}
+
+input,
+select,
+textarea {
+  background-color: rgb(var(--color-surface-strong));
 }
 
 ::selection {
@@ -120,5 +151,18 @@ textarea {
 }
 
 .focus-ring:focus-visible {
-  box-shadow: 0 0 0 3px rgb(var(--color-accent) / 0.22);
+  box-shadow:
+    0 0 0 3px rgb(var(--color-page)),
+    0 0 0 5px rgb(var(--color-accent) / 0.72);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }

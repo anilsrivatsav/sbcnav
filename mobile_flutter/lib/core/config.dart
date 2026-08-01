@@ -3,4 +3,7 @@ class AppConfig {
     'API_BASE_URL',
     defaultValue: 'http://10.0.2.2:8000',
   );
+
+  static const requestTimeout = Duration(seconds: 25);
+  static const pageSize = 500;
 }

@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
@@ -46,6 +55,8 @@ class Station(Base, AuditMixin):
     passengers_per_day: Mapped[int | None] = mapped_column(Integer)
     earnings_per_day: Mapped[int | None] = mapped_column(Integer)
     footfalls_per_day: Mapped[int | None] = mapped_column(Integer)
+    abss_flag: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    redevelopment_flag: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
 
 
 class Unit(Base, AuditMixin):
@@ -80,6 +91,8 @@ class Work(Base, AuditMixin):
 
     work_key: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     project_id: Mapped[str] = mapped_column(String(128), index=True)
+    source_sn: Mapped[int | None] = mapped_column(Integer, index=True)
+    source_project_id: Mapped[str | None] = mapped_column(Text, index=True)
     year_of_sanction: Mapped[str | None] = mapped_column(Text)
     year_ub_works: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str | None] = mapped_column(Text, index=True)
@@ -87,6 +100,10 @@ class Work(Base, AuditMixin):
     short_name_of_work: Mapped[str | None] = mapped_column(Text, index=True)
     block_section_station: Mapped[str | None] = mapped_column(Text)
     allocation: Mapped[str | None] = mapped_column(Text)
+    cost: Mapped[int | None] = mapped_column(Integer)
+    expenditure_upto_date: Mapped[int | None] = mapped_column(Integer)
+    physical_progress: Mapped[str | None] = mapped_column(Text)
+    financial_progress: Mapped[str | None] = mapped_column(Text)
     engg_remarks: Mapped[str | None] = mapped_column(Text)
     if_ub: Mapped[str | None] = mapped_column(Text)
     parent_work: Mapped[str | None] = mapped_column(Text)
@@ -315,6 +332,64 @@ class EarningLink(Base):
     match_status: Mapped[str | None] = mapped_column(Text, index=True)
 
 
+class CommercialContract(Base, AuditMixin):
+    __tablename__ = "commercial_contracts"
+    __table_args__ = (
+        UniqueConstraint("contract_name", name="uq_commercial_contracts_contract_name"),
+    )
+
+    contract_key: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_sl_no: Mapped[int | None] = mapped_column(Integer, index=True)
+    raw_station_value: Mapped[str | None] = mapped_column(Text, index=True)
+    contract_name: Mapped[str] = mapped_column(String(255), index=True)
+    licensee_name: Mapped[str | None] = mapped_column(Text, index=True)
+    allocation_code: Mapped[str | None] = mapped_column(String(64), index=True)
+    contract_allotted_on: Mapped[str | None] = mapped_column(Text, index=True)
+    policy: Mapped[str | None] = mapped_column(Text, index=True)
+    sub_category: Mapped[str | None] = mapped_column(Text, index=True)
+    asset_scope: Mapped[str | None] = mapped_column(Text, index=True)
+    space_sq_ft: Mapped[int | None] = mapped_column(Integer)
+    annual_license_fee: Mapped[int | None] = mapped_column(Integer, index=True)
+    quarterly_license_fee: Mapped[int | None] = mapped_column(Integer, index=True)
+    no_of_years: Mapped[int | None] = mapped_column(Integer)
+    contract_period_from: Mapped[str | None] = mapped_column(Text, index=True)
+    contract_upto: Mapped[str | None] = mapped_column(Text, index=True)
+    cycle: Mapped[str | None] = mapped_column(Text, index=True)
+    year_ending_amount: Mapped[int | None] = mapped_column(Integer)
+    total_license_fee_2026_2027: Mapped[int | None] = mapped_column(Integer)
+    station_match_status: Mapped[str | None] = mapped_column(Text, index=True)
+    remarks: Mapped[str | None] = mapped_column(Text)
+
+
+class CommercialContractStationLink(Base):
+    __tablename__ = "commercial_contract_station_links"
+    __table_args__ = (
+        UniqueConstraint("contract_key", "station_code", "raw_station_value", "match_type", name="uq_commercial_contract_station_link"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    contract_key: Mapped[int] = mapped_column(Integer, ForeignKey("commercial_contracts.contract_key", ondelete="CASCADE"), index=True)
+    station_code: Mapped[str | None] = mapped_column(String(64), ForeignKey("stations.station_code", ondelete="SET NULL"), index=True)
+    raw_station_value: Mapped[str | None] = mapped_column(Text, index=True)
+    match_type: Mapped[str | None] = mapped_column(Text, index=True)
+    match_status: Mapped[str | None] = mapped_column(Text, index=True)
+
+
+class CommercialContractPayment(Base, AuditMixin):
+    __tablename__ = "commercial_contract_payments"
+    __table_args__ = (
+        UniqueConstraint("contract_key", "payment_month", name="uq_commercial_contract_payment_month"),
+    )
+
+    payment_key: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    contract_key: Mapped[int] = mapped_column(Integer, ForeignKey("commercial_contracts.contract_key", ondelete="CASCADE"), index=True)
+    payment_month: Mapped[str] = mapped_column(String(16), index=True)
+    source_column: Mapped[str | None] = mapped_column(Text)
+    amount_due: Mapped[int | None] = mapped_column(Integer, index=True)
+    amount_paid: Mapped[int | None] = mapped_column(Integer, index=True)
+    payment_status: Mapped[str | None] = mapped_column(Text, index=True)
+
+
 class DataChangeLog(Base):
     __tablename__ = "data_change_logs"
 
@@ -325,4 +400,173 @@ class DataChangeLog(Base):
     source: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
     details: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class InspectionTemplate(Base, AuditMixin):
+    __tablename__ = "inspection_templates"
+    __table_args__ = (
+        UniqueConstraint("template_code", "version", name="uq_inspection_templates_code_version"),
+    )
+
+    template_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    template_code: Mapped[str] = mapped_column(String(64), index=True)
+    name: Mapped[str] = mapped_column(String(255), index=True)
+    domain: Mapped[str] = mapped_column(String(64), index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    definition_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class Inspection(Base):
+    __tablename__ = "inspections"
+
+    inspection_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    station_code: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("stations.station_code", ondelete="RESTRICT"),
+        index=True,
+    )
+    template_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("inspection_templates.template_id", ondelete="RESTRICT"),
+        index=True,
+    )
+    inspector_name: Mapped[str] = mapped_column(String(255), index=True)
+    inspection_type: Mapped[str] = mapped_column(String(32), default="scheduled", nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="draft", nullable=False, index=True)
+    score: Mapped[int | None] = mapped_column(Integer)
+    remarks: Mapped[str | None] = mapped_column(Text)
+    device_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False, index=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    client_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    server_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class InspectionResponse(Base):
+    __tablename__ = "inspection_responses"
+
+    response_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    inspection_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("inspections.inspection_id", ondelete="CASCADE"),
+        index=True,
+    )
+    section_code: Mapped[str] = mapped_column(String(64), index=True)
+    question_code: Mapped[str] = mapped_column(String(128), index=True)
+    response_value: Mapped[str | None] = mapped_column(String(64), index=True)
+    remarks: Mapped[str | None] = mapped_column(Text)
+    severity: Mapped[str | None] = mapped_column(String(32), index=True)
+    asset_ref: Mapped[str | None] = mapped_column(String(128), index=True)
+    platform: Mapped[str | None] = mapped_column(String(64), index=True)
+    evidence_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    response_json: Mapped[str | None] = mapped_column(Text)
+    client_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    server_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class InspectionFinding(Base):
+    __tablename__ = "inspection_findings"
+
+    finding_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    inspection_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("inspections.inspection_id", ondelete="CASCADE"),
+        index=True,
+    )
+    response_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("inspection_responses.response_id", ondelete="SET NULL"),
+        index=True,
+    )
+    station_code: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("stations.station_code", ondelete="RESTRICT"),
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(255), index=True)
+    description: Mapped[str | None] = mapped_column(Text)
+    severity: Mapped[str] = mapped_column(String(32), default="medium", nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="open", nullable=False, index=True)
+    responsible_party: Mapped[str | None] = mapped_column(String(255), index=True)
+    target_date: Mapped[str | None] = mapped_column(String(32), index=True)
+    financial_implication: Mapped[int | None] = mapped_column(Integer)
+    repeat_observation: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    client_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    server_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class InspectionEvidence(Base):
+    __tablename__ = "inspection_evidence"
+
+    evidence_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    inspection_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("inspections.inspection_id", ondelete="CASCADE"),
+        index=True,
+    )
+    response_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("inspection_responses.response_id", ondelete="SET NULL"),
+        index=True,
+    )
+    question_code: Mapped[str | None] = mapped_column(String(128), index=True)
+    mime_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    caption: Mapped[str | None] = mapped_column(Text)
+    context: Mapped[str | None] = mapped_column(Text)
+    client_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    server_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class InspectionNote(Base):
+    __tablename__ = "inspection_notes"
+
+    note_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    inspection_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("inspections.inspection_id", ondelete="CASCADE"),
+        index=True,
+    )
+    section_code: Mapped[str | None] = mapped_column(String(64), index=True)
+    question_code: Mapped[str | None] = mapped_column(String(128), index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    context: Mapped[str | None] = mapped_column(Text)
+    client_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    server_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class MobileSyncOperation(Base):
+    __tablename__ = "mobile_sync_operations"
+
+    operation_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    device_id: Mapped[str] = mapped_column(String(128), index=True)
+    entity_type: Mapped[str] = mapped_column(String(64), index=True)
+    entity_id: Mapped[str] = mapped_column(String(36), index=True)
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="processed", nullable=False, index=True)
+    result_json: Mapped[str | None] = mapped_column(Text)
+    processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class MobileChange(Base):
+    __tablename__ = "mobile_changes"
+
+    sequence: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    entity_type: Mapped[str] = mapped_column(String(64), index=True)
+    entity_id: Mapped[str] = mapped_column(String(36), index=True)
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False, index=True)
 

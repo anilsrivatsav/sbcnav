@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
+import os
+import re
 from datetime import datetime, timezone
 
 import requests
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -14,6 +16,9 @@ from database import SessionLocal, engine, is_sqlite_fallback
 from models import (
     AmenityNorm,
     Base,
+    CommercialContract,
+    CommercialContractPayment,
+    CommercialContractStationLink,
     DataChangeLog,
     Earning,
     EarningLink,
@@ -30,20 +35,26 @@ from models import (
     WorkLink,
 )
 from api_utils import envelope, exception_response, filter_search, paginate, sort_items
+from inspection_router import router as inspection_router
 from services import (
     audit_fields,
     earnings_sort_map,
+    commercial_contract_sort_map,
     get_reports,
+    get_commercial_contract_detail,
+    get_commercial_contract_reports,
     get_passenger_amenity_reports,
     get_station_detail,
     get_stats,
     hash_row,
     list_earnings,
+    list_commercial_contracts,
     list_passenger_amenities,
     list_stations,
     list_units,
     list_works,
     parse_earnings,
+    parse_commercial_contract_workbook,
     parse_amenity_norms,
     parse_fob_works,
     parse_pf_extension_works,
@@ -67,6 +78,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rail_dashboard.api")
 
 PA_INFRA_SPREADSHEET_ID = "1UdRgQQPEkak1fUTuVH7jIn5R4sE3szAhM4VZJOdFIOU"
+SANCTIONED_WORKS_SPREADSHEET_ID = "1rJbfhcnEVuGMwGkT8yBObb9Bk5Hx0uU224EGxfplGRc"
+SANCTIONED_WORKS_GID = "590791228"
 DEFAULT_PF_EXTENSION_WORKBOOK = r"C:\Users\CMI PA\Downloads\FOB & PF Extn Works (1).xlsx"
 PA_INFRA_TABS = {
     "norms": {"gid": "596063365", "model": AmenityNorm, "parser": parse_amenity_norms, "conflict": ["category", "amenity", "norm"], "skip": {"norm_key"}},
@@ -80,17 +93,26 @@ PA_INFRA_TABS = {
 }
 
 
+DEFAULT_CORS_ORIGINS = [
+    "http://127.0.0.1:3000",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+    "https://sbcnav-38t2.vercel.app",
+    "https://sbcnav.vercel.app",
+    "https://sbcnav-38t2-2doxwtr6h-anil-b-hs-projects.vercel.app",
+]
+configured_cors_origins = [
+    origin.strip().rstrip("/")
+    for origin in os.getenv("CORS_ORIGINS", "").split(",")
+    if origin.strip()
+]
+
 app = FastAPI(title="Rail Dashboard API")
+app.include_router(inspection_router)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://127.0.0.1:3000", 
-        "http://localhost:3000", 
-        "http://127.0.0.1:5173",
-        "https://sbcnav-38t2.vercel.app/",
-      # Vercel
-        "https://sbcnav.vercel.app",   # your production domain (if used)
-        "https://sbcnav-38t2-2doxwtr6h-anil-b-hs-projects.vercel.app"],
+    allow_origins=configured_cors_origins or DEFAULT_CORS_ORIGINS,
+    allow_origin_regex=os.getenv("CORS_ORIGIN_REGEX") or None,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -217,7 +239,7 @@ def _apply_import(resource: str, rows: list[dict]) -> int:
         with session.begin():
             if resource == "stations":
                 station_rows = [{**row, **audit_fields(now), "source_hash": hash_row("station", row)} for row in rows]
-                count = upsert_many(session, Station, station_rows, [Station.station_code], [c.name for c in Station.__table__.columns if c.name not in {"station_code", "created_at", "first_seen_at"}])
+                count = upsert_many(session, Station, station_rows, [Station.station_code], [c.name for c in Station.__table__.columns if c.name not in {"station_code", "created_at", "first_seen_at", "abss_flag", "redevelopment_flag"}])
                 _log_change(session, resource, None, "import", "csv", f"{count} rows")
                 return count
             if resource == "units":
@@ -248,8 +270,99 @@ def _apply_import(resource: str, rows: list[dict]) -> int:
         session.close()
 
 
+def _replace_all_works(rows: list[dict]) -> int:
+    now = datetime.now(timezone.utc)
+    work_rows = [{**row, **audit_fields(now), "source_hash": hash_row("work", row)} for row in rows]
+    session = SessionLocal()
+    try:
+        with session.begin():
+            session.query(WorkLink).delete(synchronize_session=False)
+            session.query(Work).delete(synchronize_session=False)
+            session.add_all(Work(**row) for row in work_rows)
+            session.flush()
+            for work in session.query(Work).all():
+                _replace_work_links(session, work)
+            _log_change(session, "works", None, "replace_import", "google_sheet", f"{len(work_rows)} rows")
+        return len(work_rows)
+    finally:
+        session.close()
+
+
+def _apply_commercial_contract_import(parsed: dict[str, list[dict]]) -> dict:
+    now = datetime.now(timezone.utc)
+    session = SessionLocal()
+    try:
+        with session.begin():
+            contract_rows = [
+                {**row, **audit_fields(now), "source_hash": hash_row("commercial_contract", row)}
+                for row in parsed.get("contracts", [])
+            ]
+            contract_count = upsert_many(
+                session,
+                CommercialContract,
+                contract_rows,
+                [CommercialContract.contract_name],
+                [column.name for column in CommercialContract.__table__.columns if column.name not in {"contract_key", "contract_name", "created_at", "first_seen_at"}],
+            )
+
+            contracts_by_name = {
+                contract.contract_name: contract.contract_key
+                for contract in session.query(CommercialContract).filter(CommercialContract.contract_name.in_([row["contract_name"] for row in contract_rows])).all()
+            }
+            contract_keys = list(contracts_by_name.values())
+            if contract_keys:
+                session.query(CommercialContractStationLink).filter(CommercialContractStationLink.contract_key.in_(contract_keys)).delete(synchronize_session=False)
+                session.query(CommercialContractPayment).filter(CommercialContractPayment.contract_key.in_(contract_keys)).delete(synchronize_session=False)
+
+            link_rows = []
+            for row in parsed.get("links", []):
+                contract_key = contracts_by_name.get(row.get("contract_name"))
+                if not contract_key:
+                    continue
+                link_rows.append({
+                    "contract_key": contract_key,
+                    "station_code": row.get("station_code"),
+                    "raw_station_value": row.get("raw_station_value"),
+                    "match_type": row.get("match_type"),
+                    "match_status": row.get("match_status"),
+                })
+            session.add_all(CommercialContractStationLink(**row) for row in link_rows)
+
+            payment_rows = []
+            for row in parsed.get("payments", []):
+                contract_key = contracts_by_name.get(row.get("contract_name"))
+                if not contract_key:
+                    continue
+                payment_payload = {
+                    "contract_key": contract_key,
+                    "payment_month": row.get("payment_month"),
+                    "source_column": row.get("source_column"),
+                    "amount_due": row.get("amount_due"),
+                    "amount_paid": row.get("amount_paid"),
+                    "payment_status": row.get("payment_status"),
+                    **audit_fields(now),
+                    "source_hash": hash_row("commercial_contract_payment", row),
+                }
+                payment_rows.append(payment_payload)
+            session.add_all(CommercialContractPayment(**row) for row in payment_rows if row.get("payment_month"))
+
+            _log_change(session, "commercial_contracts", None, "import", "xlsx", f"{contract_count} contracts, {len(link_rows)} links, {len(payment_rows)} payments")
+        return {
+            "contracts": len(contract_rows),
+            "upserted": contract_count,
+            "station_links": len(link_rows),
+            "payments": len(payment_rows),
+        }
+    finally:
+        session.close()
+
+
 def _pa_export_url(gid: str) -> str:
     return f"https://docs.google.com/spreadsheets/d/{PA_INFRA_SPREADSHEET_ID}/export?format=csv&gid={gid}"
+
+
+def _sanctioned_works_export_url() -> str:
+    return f"https://docs.google.com/spreadsheets/d/{SANCTIONED_WORKS_SPREADSHEET_ID}/export?format=csv&gid={SANCTIONED_WORKS_GID}"
 
 
 def _apply_pa_rows(session, tab_key: str, rows: list[dict]) -> int:
@@ -339,6 +452,42 @@ def _station_codes(session) -> set[str]:
     return {code for (code,) in session.query(Station.station_code).all()}
 
 
+def _ensure_station_placeholder(session, station_code: str, station_codes: set[str]) -> None:
+    code = (station_code or "").strip().upper()
+    if not code or code in station_codes:
+        return
+    now = datetime.now(timezone.utc)
+    payload = {
+        "station_code": code,
+        "station_name": f"{code} (missing station master)",
+        "source_hash": hash_row("station_placeholder", {"station_code": code}),
+        **audit_fields(now),
+    }
+    session.add(Station(**payload))
+    session.flush()
+    station_codes.add(code)
+
+
+def _infer_work_station_codes(session, work: Work, existing_codes: set[str]) -> set[str]:
+    short_name = work.short_name_of_work or ""
+    work_location_text = short_name
+    if " - " in short_name:
+        work_location_text = short_name.rsplit(" - ", 1)[1]
+    text = work_location_text
+    normalized = text.upper()
+    found: set[str] = set()
+    stations = session.query(Station.station_code, Station.station_name).all()
+    for code, name in stations:
+        code_text = (code or "").upper().strip()
+        if code_text and code_text not in existing_codes and re.search(rf"(?<![A-Z0-9]){re.escape(code_text)}(?![A-Z0-9])", normalized):
+            found.add(code_text)
+            continue
+        name_text = (name or "").upper().strip()
+        if len(name_text) >= 5 and code_text not in existing_codes and name_text in normalized:
+            found.add(code_text)
+    return found
+
+
 def _unit_codes(session) -> set[str]:
     return {unit_no for (unit_no,) in session.query(Unit.unit_no).all()}
 
@@ -346,14 +495,19 @@ def _unit_codes(session) -> set[str]:
 def _replace_work_links(session, work: Work) -> None:
     session.query(WorkLink).filter(WorkLink.project_id == work.project_id).delete()
     station_codes = _station_codes(session)
-    scopes = split_scopes(work.block_section_station or "")
+    scopes = split_scopes(work.block_section_station or "", station_codes)
     links = []
+    linked_station_codes = {scope["station_code"] for scope in scopes if scope.get("scope_type") == "Station" and scope.get("station_code")}
+    inferred_station_codes = _infer_work_station_codes(session, work, linked_station_codes)
+    scopes.extend({"scope_type": "Station", "scope_value": code, "station_code": code} for code in sorted(inferred_station_codes))
     if not scopes:
         links.append(WorkLink(project_id=work.project_id, scope_type="Other", scope_value=work.block_section_station, station_code=None, match_status="Unparsed"))
     for scope in scopes:
         if scope["scope_type"] == "Station":
             code = scope["station_code"]
-            links.append(WorkLink(project_id=work.project_id, scope_type="Station", scope_value=scope["scope_value"], station_code=code, match_status="Matched" if code in station_codes else "Missing station"))
+            was_missing = code not in station_codes
+            _ensure_station_placeholder(session, code, station_codes)
+            links.append(WorkLink(project_id=work.project_id, scope_type="Station", scope_value=scope["scope_value"], station_code=code, match_status="Missing station master" if was_missing else "Matched"))
         else:
             links.append(WorkLink(project_id=work.project_id, scope_type=scope["scope_type"], scope_value=scope["scope_value"], station_code=None, match_status=scope["scope_type"]))
     session.add_all(links)
@@ -477,6 +631,91 @@ def reports():
     return envelope(get_reports(), "ok")
 
 
+@app.get("/api/commercial-contracts")
+def commercial_contracts(q: str | None = None, station_code: str | None = None, policy: str | None = None, sub_category: str | None = None, allocation_code: str | None = None, page: int = 1, page_size: int = 25, sort_by: str | None = None, sort_order: str = "asc", search: str | None = None):
+    items = filter_search(list_commercial_contracts(q=q, station_code=station_code, policy=policy, sub_category=sub_category, allocation_code=allocation_code), search or q)
+    items = sort_items(items, sort_by if sort_by in commercial_contract_sort_map() else None, sort_order)
+    page_data = paginate(items, page, page_size)
+    return envelope({"items": page_data.items, "pagination": {"total": page_data.total, "page": page_data.page, "page_size": page_data.page_size}}, "ok")
+
+
+@app.get("/api/commercial-contracts/reports")
+def commercial_contract_reports():
+    return envelope(get_commercial_contract_reports(), "ok")
+
+
+@app.get("/api/commercial-contracts/{contract_key}")
+def commercial_contract_detail(contract_key: int):
+    detail = get_commercial_contract_detail(contract_key)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Commercial contract not found")
+    return envelope(detail, "ok")
+
+
+@app.post("/api/commercial-contracts/import")
+async def import_commercial_contracts(path: str | None = None, file: UploadFile | None = File(default=None)):
+    try:
+        if file:
+            content = await file.read()
+            parsed = parse_commercial_contract_workbook(content)
+        elif path:
+            parsed = parse_commercial_contract_workbook(path)
+        else:
+            raise HTTPException(status_code=422, detail="Excel file upload or path is required")
+        return envelope(_apply_commercial_contract_import(parsed), "commercial contracts imported")
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"Workbook not found: {path}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/commercial-contracts", status_code=201)
+def create_commercial_contract(payload: dict):
+    session = SessionLocal()
+    try:
+        with session.begin():
+            if session.query(CommercialContract).filter(CommercialContract.contract_name == payload.get("contract_name")).one_or_none():
+                raise HTTPException(status_code=409, detail="Commercial contract already exists")
+            contract = _create_row(CommercialContract, payload, "contract_name")
+            session.add(contract)
+            _log_change(session, "commercial_contracts", contract.contract_name, "create", "manual")
+        return envelope(row_to_dict(contract), "commercial contract created")
+    finally:
+        session.close()
+
+
+@app.put("/api/commercial-contracts/{contract_key}")
+def update_commercial_contract(contract_key: int, payload: dict):
+    session = SessionLocal()
+    try:
+        with session.begin():
+            contract = session.get(CommercialContract, contract_key)
+            if not contract:
+                raise HTTPException(status_code=404, detail="Commercial contract not found")
+            _assign_columns(contract, payload, skip={"contract_key", "created_at", "first_seen_at"})
+            _log_change(session, "commercial_contracts", str(contract.contract_key), "update", "manual")
+        return envelope(row_to_dict(contract), "commercial contract updated")
+    finally:
+        session.close()
+
+
+@app.delete("/api/commercial-contracts/{contract_key}")
+def delete_commercial_contract(contract_key: int):
+    session = SessionLocal()
+    try:
+        with session.begin():
+            contract = session.get(CommercialContract, contract_key)
+            if not contract:
+                raise HTTPException(status_code=404, detail="Commercial contract not found")
+            session.query(CommercialContractStationLink).filter(CommercialContractStationLink.contract_key == contract_key).delete()
+            session.query(CommercialContractPayment).filter(CommercialContractPayment.contract_key == contract_key).delete()
+            session.delete(contract)
+            _log_change(session, "commercial_contracts", str(contract_key), "delete", "manual")
+        return envelope({"contract_key": contract_key}, "commercial contract deleted")
+    finally:
+        session.close()
+
+
 @app.get("/api/passenger-amenities")
 def passenger_amenities(kind: str = "summary", q: str | None = None, station_code: str | None = None, page: int = 1, page_size: int = 25, sort_by: str | None = None, sort_order: str = "asc", search: str | None = None):
     items = filter_search(list_passenger_amenities(kind=kind, q=q, station_code=station_code), search or q)
@@ -586,6 +825,18 @@ def works(q: str | None = None, scope_type: str | None = None, station_code: str
     items = sort_items(items, sort_by if sort_by in work_sort_map() else None, sort_order)
     page_data = paginate(items, page, page_size)
     return envelope({"items": page_data.items, "pagination": {"total": page_data.total, "page": page_data.page, "page_size": page_data.page_size}}, "ok")
+
+
+@app.post("/api/works/import-sanctioned")
+def import_sanctioned_works():
+    try:
+        response = requests.get(_sanctioned_works_export_url(), timeout=90)
+        response.raise_for_status()
+        rows = parse_works(response.content.decode("utf-8-sig"))
+        count = _replace_all_works(rows)
+        return envelope({"rows": len(rows), "upserted": count}, "sanctioned works imported")
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Unable to fetch sanctioned works sheet: {exc}") from exc
 
 
 @app.post("/api/works", status_code=201)

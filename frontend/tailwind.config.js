@@ -17,7 +17,9 @@ module.exports = {
       },
       boxShadow: {
         soft: "var(--shadow-soft)",
-        glow: "var(--shadow-glow)",
+        raised: "var(--shadow-raised)",
+        pressed: "var(--shadow-pressed)",
+        overlay: "var(--shadow-overlay)",
       },
     },
   },

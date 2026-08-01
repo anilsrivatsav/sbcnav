@@ -9,3 +9,13 @@ venv/
 dist/
 build/
 outputs/
+.runtime/
+.env.docker
+backups/*.dump
+backups/*.sql
+*.log
+*.db
+.codex-tmp/
+frontend/.next.stale*/
+frontend/.next-build/
+backups/

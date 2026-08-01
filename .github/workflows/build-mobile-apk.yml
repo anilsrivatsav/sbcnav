@@ -1,0 +1,85 @@
+name: Build mobile APKs
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_base_url:
+        description: FastAPI base URL embedded in the release APKs
+        required: true
+        default: https://your-central-api.example.com
+        type: string
+  push:
+    branches: [main]
+    paths:
+      - "mobile_flutter/**"
+      - ".github/workflows/build-mobile-apk.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: mobile_flutter
+    env:
+      API_BASE_URL: ${{ inputs.api_base_url || vars.MOBILE_API_BASE_URL || 'https://your-central-api.example.com' }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+      - name: Build ARM64 release
+        run: >
+          flutter build apk --release
+          --target-platform android-arm64
+          --split-per-abi
+          --dart-define=API_BASE_URL="$API_BASE_URL"
+
+      - name: Collect ARM64 artifact
+        run: |
+          mkdir -p artifacts
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk artifacts/rail-inspect-arm64.apk
+
+      - name: Build universal release
+        run: >
+          flutter build apk --release
+          --dart-define=API_BASE_URL="$API_BASE_URL"
+
+      - name: Collect universal artifact
+        run: cp build/app/outputs/flutter-apk/app-release.apk artifacts/rail-inspect-universal.apk
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: rail-inspect-apks-${{ github.run_number }}
+          path: mobile_flutter/artifacts/*.apk
+          if-no-files-found: error
+          retention-days: 30

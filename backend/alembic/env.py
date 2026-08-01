@@ -16,7 +16,8 @@ import models  # noqa: F401,E402
 
 config = context.config
 fileConfig(config.config_file_name)
-config.set_main_option("sqlalchemy.url", os.getenv("DATABASE_URL", get_database_url()))
+database_url = os.getenv("DATABASE_URL") or get_database_url()
+config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 
 target_metadata = Base.metadata
 

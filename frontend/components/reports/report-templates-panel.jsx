@@ -13,10 +13,10 @@ export function ReportTemplatesPanel({ templates, onApply }) {
               key={template.id}
               type="button"
               onClick={() => onApply(template)}
-              className="group rounded-2xl border border-line bg-surface/75 p-4 text-left transition hover:-translate-y-0.5 hover:border-accent hover:bg-surfaceStrong hover:shadow-glow"
+              className="soft-raised group rounded-lg border border-line p-4 text-left transition hover:-translate-y-0.5 hover:border-accent hover:text-accentStrong active:shadow-pressed"
             >
               <div className="flex items-start gap-3">
-                <div className="rounded-xl bg-accentSoft p-2 text-accentStrong">
+                <div className="rounded-lg border border-accent/20 bg-accentSoft p-2 text-accentStrong">
                   <Icon size={18} />
                 </div>
                 <div className="min-w-0">

@@ -26,10 +26,11 @@ import {
   X,
   Wrench,
 } from "lucide-react";
-import { DataTable } from "../components/ui";
+import { BottomSheet, DataTable } from "../components/ui";
 import { Station360 } from "../components/station-360";
+import { StationQuickView } from "../components/station-quick-view";
 import { ReportTemplatesPanel } from "../components/reports/report-templates-panel";
-import { API_URL, aiQueryUrl, fetchJson, importPassengerAmenitiesUrl, importPfExtensionUrl, stationDetailUrl } from "../lib/api";
+import { API_URL, aiQueryUrl, commercialContractDetailUrl, fetchJson, importCommercialContractsUrl, importPassengerAmenitiesUrl, importPfExtensionUrl, importSanctionedWorksUrl, stationDetailUrl } from "../lib/api";
 import { reportTemplates, templateFilterState, templatePreset } from "../lib/report-templates";
 import { useRailDashboardData } from "../hooks/use-rail-dashboard-data";
 
@@ -37,6 +38,13 @@ const money = (value) => `INR ${Number(value || 0).toLocaleString("en-IN")}`;
 const pretty = (value) => (value === null || value === undefined || value === "" ? "NA" : String(value));
 const toNumber = (value) => Number(value || 0);
 const cx = (...classes) => classes.filter(Boolean).join(" ");
+const normalizeText = (value) => pretty(value).toLowerCase().replace(/[–—]/g, "-").replace(/\s+/g, " ").trim();
+const matchesQuery = (row, fields, query) => {
+  const q = normalizeText(query);
+  if (!q) return true;
+  return fields.some((field) => normalizeText(typeof field === "function" ? field(row) : row[field]).includes(q));
+};
+const sameFilterValue = (value, filterValue) => filterValue === "All" || normalizeText(value) === normalizeText(filterValue);
 const compactDate = (value) => {
   if (!value) return "";
   const date = new Date(value);
@@ -46,10 +54,10 @@ const monthKey = (value) => compactDate(value).slice(0, 7);
 const htmlEscape = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
 
 const buttonClasses = {
-  primary: "bg-accent text-white shadow-glow hover:bg-accent/90",
-  secondary: "border border-line bg-surface/80 text-ink hover:border-accent hover:bg-surfaceStrong",
-  ghost: "text-muted hover:bg-surface/75 hover:text-ink",
-  danger: "border border-red-300/70 bg-surface/80 text-red-600 hover:bg-red-500/10",
+  primary: "border border-accent bg-accent text-white shadow-raised hover:bg-accentStrong active:shadow-pressed",
+  secondary: "soft-control text-ink hover:border-accent hover:text-accentStrong active:shadow-pressed",
+  ghost: "border border-transparent text-muted hover:border-line hover:bg-surfaceStrong hover:text-ink",
+  danger: "soft-control border-red-400/70 text-red-600 hover:bg-red-500/10 active:shadow-pressed",
 };
 
 function Button({ children, variant = "primary", size = "md", className = "", ...props }) {
@@ -57,7 +65,7 @@ function Button({ children, variant = "primary", size = "md", className = "", ..
     <button
       type="button"
       className={cx(
-        "focus-ring inline-flex items-center justify-center gap-2 rounded-xl font-extrabold transition disabled:cursor-not-allowed disabled:opacity-60",
+        "focus-ring inline-flex items-center justify-center gap-2 rounded-lg font-extrabold transition disabled:cursor-not-allowed disabled:opacity-60",
         size === "sm" ? "h-9 px-3 text-xs" : "h-11 px-4 text-sm",
         buttonClasses[variant],
         className,
@@ -71,7 +79,7 @@ function Button({ children, variant = "primary", size = "md", className = "", ..
 
 function Badge({ children, tone = "neutral" }) {
   const tones = {
-    neutral: "border-line bg-surface/80 text-muted",
+    neutral: "border-line bg-surfaceStrong text-muted",
     accent: "border-accent/30 bg-accentSoft text-accentStrong",
     danger: "border-red-300/70 bg-red-500/10 text-red-600",
   };
@@ -93,7 +101,7 @@ function ListShell({ children }) {
 function ListFooter({ shown, total, onMore, onLess }) {
   if (total <= shown && shown <= 24) return null;
   return (
-    <div className="mt-4 flex flex-col items-center justify-between gap-3 rounded-2xl border border-line bg-surface/55 px-4 py-3 text-sm text-muted sm:flex-row">
+    <div className="soft-inset mt-4 flex flex-col items-center justify-between gap-3 rounded-lg border border-line px-4 py-3 text-sm text-muted sm:flex-row">
       <span>{Math.min(shown, total)} of {total} shown</span>
       <div className="flex gap-2">
         {shown < total ? (
@@ -114,7 +122,7 @@ function ListFooter({ shown, total, onMore, onLess }) {
 
 function Tabs({ tabs, value, onChange }) {
   return (
-    <div className="soft-scroll flex gap-2 overflow-x-auto rounded-2xl border border-line bg-surface/45 p-1.5">
+    <div className="soft-inset soft-scroll flex gap-2 overflow-x-auto rounded-lg border border-line p-1.5">
       {tabs.map((tab) => {
         const Icon = tab.icon;
         const active = value === tab.value;
@@ -124,8 +132,8 @@ function Tabs({ tabs, value, onChange }) {
             type="button"
             onClick={() => onChange(tab.value)}
             className={cx(
-              "focus-ring inline-flex h-10 shrink-0 items-center gap-2 rounded-xl px-3 text-xs font-black uppercase tracking-[0.12em] transition",
-              active ? "bg-accent text-white shadow-glow" : "text-muted hover:bg-surface hover:text-ink",
+              "focus-ring inline-flex h-10 shrink-0 items-center gap-2 rounded-md px-3 text-xs font-black uppercase tracking-[0.12em] transition",
+              active ? "bg-accent text-white shadow-raised" : "text-muted hover:bg-surfaceStrong hover:text-ink",
             )}
           >
             <Icon size={14} />
@@ -139,13 +147,13 @@ function Tabs({ tabs, value, onChange }) {
 
 function Card({ icon: Icon, label, value, subtext }) {
   return (
-    <div className="glass rounded-2xl border p-5 transition hover:-translate-y-0.5 hover:shadow-glow">
+    <div className="soft-surface rounded-lg border p-5 transition hover:-translate-y-0.5">
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="text-[11px] font-black uppercase tracking-[0.18em] text-muted">{label}</div>
           <div className="mt-2 text-2xl font-black text-ink">{value}</div>
         </div>
-        <div className="rounded-xl bg-accentSoft p-3 text-accentStrong shadow-glow">
+        <div className="soft-raised rounded-lg border border-accent/20 bg-accentSoft p-3 text-accentStrong">
           <Icon size={18} />
         </div>
       </div>
@@ -156,7 +164,7 @@ function Card({ icon: Icon, label, value, subtext }) {
 
 function Panel({ title, subtitle, action, children }) {
   return (
-    <section className="glass rounded-2xl border p-5">
+    <section className="soft-surface rounded-lg border p-5">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-sm font-black uppercase tracking-[0.18em] text-ink">{title}</h2>
@@ -178,7 +186,7 @@ function ReportList({ rows = [], moneyValues = false, onSelect }) {
           type="button"
           onClick={() => onSelect?.(row)}
           className={cx(
-            "flex w-full items-center justify-between gap-3 rounded-xl border border-line bg-surface/70 px-3 py-2.5 text-left text-sm transition",
+            "soft-raised flex w-full items-center justify-between gap-3 rounded-lg border border-line px-3 py-2.5 text-left text-sm transition",
             onSelect ? "hover:border-accent hover:bg-surfaceStrong" : "cursor-default",
           )}
         >
@@ -277,10 +285,10 @@ function NavButton({ active, icon: Icon, label, hint, onClick }) {
     <button
       type="button"
       onClick={onClick}
-      className={`focus-ring flex w-full items-start gap-3 rounded-xl border px-3 py-3 text-left transition ${active ? "border-accent bg-accentSoft text-accentStrong shadow-glow" : "border-line bg-surface/60 text-ink hover:border-accent hover:bg-surfaceStrong"
+      className={`focus-ring flex min-w-[184px] items-start gap-3 rounded-lg border px-3 py-3 text-left transition lg:w-full lg:min-w-0 ${active ? "border-accent bg-accentSoft text-accentStrong shadow-pressed" : "soft-raised border-line text-ink hover:border-accent hover:text-accentStrong"
         }`}
     >
-      <span className="rounded-lg border border-line bg-surface/70 p-1.5">
+      <span className="rounded-md border border-line bg-surfaceStrong p-1.5">
         <Icon size={16} className="shrink-0" />
       </span>
       <span className="min-w-0">
@@ -298,7 +306,7 @@ function SearchInput({ value, onChange, placeholder = "Search current view" }) {
       <input
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-11 w-full rounded-xl border border-line bg-surface/85 pl-10 pr-3 text-sm outline-none placeholder:text-muted focus:border-accent"
+        className="soft-inset h-11 w-full rounded-lg border border-line pl-10 pr-3 text-sm outline-none placeholder:text-muted focus:border-accent"
         placeholder={placeholder}
       />
     </label>
@@ -309,7 +317,7 @@ function FilterSelect({ label, value, onChange, options }) {
   return (
     <label className="grid gap-1">
       <span className="text-[11px] font-black uppercase tracking-[0.18em] text-muted">{label}</span>
-      <select value={value} onChange={(e) => onChange(e.target.value)} className="h-11 rounded-xl border border-line bg-surface/85 px-3 text-sm outline-none focus:border-accent">
+      <select value={value} onChange={(e) => onChange(e.target.value)} className="soft-inset h-11 rounded-lg border border-line px-3 text-sm outline-none focus:border-accent">
         {options.map((item) => (
           <option key={item} value={item}>{item}</option>
         ))}
@@ -337,7 +345,7 @@ function ThemeToggle({ theme, onToggle }) {
     <button
       type="button"
       onClick={onToggle}
-      className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-line bg-surface/85 px-3 text-sm font-extrabold text-ink transition hover:border-accent"
+      className="soft-control inline-flex h-11 items-center justify-center gap-2 rounded-lg px-3 text-sm font-extrabold text-ink transition hover:border-accent active:shadow-pressed"
       aria-label={`Switch to ${isDark ? "light" : "dark"} theme`}
     >
       {isDark ? <Sun size={16} /> : <Moon size={16} />}
@@ -350,22 +358,27 @@ function Modal({ open, title, subtitle, onClose, children }) {
   useEffect(() => {
     if (!open) return;
     const handler = (e) => e.key === "Escape" && onClose();
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handler);
+    };
   }, [open, onClose]);
 
   if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-3">
-      <div className="max-h-[92vh] w-full max-w-5xl overflow-hidden rounded-2xl border border-line bg-surfaceStrong shadow-2xl">
-        <div className="flex items-start justify-between gap-4 border-b border-line bg-surface px-4 py-4">
+      <div role="dialog" aria-modal="true" aria-label={title} className="max-h-[92vh] w-full max-w-5xl overflow-hidden rounded-lg border border-line bg-surface shadow-overlay">
+        <div className="flex items-start justify-between gap-4 border-b border-line bg-surfaceStrong px-4 py-4">
           <div>
             <div className="text-[11px] font-black uppercase tracking-[0.2em] text-accent">Detail view</div>
             <h3 className="mt-1 text-xl font-black text-ink">{title}</h3>
             {subtitle ? <p className="mt-1 text-sm text-muted">{subtitle}</p> : null}
           </div>
-          <button type="button" onClick={onClose} className="focus-ring rounded-full border border-line bg-surface p-2 text-ink transition hover:border-accent hover:bg-surfaceStrong">
+          <button type="button" onClick={onClose} className="focus-ring soft-control rounded-full p-2 text-ink transition hover:border-accent active:shadow-pressed">
             <X size={18} />
           </button>
         </div>
@@ -379,7 +392,7 @@ function KeyValueGrid({ rows }) {
   return (
     <dl className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
       {rows.map(([label, value]) => (
-        <div key={label} className="rounded-xl border border-line bg-surface p-3">
+        <div key={label} className="soft-raised rounded-lg border border-line p-3">
           <dt className="text-[11px] font-black uppercase tracking-[0.16em] text-muted">{label}</dt>
           <dd className="mt-1 text-sm font-semibold text-ink">{pretty(value)}</dd>
         </div>
@@ -401,13 +414,13 @@ function RecordForm({ fields, value, onChange, onSubmit, onCancel, saving, mode,
               onChange={(event) => onChange({ ...value, [field.name]: event.target.value })}
               disabled={field.readOnly && mode === "edit"}
               required={field.required}
-              className="h-11 rounded-xl border border-line bg-surface px-3 text-sm outline-none disabled:bg-surfaceStrong disabled:text-muted focus:border-accent"
+              className="soft-inset h-11 rounded-lg border border-line px-3 text-sm outline-none disabled:bg-surfaceStrong disabled:text-muted focus:border-accent"
             />
           </label>
         ))}
       </div>
       {error ? (
-        <div className="rounded-xl border border-red-300/70 bg-red-500/10 px-3 py-2 text-sm font-semibold text-red-500">
+        <div className="rounded-lg border border-red-300/70 bg-red-500/10 px-3 py-2 text-sm font-semibold text-red-500">
           {error}
         </div>
       ) : null}
@@ -480,20 +493,44 @@ export default function Page() {
     ],
     works: [
       { name: "project_id", label: "Project ID", required: true, readOnly: true },
+      { name: "source_project_id", label: "Original Project ID" },
+      { name: "source_sn", label: "Sheet SN", type: "number" },
       { name: "short_name_of_work", label: "Short Name of Work", required: true },
       { name: "status", label: "Status" },
       { name: "date_of_sanction", label: "Date of Sanction" },
       { name: "block_section_station", label: "Block Section Station" },
       { name: "section", label: "Section" },
       { name: "allocation", label: "Allocation" },
+      { name: "cost", label: "Cost", type: "number" },
+      { name: "expenditure_upto_date", label: "Expenditure Upto Date", type: "number" },
+      { name: "physical_progress", label: "Physical Progress" },
+      { name: "financial_progress", label: "Financial Progress" },
       { name: "anticipated_expenditure", label: "Anticipated Expenditure", type: "number" },
       { name: "remarks", label: "Remarks" },
       { name: "engg_remarks", label: "Engineering Remarks" },
     ],
+    "commercial-contracts": [
+      { name: "contract_key", label: "Contract Key", readOnly: true },
+      { name: "contract_name", label: "Contract Name", required: true },
+      { name: "licensee_name", label: "Licensee Name" },
+      { name: "policy", label: "Policy" },
+      { name: "sub_category", label: "Sub Category" },
+      { name: "asset_scope", label: "Asset Scope" },
+      { name: "raw_station_value", label: "Raw Station Value" },
+      { name: "station_match_status", label: "Station Match Status" },
+      { name: "allocation_code", label: "Allocation Code" },
+      { name: "contract_allotted_on", label: "Allotted On" },
+      { name: "contract_period_from", label: "Contract From" },
+      { name: "contract_upto", label: "Contract Upto" },
+      { name: "space_sq_ft", label: "Space Sq Ft", type: "number" },
+      { name: "annual_license_fee", label: "Annual License Fee", type: "number" },
+      { name: "quarterly_license_fee", label: "Quarterly License Fee", type: "number" },
+      { name: "remarks", label: "Remarks" },
+    ],
   };
 
-  const resourcePath = { stations: "stations", units: "units", earnings: "earnings", works: "works" };
-  const keyField = { stations: "station_code", units: "unit_no", earnings: "receipt_key", works: "project_id" };
+  const resourcePath = { stations: "stations", units: "units", earnings: "earnings", works: "works", "commercial-contracts": "commercial-contracts" };
+  const keyField = { stations: "station_code", units: "unit_no", earnings: "receipt_key", works: "project_id", "commercial-contracts": "contract_key" };
 
   const {
     stats,
@@ -501,6 +538,8 @@ export default function Page() {
     units,
     earnings,
     works,
+    commercialContracts,
+    commercialContractReports,
     paSummary,
     paInfra,
     paPlatforms,
@@ -521,10 +560,11 @@ export default function Page() {
   } = useRailDashboardData();
   const [view, setView] = useState("dashboard");
   const [theme, setTheme] = useState("light");
-  const [search, setSearch] = useState({ dashboard: "", stations: "", contracts: "", units: "", earnings: "", works: "", amenities: "", reports: "", ai: "" });
-  const [visibleLimit, setVisibleLimit] = useState({ stations: 24, units: 24, earnings: 24, works: 24, reports: 24 });
+  const [search, setSearch] = useState({ dashboard: "", stations: "", contracts: "", commercial: "", units: "", earnings: "", works: "", amenities: "", reports: "", ai: "" });
+  const [visibleLimit, setVisibleLimit] = useState({ stations: 24, units: 24, earnings: 24, works: 24, reports: 24, commercial: 24 });
   const [amenityTab, setAmenityTab] = useState("summary");
   const [contractTab, setContractTab] = useState("units");
+  const [workTab, setWorkTab] = useState("station");
   const [stationModalTab, setStationModalTab] = useState("overview");
   const [reportTab, setReportTab] = useState("overview");
   const [reportFilters, setReportFilters] = useState({
@@ -547,10 +587,18 @@ export default function Page() {
     unitCategory: "All",
     unitType: "All",
     unitStatus: "All",
+    workStation: "All",
     workScope: "All",
     workStatus: "All",
+    commercialStation: "All",
+    commercialAllocation: "All",
+    commercialPolicy: "All",
+    commercialSubCategory: "All",
+    commercialAssetScope: "All",
+    commercialStationStatus: "All",
   });
   const [modal, setModal] = useState({ open: false, type: null, record: null });
+  const [stationSheet, setStationSheet] = useState({ open: false, record: null, loading: false });
   const [formModal, setFormModal] = useState({ open: false, type: "stations", mode: "create", data: {} });
   const [formError, setFormError] = useState("");
   const [importModal, setImportModal] = useState({ open: false, resource: "stations", csvText: "", url: "", result: null });
@@ -601,6 +649,47 @@ export default function Page() {
       setActivityStatus(`PF extension imported: ${result?.station_status_upserted || 0} station statuses`);
     } catch (error) {
       setActivityStatus(error?.message || "PF extension import failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const importCommercialContractsWorkbook = async () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".xlsx,.xls";
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      setLoading(true);
+      setActivityStatus("Importing commercial contracts workbook...");
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        const result = await fetchJson(importCommercialContractsUrl(), {
+          method: "POST",
+          body: formData,
+        });
+        await loadFromDb();
+        setActivityStatus(`Commercial contracts imported: ${result?.upserted || 0} contracts, ${result?.payments || 0} payments`);
+      } catch (error) {
+        setActivityStatus(error?.message || "Commercial contracts import failed");
+      } finally {
+        setLoading(false);
+      }
+    };
+    input.click();
+  };
+
+  const importSanctionedWorks = async () => {
+    setLoading(true);
+    setActivityStatus("Fetching sanctioned works from Google Sheet...");
+    try {
+      const result = await fetchJson(importSanctionedWorksUrl(), { method: "POST" });
+      await loadFromDb();
+      setActivityStatus(`Sanctioned works imported: ${result?.rows || 0} rows`);
+    } catch (error) {
+      setActivityStatus(error?.message || "Sanctioned works import failed");
     } finally {
       setLoading(false);
     }
@@ -657,6 +746,12 @@ export default function Page() {
   useEffect(() => {
     window.localStorage.setItem("rail-report-presets", JSON.stringify(reportPresets));
   }, [reportPresets]);
+
+  useEffect(() => {
+    if (!["station", "abss", "division"].includes(workTab)) {
+      setWorkTab("station");
+    }
+  }, [workTab]);
 
   const toggleTheme = () => setTheme((current) => (current === "dark" ? "light" : "dark"));
 
@@ -716,55 +811,77 @@ export default function Page() {
   }, [earnings, works]);
 
   const filteredStations = useMemo(() => {
-    const q = search.stations.trim().toLowerCase();
+    const q = search.stations;
     return stations.filter((row) => {
-      const searchOk = [row.station_code, row.station_name, row.division, row.section, row.categorisation].some((value) => pretty(value).toLowerCase().includes(q));
-      const catOk = filters.stationCategory === "All" || pretty(row.categorisation) === filters.stationCategory;
-      const divOk = filters.stationDivision === "All" || pretty(row.division) === filters.stationDivision;
-      const secOk = filters.stationSection === "All" || pretty(row.section) === filters.stationSection;
-      const platOk = filters.stationPlatform === "All" || pretty(row.platform_type) === filters.stationPlatform;
+      const searchOk = matchesQuery(row, ["station_code", "station_name", "division", "section", "categorisation", "platform_type"], q);
+      const catOk = sameFilterValue(row.categorisation, filters.stationCategory);
+      const divOk = sameFilterValue(row.division, filters.stationDivision);
+      const secOk = sameFilterValue(row.section, filters.stationSection);
+      const platOk = sameFilterValue(row.platform_type, filters.stationPlatform);
       return searchOk && catOk && divOk && secOk && platOk;
     });
   }, [stations, search.stations, filters]);
 
   const filteredUnits = useMemo(() => {
-    const q = search.units.trim().toLowerCase();
+    const q = search.units;
     return units.filter((row) => {
-      const searchOk = [row.unit_no, row.station_code, row.station_name, row.licensee_name, row.unit_status, row.station_category].some((value) => pretty(value).toLowerCase().includes(q));
-      const catOk = filters.unitCategory === "All" || pretty(row.station_category) === filters.unitCategory;
-      const typeOk = filters.unitType === "All" || pretty(row.type_of_unit) === filters.unitType;
-      const statusOk = filters.unitStatus === "All" || pretty(row.unit_status) === filters.unitStatus;
+      const searchOk = matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "unit_status", "station_category", "type_of_unit", "pf_no"], q);
+      const catOk = sameFilterValue(row.station_category, filters.unitCategory);
+      const typeOk = sameFilterValue(row.type_of_unit, filters.unitType);
+      const statusOk = sameFilterValue(row.unit_status, filters.unitStatus);
       return searchOk && catOk && typeOk && statusOk;
     });
   }, [units, search.units, filters]);
 
   const filteredEarnings = useMemo(() => {
-    const q = search.earnings.trim().toLowerCase();
-    return earnings.filter((row) => [row.unit_no, row.station_code, row.licensee_name, row.payment_head, row.payment_sub_head, row.receipt_type].some((value) => pretty(value).toLowerCase().includes(q)));
+    const q = search.earnings;
+    return earnings.filter((row) => matchesQuery(row, ["unit_no", "station_code", "licensee_name", "payment_head", "payment_sub_head", "receipt_type", "mr_no", "amount"], q));
   }, [earnings, search.earnings]);
 
   const filteredContracts = useMemo(() => {
-    const q = (search.contracts || "").trim().toLowerCase();
+    const q = search.contracts || "";
     return {
-      units: units.filter((row) => [row.unit_no, row.station_code, row.station_name, row.licensee_name, row.unit_status, row.station_category, row.type_of_unit].some((value) => pretty(value).toLowerCase().includes(q))),
-      earnings: earnings.filter((row) => [row.unit_no, row.station_code, row.licensee_name, row.payment_head, row.payment_sub_head, row.receipt_type, row.mr_no].some((value) => pretty(value).toLowerCase().includes(q))),
+      units: units.filter((row) => matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "unit_status", "station_category", "type_of_unit", "pf_no"], q)),
+      earnings: earnings.filter((row) => matchesQuery(row, ["unit_no", "station_code", "licensee_name", "payment_head", "payment_sub_head", "receipt_type", "mr_no", "amount"], q)),
     };
   }, [units, earnings, search.contracts]);
 
-  const filteredWorks = useMemo(() => {
-    const q = search.works.trim().toLowerCase();
-    return works.filter((row) => {
-      const searchOk = [row.project_id, row.short_name_of_work, row.block_section_station, row.section, row.status].some((value) => pretty(value).toLowerCase().includes(q));
-      const scopeOk = filters.workScope === "All" || pretty(row.scope_type || row.block_section_station) === filters.workScope;
-      const statusOk = filters.workStatus === "All" || pretty(row.status) === filters.workStatus;
-      return searchOk && scopeOk && statusOk;
+  const filteredCommercialContracts = useMemo(() => {
+    const q = search.commercial || "";
+    return commercialContracts.filter((row) => {
+      const searchOk = matchesQuery(row, ["contract_name", "licensee_name", "allocation_code", "policy", "sub_category", "asset_scope", "station_code", "station_name", "raw_station_value", "station_match_status", "annual_license_fee"], q);
+      const policyOk = sameFilterValue(row.policy, filters.commercialPolicy);
+      const stationOk = sameFilterValue(row.station_code, filters.commercialStation);
+      const allocationOk = sameFilterValue(row.allocation_code, filters.commercialAllocation);
+      const subOk = sameFilterValue(row.sub_category, filters.commercialSubCategory);
+      const scopeOk = sameFilterValue(row.asset_scope, filters.commercialAssetScope);
+      const stationStatusOk = sameFilterValue(row.station_match_status, filters.commercialStationStatus);
+      return searchOk && stationOk && allocationOk && policyOk && subOk && scopeOk && stationStatusOk;
     });
-  }, [works, search.works, filters]);
+  }, [commercialContracts, search.commercial, filters]);
+
+  const filteredWorks = useMemo(() => {
+    const q = search.works;
+    const baseRows = works.filter((row) => {
+      const searchOk = matchesQuery(row, ["project_id", "source_project_id", "source_sn", "short_name_of_work", "block_section_station", "section", "status", "station_code", "scope_value", "allocation", "physical_progress"], q);
+      const statusOk = sameFilterValue(row.status, filters.workStatus);
+      return searchOk && statusOk;
+    });
+    const stationRows = baseRows.filter((row) => sameFilterValue(row.scope_type, "Station") && row.station_code);
+    const abssRows = baseRows.filter((row) => sameFilterValue(row.scope_type, "ABSS"));
+    const divisionRows = baseRows.filter((row) => sameFilterValue(row.scope_type, "Division"));
+    const stationFilteredRows = stationRows.filter((row) => sameFilterValue(row.station_code, filters.workStation));
+    return {
+      station: stationFilteredRows,
+      abss: abssRows,
+      division: divisionRows,
+      all: baseRows,
+    };
+  }, [works, search.works, filters.workStation, filters.workStatus]);
 
   const filteredAmenities = useMemo(() => {
-    const q = search.amenities.trim().toLowerCase();
-    const contains = (row, fields) => fields.some((field) => pretty(row[field]).toLowerCase().includes(q));
-    const filterRows = (rows, fields) => rows.filter((row) => !q || contains(row, fields));
+    const q = search.amenities;
+    const filterRows = (rows, fields) => rows.filter((row) => matchesQuery(row, fields, q));
     return {
       summary: filterRows(paSummary, ["station_code", "station_name", "division", "section", "category", "trolley_path", "fob_details"]),
       infra: filterRows(paInfra, ["station_code", "station_name", "division", "section", "category", "fob_details", "shelter_details"]),
@@ -774,7 +891,7 @@ export default function Page() {
       paWorks: filterRows(paWorks, ["station_code", "station_name", "work_type", "work_name", "progress", "tender_status", "executive_agency"]),
       pfExtension: filterRows(paPfExtension, ["station_code", "station_name", "division", "section", "category", "status_text", "remarks"]),
       norms: filterRows(paNorms, ["category", "amenity", "norm", "norm_quantity"]),
-      sanctionedWorks: filteredWorks,
+      sanctionedWorks: filteredWorks.station,
     };
   }, [search.amenities, paSummary, paInfra, paPlatforms, paWheelchairs, paTrolley, paWorks, paPfExtension, paNorms, filteredWorks]);
 
@@ -789,9 +906,9 @@ export default function Page() {
     const station = stationByCode.get(code);
     const division = pretty(row.division || station?.division);
     const section = pretty(row.section || station?.section);
-    const stationOk = reportFilters.station === "All" || code === reportFilters.station;
-    const divisionOk = reportFilters.division === "All" || division === reportFilters.division;
-    const sectionOk = reportFilters.section === "All" || section === reportFilters.section;
+    const stationOk = sameFilterValue(code, reportFilters.station);
+    const divisionOk = sameFilterValue(division, reportFilters.division);
+    const sectionOk = sameFilterValue(section, reportFilters.section);
     return stationOk && divisionOk && sectionOk;
   };
 
@@ -807,52 +924,53 @@ export default function Page() {
   };
 
   const filteredReportStations = useMemo(() => {
-    const q = search.reports.trim().toLowerCase();
+    const q = search.reports;
     return stations.filter((row) => {
-      const textOk = [row.station_code, row.station_name, row.division, row.section, row.categorisation].some((value) => pretty(value).toLowerCase().includes(q));
+      const textOk = matchesQuery(row, ["station_code", "station_name", "division", "section", "categorisation", "platform_type"], q);
       return textOk && matchesReportScope(row);
     });
   }, [stations, search.reports, reportFilters, stationByCode]);
 
   const filteredReportUnits = useMemo(() => {
-    const q = search.reports.trim().toLowerCase();
+    const q = search.reports;
     return units.filter((row) => {
-      const textOk = [row.unit_no, row.station_code, row.station_name, row.licensee_name, row.type_of_unit, row.unit_status].some((value) => pretty(value).toLowerCase().includes(q));
+      const textOk = matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "type_of_unit", "unit_status", "station_category"], q);
       const actionOk = !reportFilters.needsActionOnly || !row.license_fee || !row.station_code || !/active/i.test(pretty(row.unit_status));
       return textOk && actionOk && matchesReportScope(row) && matchesReportDate(row, ["contract_to", "contract_from"]);
     });
   }, [units, search.reports, reportFilters, stationByCode]);
 
   const filteredReportEarnings = useMemo(() => {
-    const q = search.reports.trim().toLowerCase();
+    const q = search.reports;
     return earnings.filter((row) => {
-      const textOk = [row.unit_no, row.station_code, row.licensee_name, row.payment_head, row.payment_sub_head, row.receipt_type].some((value) => pretty(value).toLowerCase().includes(q));
+      const textOk = matchesQuery(row, ["unit_no", "station_code", "licensee_name", "payment_head", "payment_sub_head", "receipt_type", "mr_no", "amount"], q);
       const actionOk = !reportFilters.needsActionOnly || /pending/i.test(pretty(row.receipt_type));
       return textOk && actionOk && matchesReportScope(row) && matchesReportDate(row, ["date_of_receipt", "mr_date", "period_to"]);
     });
   }, [earnings, search.reports, reportFilters, stationByCode]);
 
   const filteredReportWorks = useMemo(() => {
-    const q = search.reports.trim().toLowerCase();
+    const q = search.reports;
     return works.filter((row) => {
-      const textOk = [row.project_id, row.short_name_of_work, row.station_code, row.section, row.status, row.scope_type].some((value) => pretty(value).toLowerCase().includes(q));
+      const textOk = matchesQuery(row, ["project_id", "source_project_id", "source_sn", "short_name_of_work", "station_code", "section", "status", "scope_type", "scope_value", "allocation"], q);
       const actionOk = !reportFilters.needsActionOnly || !/complete|done/i.test(pretty(row.status));
       return textOk && actionOk && matchesReportScope(row) && matchesReportDate(row, ["date_of_sanction"]);
     });
   }, [works, search.reports, reportFilters, stationByCode]);
 
+  const filteredReportCommercial = useMemo(() => {
+    const q = search.reports;
+    return commercialContracts.filter((row) => {
+      const textOk = matchesQuery(row, ["contract_name", "licensee_name", "policy", "sub_category", "asset_scope", "station_code", "station_name", "station_match_status", "allocation_code"], q);
+      const actionOk = !reportFilters.needsActionOnly || /unmatched|asset/i.test(pretty(row.station_match_status));
+      return textOk && actionOk && matchesReportScope(row) && matchesReportDate(row, ["contract_upto", "contract_period_from"]);
+    });
+  }, [commercialContracts, search.reports, reportFilters, stationByCode]);
+
   const reportAlerts = reports?.license_fee_alerts?.rows || [];
   const filteredReportAlerts = useMemo(() => {
-    const q = search.reports.trim().toLowerCase();
-    return reportAlerts.filter((row) => [
-      row.unit_no,
-      row.station_code,
-      row.station_name,
-      row.licensee_name,
-      row.type_of_unit,
-      row.unit_status,
-      row.alert_bucket,
-    ].some((value) => pretty(value).toLowerCase().includes(q)) && matchesReportScope(row) && matchesReportDate(row, ["contract_to", "last_paid_through"]));
+    const q = search.reports;
+    return reportAlerts.filter((row) => matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "type_of_unit", "unit_status", "alert_bucket"], q) && matchesReportScope(row) && matchesReportDate(row, ["contract_to", "last_paid_through"]));
   }, [reportAlerts, search.reports, reportFilters, stationByCode]);
 
   const reportActionRows = useMemo(() => {
@@ -861,14 +979,16 @@ export default function Page() {
       ...filteredReportUnits.filter((row) => !row.station_code || !row.license_fee).map((row) => ({ ...row, action_type: "Unit Data Issue", module: "units", action_key: row.unit_no, problem: !row.station_code ? "Missing station code" : "Missing license fee" })),
       ...filteredReportEarnings.filter((row) => /pending/i.test(pretty(row.receipt_type))).map((row) => ({ ...row, action_type: "Pending Receipt", module: "earnings", action_key: row.receipt_key || row.earning_key, problem: "Receipt pending" })),
       ...filteredReportWorks.filter((row) => !/complete|done/i.test(pretty(row.status))).map((row) => ({ ...row, action_type: "Open Work", module: "works", action_key: row.project_id, problem: pretty(row.status) })),
+      ...filteredReportCommercial.filter((row) => /unmatched|asset/i.test(pretty(row.station_match_status))).map((row) => ({ ...row, action_type: "Commercial Link Review", module: "commercial", action_key: row.contract_name, problem: pretty(row.station_match_status) })),
     ];
     return rows;
-  }, [filteredReportAlerts, filteredReportUnits, filteredReportEarnings, filteredReportWorks]);
+  }, [filteredReportAlerts, filteredReportUnits, filteredReportEarnings, filteredReportWorks, filteredReportCommercial]);
 
   const reportCards = [
     { icon: TrainFront, label: "Stations Covered", value: reports?.stations?.total ?? 0, subtext: `${reports?.stations?.with_units ?? 0} with units, ${reports?.stations?.with_works ?? 0} with works` },
     { icon: Users, label: "Active Units", value: reports?.units?.active ?? 0, subtext: "Units treated as active for fee reporting" },
     { icon: Wallet, label: "License Fee Collected", value: money(reports?.earnings?.license_fee_collected ?? 0), subtext: "All license fee receipts captured" },
+    { icon: Database, label: "Commercial Annual Fee", value: money(commercialContractReports?.annual_license_fee ?? reports?.commercial_contracts?.annual_license_fee ?? 0), subtext: "Non-catering contract annual value" },
     { icon: Wrench, label: "Open Works", value: reports?.works?.pending ?? 0, subtext: "Works not marked complete/done" },
     { icon: CircleAlert, label: "Critical Alerts", value: reports?.overview?.critical_alerts ?? 0, subtext: "Overdue or needs-review license fee cases" },
     { icon: TrendingUp, label: "Overdue Estimate", value: money(reports?.license_fee_alerts?.estimated_overdue_amount ?? 0), subtext: "Estimated from license fee and pending months" },
@@ -879,6 +999,7 @@ export default function Page() {
     { value: "stations", label: "Stations", icon: TrainFront },
     { value: "units", label: "Units", icon: Users },
     { value: "earnings", label: "Earnings", icon: Wallet },
+    { value: "commercial", label: "Commercial", icon: Database },
     { value: "works", label: "Works", icon: Wrench },
     { value: "actions", label: "Needs Action", icon: CircleAlert },
     { value: "quality", label: "Quality", icon: CircleAlert },
@@ -888,6 +1009,7 @@ export default function Page() {
   const dashboardCards = [
     { key: "stations", icon: TrainFront, label: "Stations", subtext: "Registered stations in the database" },
     { key: "units", icon: Users, label: "Contracts", subtext: "Catering stalls and vending contracts" },
+    { key: "commercialContracts", icon: Database, label: "Commercial", subtext: "OOH, parking, ATM and mobile asset contracts" },
     { key: "works", icon: Wrench, label: "Works", subtext: "Sanctioned work records" },
     { key: "earningsTotal", icon: Wallet, label: "Contract Revenue", subtext: "Payments captured inside catering units", money: true },
     { key: "completedWorks", icon: BarChart3, label: "Completed Works", subtext: "Works with complete/done status" },
@@ -897,7 +1019,8 @@ export default function Page() {
   const amenityCount = filteredAmenities[amenityTab]?.length || 0;
   const contractCount = filteredContracts[contractTab]?.length || 0;
   const aiRows = Array.isArray(aiResult?.rows) ? aiResult.rows : [];
-  const dashboardCount = view === "stations" ? filteredStations.length : view === "contracts" ? contractCount : view === "units" ? filteredUnits.length : view === "earnings" ? filteredEarnings.length : view === "works" ? filteredWorks.length : view === "amenities" ? amenityCount : view === "reports" ? filteredReportAlerts.length : view === "ai" ? aiRows.length : stats?.stations ?? 0;
+  const activeWorkRows = filteredWorks[workTab] || [];
+  const dashboardCount = view === "stations" ? filteredStations.length : view === "contracts" ? contractCount : view === "commercial" ? filteredCommercialContracts.length : view === "units" ? filteredUnits.length : view === "earnings" ? filteredEarnings.length : view === "works" ? activeWorkRows.length : view === "amenities" ? amenityCount : view === "reports" ? filteredReportAlerts.length : view === "ai" ? aiRows.length : stats?.stations ?? 0;
   const activeSearch = search[view] ?? "";
   const setActiveSearch = (value) => {
     setSearch((prev) => ({ ...prev, [view]: value }));
@@ -934,13 +1057,34 @@ export default function Page() {
     { key: "amount", label: "Amount", value: (row) => row.amount || 0, render: (row) => <span className="font-semibold">{money(row.amount)}</span> },
   ];
   const workColumns = [
-    { key: "project_id", label: "Project", value: (row) => pretty(row.project_id), render: (row) => <span className="font-black text-blue">{pretty(row.project_id)}</span> },
+    { key: "source_sn", label: "SN" },
+    { key: "source_project_id", label: "Project", value: (row) => pretty(row.source_project_id || row.project_id), render: (row) => <span className="font-black text-blue">{pretty(row.source_project_id || row.project_id)}</span> },
     { key: "short_name_of_work", label: "Work", value: (row) => pretty(row.short_name_of_work), render: (row) => <span className="line-clamp-2 font-medium text-ink">{pretty(row.short_name_of_work)}</span> },
     { key: "status", label: "Status", value: (row) => pretty(row.status), render: (row) => <Badge tone={/complete|done/i.test(pretty(row.status)) ? "accent" : "neutral"}>{pretty(row.status)}</Badge> },
     { key: "scope_type", label: "Scope" },
     { key: "station_code", label: "Station" },
     { key: "section", label: "Section" },
-    { key: "anticipated_expenditure", label: "Cost" },
+    { key: "cost", label: "Cost", value: (row) => row.cost || 0, render: (row) => <span className="font-semibold">{money(row.cost)}</span> },
+    { key: "physical_progress", label: "Physical" },
+  ];
+  const commercialContractColumns = [
+    { key: "contract_name", label: "Contract", value: (row) => pretty(row.contract_name), render: (row) => <span className="font-black text-blue">{pretty(row.contract_name)}</span> },
+    { key: "licensee_name", label: "Licensee", value: (row) => pretty(row.licensee_name), render: (row) => <span className="font-semibold text-ink">{pretty(row.licensee_name)}</span> },
+    { key: "allocation_code", label: "Allocation" },
+    { key: "policy", label: "Policy", value: (row) => pretty(row.policy), render: (row) => <Badge tone="accent">{pretty(row.policy)}</Badge> },
+    { key: "sub_category", label: "Sub Category" },
+    { key: "asset_scope", label: "Scope" },
+    { key: "station_code", label: "Station" },
+    { key: "annual_license_fee", label: "Annual Fee", value: (row) => row.annual_license_fee || 0, render: (row) => <span className="font-semibold">{money(row.annual_license_fee)}</span> },
+    { key: "contract_upto", label: "Upto" },
+    { key: "station_match_status", label: "Link", value: (row) => pretty(row.station_match_status), render: (row) => <Badge tone={/unmatched|asset/i.test(pretty(row.station_match_status)) ? "danger" : "accent"}>{pretty(row.station_match_status)}</Badge> },
+  ];
+  const commercialPaymentColumns = [
+    { key: "payment_month", label: "Month", value: (row) => pretty(row.payment_month), render: (row) => <span className="font-black text-blue">{pretty(row.payment_month)}</span> },
+    { key: "amount_due", label: "Due", value: (row) => row.amount_due || 0, render: (row) => <span className="font-semibold">{money(row.amount_due)}</span> },
+    { key: "amount_paid", label: "Paid", value: (row) => row.amount_paid || 0, render: (row) => <span className="font-semibold">{money(row.amount_paid)}</span> },
+    { key: "payment_status", label: "Status", value: (row) => pretty(row.payment_status), render: (row) => <Badge tone="accent">{pretty(row.payment_status)}</Badge> },
+    { key: "source_column", label: "Source Column" },
   ];
   const amenitySummaryColumns = [
     { key: "station_code", label: "Station", value: (row) => pretty(row.station_code), render: (row) => <span className="font-black text-blue">{pretty(row.station_code)}</span> },
@@ -1075,12 +1219,14 @@ export default function Page() {
     ...filteredReportEarnings.filter((row) => !row.unit_no).map((row) => ({ module: "Earnings", record: row.receipt_key || row.earning_key, problem: "Missing unit number", station_code: row.station_code })),
     ...filteredReportEarnings.filter((row) => !row.station_code).map((row) => ({ module: "Earnings", record: row.receipt_key || row.earning_key, problem: "Missing station code", station_code: row.station_code })),
     ...filteredReportWorks.filter((row) => row.scope_type === "Station" && !row.station_code).map((row) => ({ module: "Works", record: row.project_id, problem: "Station scope without station code", station_code: row.station_code })),
+    ...filteredCommercialContracts.filter((row) => /unmatched|asset/i.test(pretty(row.station_match_status))).map((row) => ({ module: "Commercial", record: row.contract_name, problem: `Station link: ${pretty(row.station_match_status)}`, station_code: row.station_code })),
   ];
 
   const activeReport = (() => {
     if (reportTab === "stations") return { rows: filteredReportStations, columns: stationColumns, fileName: "station-report.xls" };
     if (reportTab === "units") return { rows: filteredReportUnits, columns: unitColumns, fileName: "unit-report.xls" };
     if (reportTab === "earnings") return { rows: filteredReportEarnings, columns: earningColumns, fileName: "earnings-report.xls" };
+    if (reportTab === "commercial") return { rows: filteredReportCommercial, columns: commercialContractColumns, fileName: "commercial-contracts-report.xls" };
     if (reportTab === "works") return { rows: filteredReportWorks, columns: workColumns, fileName: "works-report.xls" };
     if (reportTab === "actions") return { rows: reportActionRows, columns: actionColumns, fileName: "needs-action-report.xls" };
     if (reportTab === "quality") return { rows: qualityRows, columns: qualityColumns, fileName: "quality-report.xls" };
@@ -1157,12 +1303,28 @@ export default function Page() {
         filters: [],
       };
     }
+    if (view === "commercial") {
+      return {
+        title: "Commercial Contracts",
+        subtitle: "OOH, parking, ATM/banking, mobile assets, pay-and-use, and other non-catering commercial contracts.",
+        filters: [
+          ["Station", filters.commercialStation, (value) => setFilters((prev) => ({ ...prev, commercialStation: value })), ["All", ...new Set(commercialContracts.map((r) => r.station_code).filter(Boolean).sort())]],
+          ["Allocation", filters.commercialAllocation, (value) => setFilters((prev) => ({ ...prev, commercialAllocation: value })), ["All", ...new Set(commercialContracts.map((r) => r.allocation_code).filter(Boolean).sort())]],
+          ["Policy", filters.commercialPolicy, (value) => setFilters((prev) => ({ ...prev, commercialPolicy: value })), ["All", ...new Set(commercialContracts.map((r) => r.policy).filter(Boolean).sort())]],
+          ["Sub Category", filters.commercialSubCategory, (value) => setFilters((prev) => ({ ...prev, commercialSubCategory: value })), ["All", ...new Set(commercialContracts.map((r) => r.sub_category).filter(Boolean).sort())]],
+          ["Asset Scope", filters.commercialAssetScope, (value) => setFilters((prev) => ({ ...prev, commercialAssetScope: value })), ["All", ...new Set(commercialContracts.map((r) => r.asset_scope).filter(Boolean).sort())]],
+        ],
+      };
+    }
     if (view === "works") {
       return {
         title: "Sanctioned Works",
         subtitle: "Passenger amenity sanctioned works with station, division, and ABSS scope handling.",
         filters: [
-          ["Scope", filters.workScope, (value) => setFilters((prev) => ({ ...prev, workScope: value })), ["All", "Station", "Division", "ABSS", "Other"]],
+          ["Station", filters.workStation, (value) => {
+            setWorkTab("station");
+            setFilters((prev) => ({ ...prev, workStation: value }));
+          }, ["All", ...new Set(works.map((r) => r.station_code).filter(Boolean).sort())]],
           ["Status", filters.workStatus, (value) => setFilters((prev) => ({ ...prev, workStatus: value })), ["All", ...new Set(works.map((r) => r.status).filter(Boolean).sort())]],
         ],
       };
@@ -1195,6 +1357,7 @@ export default function Page() {
     const code = station.station_code;
     const stationUnits = units.filter((row) => pretty(row.station_code) === pretty(code));
     const stationEarnings = earnings.filter((row) => pretty(row.station_code) === pretty(code));
+    const stationCommercialContracts = commercialContracts.filter((row) => pretty(row.station_code) === pretty(code));
     const stationPaWorks = paWorks.filter((row) => pretty(row.station_code) === pretty(code));
     const pfExtensionStatus = paPfExtension.find((row) => pretty(row.station_code) === pretty(code));
     const platformRows = paPlatforms.filter((row) => pretty(row.station_code) === pretty(code));
@@ -1208,6 +1371,7 @@ export default function Page() {
       units: stationUnits,
       earnings: stationEarnings,
       works: works.filter((row) => pretty(row.station_code) === pretty(code) || pretty(row.scope_value) === pretty(code)),
+      commercial_contracts: stationCommercialContracts,
       amenities: {
         summary: paSummary.find((row) => pretty(row.station_code) === pretty(code)),
         infra: paInfra.find((row) => pretty(row.station_code) === pretty(code)),
@@ -1253,6 +1417,29 @@ export default function Page() {
     }
   };
 
+  const openStationSheet = async (station) => {
+    const fallback = buildLocalStationDetail(station);
+    setStationSheet({ open: true, record: fallback, loading: true });
+    try {
+      const detail = await fetchJson(stationDetailUrl(station.station_code));
+      setStationSheet((current) => current.open
+        ? { open: true, record: detail, loading: false }
+        : current);
+    } catch {
+      setStationSheet((current) => current.open
+        ? { ...current, loading: false }
+        : current);
+      setActivityStatus("Using local station snapshot");
+    }
+  };
+
+  const openStationDetailFromSheet = (tab = "overview") => {
+    if (!stationSheet.record) return;
+    setStationModalTab(tab);
+    setModal({ open: true, type: "station", record: stationSheet.record });
+    setStationSheet({ open: false, record: null, loading: false });
+  };
+
   const openUnit = (unit) => {
     const no = unit.unit_no;
     setModal({
@@ -1271,6 +1458,16 @@ export default function Page() {
 
   const openWork = (work) => {
     setModal({ open: true, type: "work", record: { work } });
+  };
+
+  const openCommercialContract = async (contract) => {
+    setModal({ open: true, type: "commercial", record: { contract, station_links: [], payments: [] } });
+    try {
+      const detail = await fetchJson(commercialContractDetailUrl(contract.contract_key));
+      setModal({ open: true, type: "commercial", record: detail });
+    } catch (error) {
+      setActivityStatus(error?.message || "Using local commercial contract detail");
+    }
   };
 
   const openAmenity = (amenity) => {
@@ -1301,6 +1498,7 @@ export default function Page() {
       if (unit) return openUnit(unit);
     }
     if (reportTab === "earnings") return openEarning(row);
+    if (reportTab === "commercial") return openCommercialContract(row);
     if (reportTab === "works") return openWork(row);
     if (reportTab === "actions") {
       if (row.module === "units") {
@@ -1314,6 +1512,10 @@ export default function Page() {
       if (row.module === "works") {
         const work = works.find((item) => pretty(item.project_id) === pretty(row.action_key));
         if (work) return openWork(work);
+      }
+      if (row.module === "commercial") {
+        const contract = commercialContracts.find((item) => pretty(item.contract_name) === pretty(row.action_key));
+        if (contract) return openCommercialContract(contract);
       }
     }
     return null;
@@ -1421,23 +1623,23 @@ export default function Page() {
     const type = formModal.type;
     const key = keyField[type];
     const path = resourcePath[type];
-    const keyValue = formModal.data[key];
     const isEdit = formModal.mode === "edit";
+    const keyValue = isEdit ? formModal.data[key] : type === "commercial-contracts" ? formModal.data.contract_name : formModal.data[key];
     if (!keyValue) {
-      setFormError(`${key} is required`);
+      setFormError(`${type === "commercial-contracts" && !isEdit ? "contract_name" : key} is required`);
       return;
     }
     setFormError("");
     setSaving(true);
     try {
-      let response = await fetch(`${API_URL}/api/${path}${isEdit ? `/${encodeURIComponent(keyValue)}` : ""}`, {
+      let response = await fetch(`${API_URL}/api/${path}${isEdit ? `/${encodeURIComponent(formModal.data[key])}` : ""}`, {
         method: isEdit ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(formModal.data),
       });
       let payload = await response.json().catch(() => null);
       let savedMessage = isEdit ? "updated" : "created";
-      if (!isEdit && response.status === 409) {
+      if (!isEdit && response.status === 409 && type !== "commercial-contracts") {
         response = await fetch(`${API_URL}/api/${path}/${encodeURIComponent(keyValue)}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -1539,62 +1741,63 @@ export default function Page() {
   };
 
   return (
-    <main className="min-h-screen px-3 py-3 text-ink sm:px-4 lg:px-6">
-      <section className="mx-auto grid max-w-7xl gap-5 lg:h-[calc(100vh-1.5rem)] lg:grid-cols-[292px_minmax(0,1fr)]">
-        <aside className="glass soft-scroll rounded-3xl border p-4 lg:sticky lg:top-3 lg:h-[calc(100vh-1.5rem)] lg:overflow-auto">
+    <main className="min-h-screen px-2 py-2 text-ink sm:px-4 sm:py-3 lg:px-5">
+      <section className="mx-auto grid min-w-0 max-w-[1560px] grid-cols-[minmax(0,1fr)] gap-4 lg:h-[calc(100vh-1.5rem)] lg:grid-cols-[256px_minmax(0,1fr)]">
+        <aside className="soft-surface soft-scroll min-w-0 max-w-full rounded-lg border p-3 sm:p-4 lg:sticky lg:top-3 lg:h-[calc(100vh-1.5rem)] lg:overflow-auto">
           <div className="flex items-start justify-between gap-3">
             <div>
               <div className="text-xs font-black uppercase tracking-[0.22em] text-accent">Rail dashboard</div>
               <div className="mt-2 text-xl font-black text-ink">Navigation</div>
-              <p className="mt-1 text-sm text-muted">Stations, catering units, earnings, and passenger amenities.</p>
+              <p className="mt-1 hidden text-sm text-muted sm:block">Stations, catering units, earnings, and passenger amenities.</p>
             </div>
-            <div className="rounded-2xl border border-line bg-surface/80 p-2 text-accent">
+            <div className="soft-raised rounded-lg border border-line p-2 text-accent">
               <Database size={18} />
             </div>
           </div>
-          <div className="mt-4 space-y-2">
+          <div className="soft-scroll mt-4 flex w-full min-w-0 max-w-full gap-2 overflow-x-auto pb-2 lg:block lg:space-y-2 lg:overflow-visible lg:pb-0">
             <NavButton active={view === "dashboard"} icon={BarChart3} label="Dashboard" hint="KPI cards and charts" onClick={() => setView("dashboard")} />
             <NavButton active={view === "stations"} icon={TrainFront} label="Stations" hint="Station master and search" onClick={() => setView("stations")} />
             <NavButton active={view === "contracts"} icon={Wallet} label="Contracts" hint="Catering units and payments" onClick={() => setView("contracts")} />
-            <div className="pt-2 text-[11px] font-black uppercase tracking-[0.2em] text-muted">Passenger Amenities</div>
+            <NavButton active={view === "commercial"} icon={Database} label="Commercial" hint="OOH, parking, ATM, mobile assets" onClick={() => setView("commercial")} />
+            <div className="hidden pt-2 text-[11px] font-black uppercase tracking-[0.2em] text-muted lg:block">Passenger Amenities</div>
             <NavButton active={view === "amenities"} icon={TrainFront} label="Amenity Infra" hint="Norms, platforms, wheel chairs, trolley paths" onClick={() => setView("amenities")} />
             <NavButton active={view === "works"} icon={Wrench} label="Sanctioned Works" hint="PA sanctioned works and station links" onClick={() => setView("works")} />
             <NavButton active={view === "reports"} icon={FileText} label="Reports" hint="License fee and unit alerts" onClick={() => setView("reports")} />
             <NavButton active={view === "ai"} icon={Bot} label="Ask AI" hint="Talk to any table safely" onClick={() => setView("ai")} />
           </div>
-          <div className="mt-5">
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:mt-5 lg:grid-cols-1">
             <ThemeToggle theme={theme} onToggle={toggleTheme} />
+            <Button onClick={loadData} disabled={loading} className="w-full">
+              <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
+              {loading ? "Refreshing..." : "Refresh data"}
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => view === "commercial" ? importCommercialContractsWorkbook() : view === "works" ? importSanctionedWorks() : setImportModal({ open: true, resource: view === "dashboard" || view === "amenities" ? "stations" : view === "contracts" ? "units" : view, csvText: "", url: "", result: null })}
+              className="w-full text-accent"
+            >
+              <UploadCloud size={16} />
+              {view === "commercial" ? "Import Contracts XLSX" : view === "works" ? "Fetch Sanctioned Works" : "Import CSV"}
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={importPassengerAmenities}
+              disabled={loading}
+              className="w-full text-accent"
+            >
+              <RefreshCw size={16} className={loading && view === "amenities" ? "animate-spin" : ""} />
+              Fetch PA Infra
+            </Button>
           </div>
-          <Button onClick={loadData} disabled={loading} className="mt-4 w-full">
-            <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
-            {loading ? "Refreshing..." : "Refresh data"}
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={() => setImportModal({ open: true, resource: view === "dashboard" || view === "amenities" ? "stations" : view === "contracts" ? "units" : view, csvText: "", url: "", result: null })}
-            className="mt-2 w-full text-accent"
-          >
-            <UploadCloud size={16} />
-            Import CSV
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={importPassengerAmenities}
-            disabled={loading}
-            className="mt-2 w-full text-accent"
-          >
-            <RefreshCw size={16} className={loading && view === "amenities" ? "animate-spin" : ""} />
-            Fetch PA Infra
-          </Button>
-          <div className="mt-4 rounded-2xl border border-line bg-surface/70 p-3">
+          <div className="soft-inset mt-3 rounded-lg border border-line p-3 lg:mt-4">
             <div className="text-[11px] font-black uppercase tracking-[0.18em] text-muted">Activity</div>
             <div className="mt-1 text-sm font-semibold text-ink">{activityStatus}</div>
             <div className="mt-1 text-xs text-muted">{lastRefreshAt || "No refresh yet"}</div>
           </div>
         </aside>
 
-        <section className="soft-scroll space-y-5 lg:h-full lg:overflow-auto lg:pr-1">
-          <div className="glass sticky top-0 z-30 rounded-3xl border p-5">
+        <section className="soft-scroll min-w-0 space-y-4 lg:h-full lg:overflow-auto lg:pr-2">
+          <div className="soft-surface sticky top-0 z-30 rounded-lg border p-4 sm:p-5">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <Breadcrumbs title={viewConfig.title} />
@@ -1717,6 +1920,53 @@ export default function Page() {
             </div>
           ) : null}
 
+          {view === "commercial" ? (
+            <div className="space-y-4">
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <Card icon={Database} label="Commercial Contracts" value={commercialContractReports?.total_contracts ?? commercialContracts.length} subtext="Non-catering commercial contracts" />
+                <Card icon={TrainFront} label="Station Linked" value={commercialContractReports?.linked_station_rows ?? 0} subtext="Rows linked to station master" />
+                <Card icon={Wallet} label="Annual Fee" value={money(commercialContractReports?.annual_license_fee ?? 0)} subtext="Annual license fee potential" />
+                <Card icon={CircleAlert} label="Expiring Soon" value={commercialContractReports?.expiry_alerts?.length ?? 0} subtext="Contracts ending within 90 days" />
+              </div>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <Panel title="Policy Mix" subtitle="Commercial contracts by policy.">
+                  <Donut
+                    series={(commercialContractReports?.by_policy || []).slice(0, 6).map((item, index) => ({ label: item.label, value: item.value, color: ["#0f766e", "#2563eb", "#8b5cf6", "#f59e0b", "#ef4444", "#14b8a6"][index % 6] }))}
+                    totalLabel="Policy split"
+                  />
+                </Panel>
+                <Panel title="Recorded Payment Trend" subtitle="Monthly commercial payment values extracted from the workbook.">
+                  <TrendLine data={(commercialContractReports?.by_month || []).map((row) => ({ label: row.label?.slice(0, 7), value: row.value }))} />
+                </Panel>
+              </div>
+              <Panel
+                title="Commercial Contracts Workspace"
+                subtitle="OOH, parking, ATM/banking, mobile assets, pay-and-use, and other commercial contracts with station linkage where relevant."
+                action={
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="secondary" size="sm" onClick={() => openCreate("commercial-contracts")}>
+                      <Plus size={15} />
+                      Add
+                    </Button>
+                    <Button size="sm" onClick={importCommercialContractsWorkbook} disabled={loading}>
+                      <UploadCloud size={15} />
+                      Import XLSX
+                    </Button>
+                  </div>
+                }
+              >
+                <DataTable
+                  columns={commercialContractColumns}
+                  rows={filteredCommercialContracts}
+                  getKey={(row, index) => `${pretty(row.contract_key || row.contract_name)}-${pretty(row.station_code)}-${index}`}
+                  onRowClick={openCommercialContract}
+                  emptyTitle="No commercial contracts match the current search or filters."
+                  fileName="commercial-contracts.csv"
+                />
+              </Panel>
+            </div>
+          ) : null}
+
           {view === "reports" ? (
             <div className="space-y-4">
               <Tabs tabs={reportTabs} value={reportTab} onChange={setReportTab} />
@@ -1740,17 +1990,17 @@ export default function Page() {
                 <div className="grid gap-3 lg:grid-cols-4">
                   <label className="space-y-1">
                     <span className="text-[11px] font-black uppercase tracking-[0.16em] text-muted">Month</span>
-                    <input type="month" value={reportFilters.month} onChange={(event) => setReportFilters((prev) => ({ ...prev, month: event.target.value }))} className="h-11 w-full rounded-xl border border-line bg-surface px-3 text-sm outline-none focus:border-accent" />
+                    <input type="month" value={reportFilters.month} onChange={(event) => setReportFilters((prev) => ({ ...prev, month: event.target.value }))} className="soft-inset h-11 w-full rounded-lg border border-line px-3 text-sm outline-none focus:border-accent" />
                   </label>
                   <label className="space-y-1">
                     <span className="text-[11px] font-black uppercase tracking-[0.16em] text-muted">From</span>
-                    <input type="date" value={reportFilters.dateFrom} onChange={(event) => setReportFilters((prev) => ({ ...prev, dateFrom: event.target.value }))} className="h-11 w-full rounded-xl border border-line bg-surface px-3 text-sm outline-none focus:border-accent" />
+                    <input type="date" value={reportFilters.dateFrom} onChange={(event) => setReportFilters((prev) => ({ ...prev, dateFrom: event.target.value }))} className="soft-inset h-11 w-full rounded-lg border border-line px-3 text-sm outline-none focus:border-accent" />
                   </label>
                   <label className="space-y-1">
                     <span className="text-[11px] font-black uppercase tracking-[0.16em] text-muted">To</span>
-                    <input type="date" value={reportFilters.dateTo} onChange={(event) => setReportFilters((prev) => ({ ...prev, dateTo: event.target.value }))} className="h-11 w-full rounded-xl border border-line bg-surface px-3 text-sm outline-none focus:border-accent" />
+                    <input type="date" value={reportFilters.dateTo} onChange={(event) => setReportFilters((prev) => ({ ...prev, dateTo: event.target.value }))} className="soft-inset h-11 w-full rounded-lg border border-line px-3 text-sm outline-none focus:border-accent" />
                   </label>
-                  <label className="flex items-end gap-2 rounded-xl border border-line bg-surface/65 px-3 py-2 text-sm font-bold text-ink">
+                  <label className="soft-inset flex items-end gap-2 rounded-lg border border-line px-3 py-2 text-sm font-bold text-ink">
                     <input type="checkbox" checked={reportFilters.needsActionOnly} onChange={(event) => setReportFilters((prev) => ({ ...prev, needsActionOnly: event.target.checked }))} />
                     Needs action only
                   </label>
@@ -1763,13 +2013,13 @@ export default function Page() {
                   ].map(([label, key, options]) => (
                     <label key={key} className="space-y-1">
                       <span className="text-[11px] font-black uppercase tracking-[0.16em] text-muted">{label}</span>
-                      <select value={reportFilters[key]} onChange={(event) => setReportFilters((prev) => ({ ...prev, [key]: event.target.value }))} className="h-11 w-full rounded-xl border border-line bg-surface px-3 text-sm outline-none focus:border-accent">
+                      <select value={reportFilters[key]} onChange={(event) => setReportFilters((prev) => ({ ...prev, [key]: event.target.value }))} className="soft-inset h-11 w-full rounded-lg border border-line px-3 text-sm outline-none focus:border-accent">
                         {options.map((option) => <option key={option} value={option}>{option}</option>)}
                       </select>
                     </label>
                   ))}
                 </div>
-                <div className="mt-3 flex flex-col gap-3 rounded-2xl border border-line bg-surface/55 p-3 xl:flex-row xl:items-center xl:justify-between">
+                <div className="soft-inset mt-3 flex flex-col gap-3 rounded-lg border border-line p-3 xl:flex-row xl:items-center xl:justify-between">
                   <div className="flex flex-wrap gap-2">
                     {reportPresets.length ? reportPresets.map((preset) => (
                       <button key={preset.id} type="button" onClick={() => applyReportPreset(preset)} className="rounded-full border border-line bg-surface px-3 py-1.5 text-xs font-black text-ink transition hover:border-accent">
@@ -1778,7 +2028,7 @@ export default function Page() {
                     )) : <span className="text-sm text-muted">No saved report presets yet.</span>}
                   </div>
                   <div className="flex flex-col gap-2 sm:flex-row">
-                    <input value={reportPresetName} onChange={(event) => setReportPresetName(event.target.value)} placeholder="Preset name" className="h-10 rounded-xl border border-line bg-surface px-3 text-sm outline-none focus:border-accent" />
+                    <input value={reportPresetName} onChange={(event) => setReportPresetName(event.target.value)} placeholder="Preset name" className="soft-inset h-10 rounded-lg border border-line px-3 text-sm outline-none focus:border-accent" />
                     <Button size="sm" onClick={saveReportPreset}>Save preset</Button>
                     <Button variant="ghost" size="sm" onClick={() => setReportFilters({ month: "", dateFrom: "", dateTo: "", station: "All", division: "All", section: "All", needsActionOnly: false })}>Reset</Button>
                   </div>
@@ -1987,7 +2237,7 @@ export default function Page() {
                     onChange={(event) => setAiQuestion(event.target.value)}
                     rows={4}
                     placeholder="Example: Tell me everything about KSM, or show stations where ramp is feasible but not proposed."
-                    className="w-full rounded-2xl border border-line bg-surface px-4 py-3 text-sm outline-none placeholder:text-muted focus:border-accent"
+                    className="soft-inset w-full rounded-lg border border-line px-4 py-3 text-sm outline-none placeholder:text-muted focus:border-accent"
                   />
                   <div className="flex flex-wrap gap-2">
                     {aiSuggestions.map((suggestion) => (
@@ -1995,14 +2245,14 @@ export default function Page() {
                         key={suggestion}
                         type="button"
                         onClick={() => submitAiQuery(suggestion)}
-                        className="rounded-full border border-line bg-surface/75 px-3 py-1.5 text-xs font-black text-ink transition hover:border-accent hover:bg-surfaceStrong"
+                        className="soft-control rounded-full px-3 py-1.5 text-xs font-black text-ink transition hover:border-accent active:shadow-pressed"
                       >
                         {suggestion}
                       </button>
                     ))}
                   </div>
                   {aiError ? (
-                    <div className="rounded-xl border border-red-300/70 bg-red-500/10 px-3 py-2 text-sm font-semibold text-red-500">
+                    <div className="rounded-lg border border-red-300/70 bg-red-500/10 px-3 py-2 text-sm font-semibold text-red-500">
                       {aiError}
                     </div>
                   ) : null}
@@ -2033,12 +2283,12 @@ export default function Page() {
                       ))}
                     </div>
                     {aiResult.planner_error || aiResult.answer_error ? (
-                      <div className="mt-4 rounded-xl border border-amber-300/70 bg-amber-400/10 px-3 py-2 text-xs font-semibold text-amber-700 dark:text-amber-200">
+                      <div className="mt-4 rounded-lg border border-amber-300/70 bg-amber-400/10 px-3 py-2 text-xs font-semibold text-amber-700 dark:text-amber-200">
                         {aiResult.planner_error || aiResult.answer_error}
                       </div>
                     ) : null}
                     {aiResult.sql ? (
-                      <pre className="soft-scroll mt-4 overflow-auto rounded-xl border border-line bg-surface p-3 text-xs text-muted">{aiResult.sql}</pre>
+                      <pre className="soft-inset soft-scroll mt-4 overflow-auto rounded-lg border border-line p-3 text-xs text-muted">{aiResult.sql}</pre>
                     ) : null}
                   </Panel>
                   <Panel title="AI Result Rows" subtitle="Click rows with station, unit, or project identifiers to open the linked dashboard record.">
@@ -2078,7 +2328,7 @@ export default function Page() {
             </div>
           ) : null}
 
-          {view !== "dashboard" && view !== "reports" && view !== "amenities" && view !== "contracts" && view !== "ai" ? (
+          {view !== "dashboard" && view !== "reports" && view !== "amenities" && view !== "contracts" && view !== "commercial" && view !== "ai" ? (
           <Panel
             title={viewConfig.title}
             subtitle={view === "stations" ? "Station master with filtering and search." : view === "units" ? "Catering units linked to stations." : view === "earnings" ? "Earnings linked to units and station codes." : view === "works" ? "Sanctioned works with scope and status." : view === "reports" ? "License fee pending and contract expiry alert list." : "Dashboard summary"}
@@ -2112,7 +2362,7 @@ export default function Page() {
                         const unit = units.find((item) => pretty(item.unit_no) === pretty(row.unit_no));
                         if (unit) openUnit(unit);
                       }}
-                      className="group grid gap-3 rounded-xl border border-line bg-surface/85 p-4 text-left transition hover:-translate-y-0.5 hover:border-accent hover:bg-surfaceStrong md:grid-cols-[1.1fr_1fr_1fr_auto]"
+                      className="soft-raised group grid gap-3 rounded-lg border border-line p-4 text-left transition hover:-translate-y-0.5 hover:border-accent md:grid-cols-[1.1fr_1fr_1fr_auto]"
                     >
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
@@ -2138,7 +2388,7 @@ export default function Page() {
                       </div>
                     </button>
                   ))}
-                  {!filteredReportAlerts.length ? <div className="rounded-xl border border-line bg-surface/85 p-4 text-sm text-muted">No license fee alerts match the current search.</div> : null}
+                  {!filteredReportAlerts.length ? <div className="soft-inset rounded-lg border border-line p-4 text-sm text-muted">No license fee alerts match the current search.</div> : null}
                 </div>
                 </ListShell>
                 <ListFooter
@@ -2153,7 +2403,7 @@ export default function Page() {
                 columns={stationColumns}
                 rows={filteredStations}
                 getKey={(row) => row.station_code}
-                onRowClick={openStation}
+                onRowClick={openStationSheet}
                 emptyTitle="No stations match the current search or filters."
                 fileName="stations-visible.csv"
               />
@@ -2183,19 +2433,45 @@ export default function Page() {
                 />
               </div>
             ) : view === "works" ? (
-              <DataTable
-                columns={workColumns}
-                rows={filteredWorks}
-                getKey={(row) => row.work_key || row.project_id}
-                onRowClick={openWork}
-                emptyTitle="No works match the current search or filters."
-                fileName="works-visible.csv"
-              />
+              <div className="space-y-4">
+                <Tabs
+                  tabs={[
+                    { value: "station", label: `All Stations (${filteredWorks.station.length})`, icon: TrainFront },
+                    { value: "abss", label: `ABSS (${filteredWorks.abss.length})`, icon: TrainFront },
+                    { value: "division", label: `Division (${filteredWorks.division.length})`, icon: Database },
+                  ]}
+                  value={workTab}
+                  onChange={setWorkTab}
+                />
+                <DataTable
+                  columns={workColumns}
+                  rows={activeWorkRows}
+                  getKey={(row, index) => `${pretty(row.project_id)}-${pretty(row.station_code)}-${pretty(row.scope_type)}-${pretty(row.scope_value)}-${index}`}
+                  onRowClick={openWork}
+                  emptyTitle={workTab === "station" ? "No station-linked works match the selected station/search/status." : workTab === "abss" ? "No ABSS works match the current search/status filters." : "No division works match the current search/status filters."}
+                  fileName={`works-${workTab}-visible.csv`}
+                />
+              </div>
             ) : null}
           </Panel>
           ) : null}
         </section>
       </section>
+
+      <BottomSheet
+        open={stationSheet.open}
+        title={`${pretty(stationSheet.record?.station?.station_code)} - ${pretty(stationSheet.record?.station?.station_name)}`}
+        subtitle="Operational snapshot with linked station records."
+        onClose={() => setStationSheet({ open: false, record: null, loading: false })}
+      >
+        <StationQuickView
+          record={stationSheet.record}
+          loading={stationSheet.loading}
+          stationAlerts={filteredReportAlerts}
+          onOpenDetail={openStationDetailFromSheet}
+          money={money}
+        />
+      </BottomSheet>
 
       <Modal
         open={modal.open}
@@ -2208,6 +2484,8 @@ export default function Page() {
                 ? `${pretty(modal.record?.earning?.unit_no)} - Earnings`
                 : modal.type === "work"
                   ? `${pretty(modal.record?.work?.project_id)} - ${pretty(modal.record?.work?.short_name_of_work)}`
+                  : modal.type === "commercial"
+                    ? `${pretty(modal.record?.contract?.contract_name)} - Commercial`
                   : modal.type === "amenity"
                     ? `${pretty(modal.record?.amenity?.station_code || modal.record?.amenity?.category)} - Passenger Amenity`
                   : "Detail"
@@ -2221,6 +2499,8 @@ export default function Page() {
                 ? "Full earnings record."
                 : modal.type === "work"
                   ? "Full sanctioned work record."
+                  : modal.type === "commercial"
+                    ? "Commercial contract details with station linkage and payment schedule."
                   : modal.type === "amenity"
                     ? "Passenger amenity data linked by station code."
                   : null
@@ -2237,8 +2517,9 @@ export default function Page() {
             onDelete={() => deleteRecord("stations", modal.record.station)}
             stationAlerts={filteredReportAlerts}
             qualityRows={qualityRows}
-            columns={{ platformColumns, paWorkColumns, unitColumns, workColumns, normColumns }}
+            columns={{ platformColumns, paWorkColumns, unitColumns, workColumns, normColumns, commercialContractColumns }}
             openAmenity={openAmenity}
+            openCommercialContract={openCommercialContract}
             openUnit={openUnit}
             openWork={openWork}
             money={money}
@@ -2267,7 +2548,7 @@ export default function Page() {
             <Panel title="Linked Earnings" subtitle="Earnings rows linked by unit number">
               <div className="space-y-2">
                 {modal.record.earnings.length ? modal.record.earnings.map((row) => (
-                  <button key={row.earning_key || `${row.unit_no}-${row.date_of_receipt}`} type="button" onClick={() => openEarning(row)} className="flex w-full items-start justify-between gap-3 rounded-xl border border-line bg-surface px-3 py-3 text-left hover:border-accent">
+                  <button key={row.earning_key || `${row.unit_no}-${row.date_of_receipt}`} type="button" onClick={() => openEarning(row)} className="soft-raised flex w-full items-start justify-between gap-3 rounded-lg border border-line px-3 py-3 text-left hover:border-accent">
                     <div className="min-w-0">
                       <div className="text-sm font-semibold text-ink">{pretty(row.date_of_receipt)}</div>
                       <div className="mt-0.5 text-xs text-muted">{pretty(row.payment_head)} / {pretty(row.payment_sub_head)}</div>
@@ -2314,7 +2595,9 @@ export default function Page() {
             />
             <KeyValueGrid
               rows={[
-                ["Project ID", modal.record.work.project_id],
+                ["Project ID", modal.record.work.source_project_id || modal.record.work.project_id],
+                ["Internal Key", modal.record.work.project_id],
+                ["Sheet SN", modal.record.work.source_sn],
                 ["Short Name", modal.record.work.short_name_of_work],
                 ["Status", modal.record.work.status],
                 ["Date of Sanction", modal.record.work.date_of_sanction],
@@ -2324,10 +2607,72 @@ export default function Page() {
                 ["Station Code", modal.record.work.station_code],
                 ["Section", modal.record.work.section],
                 ["Allocation", modal.record.work.allocation],
+                ["Cost", money(modal.record.work.cost)],
+                ["Expenditure Upto Date", money(modal.record.work.expenditure_upto_date)],
+                ["Physical Progress", modal.record.work.physical_progress],
+                ["Financial Progress", modal.record.work.financial_progress],
                 ["Anticipated Expenditure", modal.record.work.anticipated_expenditure],
                 ["Remarks", modal.record.work.remarks],
               ]}
             />
+          </div>
+        ) : modal.type === "commercial" ? (
+          <div className="space-y-4">
+            <DetailActions
+              saving={saving}
+              onEdit={() => openEdit("commercial-contracts", modal.record.contract)}
+              onDelete={() => deleteRecord("commercial-contracts", modal.record.contract)}
+            />
+            <KeyValueGrid
+              rows={[
+                ["Contract Name", modal.record.contract.contract_name],
+                ["Licensee", modal.record.contract.licensee_name],
+                ["Policy", modal.record.contract.policy],
+                ["Sub Category", modal.record.contract.sub_category],
+                ["Asset Scope", modal.record.contract.asset_scope],
+                ["Raw Station", modal.record.contract.raw_station_value],
+                ["Station Match", modal.record.contract.station_match_status],
+                ["Allocation Code", modal.record.contract.allocation_code],
+                ["Allotted On", modal.record.contract.contract_allotted_on],
+                ["Contract From", modal.record.contract.contract_period_from],
+                ["Contract Upto", modal.record.contract.contract_upto],
+                ["No. of Years", modal.record.contract.no_of_years],
+                ["Space Sq Ft", modal.record.contract.space_sq_ft],
+                ["Annual License Fee", money(modal.record.contract.annual_license_fee)],
+                ["Quarterly License Fee", money(modal.record.contract.quarterly_license_fee)],
+                ["Recorded Payment Total", money(modal.record.payment_total)],
+              ]}
+            />
+            <Panel title="Linked Stations" subtitle="Station links generated from Stn or inferred from contract name.">
+              <DataTable
+                columns={[
+                  { key: "station_code", label: "Station", value: (row) => pretty(row.station_code), render: (row) => <span className="font-black text-blue">{pretty(row.station_code)}</span> },
+                  { key: "station_name", label: "Name" },
+                  { key: "division", label: "Division" },
+                  { key: "section", label: "Section" },
+                  { key: "match_type", label: "Match Type" },
+                  { key: "match_status", label: "Status" },
+                  { key: "raw_station_value", label: "Raw Value" },
+                ]}
+                rows={modal.record.station_links || []}
+                getKey={(row, index) => `${pretty(row.id)}-${index}`}
+                onRowClick={(row) => {
+                  const station = stations.find((item) => pretty(item.station_code) === pretty(row.station_code));
+                  if (station) openStation(station, "commercial");
+                }}
+                emptyTitle="No station links. This may be a mobile/train asset contract."
+                fileName="commercial-contract-station-links.csv"
+              />
+            </Panel>
+            <Panel title="Payment Schedule" subtitle="Month-wise payment values extracted from workbook columns.">
+              <DataTable
+                columns={commercialPaymentColumns}
+                rows={modal.record.payments || []}
+                getKey={(row, index) => `${pretty(row.payment_key || row.payment_month)}-${index}`}
+                emptyTitle="No monthly payment rows found for this contract."
+                fileName="commercial-contract-payments.csv"
+              />
+            </Panel>
           </div>
         ) : modal.type === "amenity" ? (
           <div className="space-y-4">
@@ -2404,7 +2749,7 @@ export default function Page() {
               <select
                 value={importModal.resource}
                 onChange={(event) => setImportModal((prev) => ({ ...prev, resource: event.target.value, result: null }))}
-                className="h-11 rounded-xl border border-line bg-surface px-3 text-sm outline-none focus:border-accent"
+                className="soft-inset h-11 rounded-lg border border-line px-3 text-sm outline-none focus:border-accent"
               >
                 <option value="stations">Stations</option>
                 <option value="units">Units</option>
@@ -2418,7 +2763,7 @@ export default function Page() {
                 type="file"
                 accept=".csv,text/csv"
                 onChange={(event) => readCsvFile(event.target.files?.[0])}
-                className="h-11 rounded-xl border border-line bg-surface px-3 py-2 text-sm outline-none focus:border-accent"
+                className="soft-inset h-11 rounded-lg border border-line px-3 py-2 text-sm outline-none focus:border-accent"
               />
             </label>
           </div>
@@ -2428,7 +2773,7 @@ export default function Page() {
               value={importModal.url}
               onChange={(event) => setImportModal((prev) => ({ ...prev, url: event.target.value, csvText: "", result: null }))}
               placeholder="https://docs.google.com/spreadsheets/d/.../gviz/tq?tqx=out:csv&gid=..."
-              className="h-11 rounded-xl border border-line bg-surface px-3 text-sm outline-none focus:border-accent"
+              className="soft-inset h-11 rounded-lg border border-line px-3 text-sm outline-none focus:border-accent"
             />
           </label>
           <label className="grid gap-1">
@@ -2437,11 +2782,11 @@ export default function Page() {
               value={importModal.csvText}
               onChange={(event) => setImportModal((prev) => ({ ...prev, csvText: event.target.value, url: "", result: null }))}
               rows={8}
-              className="rounded-xl border border-line bg-surface px-3 py-2 text-sm outline-none focus:border-accent"
+              className="soft-inset rounded-lg border border-line px-3 py-2 text-sm outline-none focus:border-accent"
             />
           </label>
           {importModal.result ? (
-            <div className="rounded-xl border border-line bg-surface p-3 text-sm">
+            <div className="soft-inset rounded-lg border border-line p-3 text-sm">
               <div className="font-bold text-ink">{importModal.result.rows} rows checked - {importModal.result.valid ? "valid" : "errors found"}</div>
               {importModal.result.errors?.length ? (
                 <div className="mt-2 max-h-32 overflow-auto text-xs text-red-700">

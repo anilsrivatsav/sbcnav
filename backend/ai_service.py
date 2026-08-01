@@ -10,7 +10,7 @@ from typing import Any, TypedDict
 from sqlalchemy import inspect, text
 
 from database import engine
-from services import get_reports, get_station_detail, list_passenger_amenities, list_stations, list_units, list_works
+from services import get_reports, get_station_detail, list_commercial_contracts, list_passenger_amenities, list_stations, list_units, list_works
 
 try:
     from langgraph.graph import END, StateGraph
@@ -89,6 +89,9 @@ def database_schema_context() -> str:
         "passenger_amenity_works",
         "station_platform_extension_status",
         "platform_extension_summaries",
+        "commercial_contracts",
+        "commercial_contract_station_links",
+        "commercial_contract_payments",
     }
     lines = []
     for table in sorted(name for name in inspector.get_table_names() if name in allowed):
@@ -173,6 +176,7 @@ def get_station_360_tool(station_code: str) -> AiToolResult:
             "contracts": len(detail.get("contracts", [])),
             "earnings": len(detail.get("earnings", [])),
             "works": len(detail.get("works", [])),
+            "commercial_contracts": len(detail.get("commercial_contracts", [])),
             "platforms": summary.get("platforms"),
             "ramp_feasible": summary.get("ramp_feasible"),
             "lift_proposed": summary.get("lift_proposed"),
@@ -186,10 +190,11 @@ def get_station_360_tool(station_code: str) -> AiToolResult:
             {"label": "Contracts", "value": len(detail.get("contracts", [])), "tone": "accent"},
             {"label": "Earnings", "value": len(detail.get("earnings", [])), "tone": "accent"},
             {"label": "Works", "value": len(detail.get("works", [])), "tone": "accent"},
+            {"label": "Commercial", "value": len(detail.get("commercial_contracts", [])), "tone": "accent"},
             {"label": "Open PA Works", "value": summary.get("open_pa_works") or 0, "tone": "danger" if summary.get("open_pa_works") else "accent"},
         ],
         charts=[],
-        sources=["stations", "units", "earnings", "works", "passenger_amenities"],
+        sources=["stations", "units", "earnings", "works", "passenger_amenities", "commercial_contracts"],
         suggested_actions=[f"Open {station.get('station_code')} Station 360", "Export station summary"],
     )
 
@@ -197,6 +202,11 @@ def get_station_360_tool(station_code: str) -> AiToolResult:
 def deterministic_tool(question: str, context: dict[str, Any] | None = None) -> AiToolResult:
     q = question.lower()
     code = station_code_from_question(question, context)
+    if "commercial" in q or "ooh" in q or "parking" in q or "atm" in q or "mobile asset" in q:
+        rows = list_commercial_contracts(q=question[:80], station_code=code)[:MAX_SQL_ROWS]
+        if not rows:
+            rows = list_commercial_contracts(station_code=code)[:MAX_SQL_ROWS] if code else list_commercial_contracts()[:MAX_SQL_ROWS]
+        return AiToolResult("Commercial contract rows were loaded from non-catering contracts.", rows, [{"label": "Commercial Contracts", "value": len(rows), "tone": "accent"}], [], ["commercial_contracts"], ["Open Commercial Contracts"])
     if code and any(token in q for token in ["station", "summary", "everything", "360", "detail", "ksm", "sbc"]):
         return get_station_360_tool(code)
     if "pending" in q and "work" in q:
@@ -238,8 +248,10 @@ def classify_and_plan(state: AiState) -> AiState:
     question = state["question"]
     context = state.get("context") or {}
     fallback_code = station_code_from_question(question, context)
+    q = question.lower()
+    commercial_requested = any(token in q for token in ["commercial", "ooh", "parking", "atm", "mobile asset"])
     if not os.getenv("OPENAI_API_KEY") or OpenAI is None:
-        plan = {"tool": "station_360" if fallback_code else "deterministic", "station_code": fallback_code}
+        plan = {"tool": "deterministic" if commercial_requested else "station_360" if fallback_code else "deterministic", "station_code": fallback_code}
         reason = "OPENAI_API_KEY is not configured" if not os.getenv("OPENAI_API_KEY") else "OpenAI package is not installed"
         return {**state, "intent": "offline_fallback", "plan": plan, "mode": "offline_fallback", "planner_error": reason}
     schema = database_schema_context()
@@ -253,7 +265,7 @@ def classify_and_plan(state: AiState) -> AiState:
         plan = call_openai_json(system, user)
     except Exception as exc:
         logger.exception("LangGraph planner failed")
-        plan = {"tool": "station_360" if fallback_code else "deterministic", "station_code": fallback_code}
+        plan = {"tool": "deterministic" if commercial_requested else "station_360" if fallback_code else "deterministic", "station_code": fallback_code}
         return {**state, "intent": "planner_fallback", "plan": plan, "mode": "planner_fallback", "planner_error": str(exc)}
     return {**state, "intent": str(plan.get("tool") or "deterministic"), "plan": plan, "mode": "langgraph_openai"}
 

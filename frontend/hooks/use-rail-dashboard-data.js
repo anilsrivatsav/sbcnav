@@ -9,6 +9,8 @@ export function useRailDashboardData() {
   const [units, setUnits] = useState([]);
   const [earnings, setEarnings] = useState([]);
   const [works, setWorks] = useState([]);
+  const [commercialContracts, setCommercialContracts] = useState([]);
+  const [commercialContractReports, setCommercialContractReports] = useState(null);
   const [paSummary, setPaSummary] = useState([]);
   const [paInfra, setPaInfra] = useState([]);
   const [paPlatforms, setPaPlatforms] = useState([]);
@@ -30,6 +32,8 @@ export function useRailDashboardData() {
     setUnits(data.units);
     setEarnings(data.earnings);
     setWorks(data.works);
+    setCommercialContracts(data.commercialContracts);
+    setCommercialContractReports(data.commercialContractReports);
     setReports(data.reports);
     setPaSummary(data.passengerAmenities.summary);
     setPaInfra(data.passengerAmenities.infra);
@@ -63,6 +67,8 @@ export function useRailDashboardData() {
     units,
     earnings,
     works,
+    commercialContracts,
+    commercialContractReports,
     paSummary,
     paInfra,
     paPlatforms,

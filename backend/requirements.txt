@@ -5,6 +5,7 @@ SQLAlchemy
 alembic
 psycopg2-binary
 openpyxl
+python-multipart
 langgraph
 openai
 uvicorn[standard]
