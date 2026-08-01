@@ -999,7 +999,9 @@ class _NormsCardState extends State<_NormsCard> {
               padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
               child: Column(
                 children: [
-                  for (var index = 0; index < visibleGroups.length; index++) ...[
+                  for (var index = 0;
+                      index < visibleGroups.length;
+                      index++) ...[
                     if (index > 0) const Divider(height: 22),
                     _NormGroup(
                       title: visibleGroups[index].key,
@@ -1040,7 +1042,8 @@ class _NormGroup extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             Text('${rows.length} norms',
-                style: TextStyle(color: color.withValues(alpha: 0.72), fontSize: 11)),
+                style: TextStyle(
+                    color: color.withValues(alpha: 0.72), fontSize: 11)),
           ],
         ),
         const SizedBox(height: 5),
@@ -1053,21 +1056,26 @@ class _NormGroup extends StatelessWidget {
                 Icon(Icons.circle, size: 6, color: color),
                 const SizedBox(width: 9),
                 Expanded(
-                  child: Text(cleanText(row['norm'], fallback: 'Norm not recorded'),
+                  child: Text(
+                      cleanText(row['norm'], fallback: 'Norm not recorded'),
                       style: const TextStyle(fontSize: 12, height: 1.25)),
                 ),
                 if (cleanText(row['norm_quantity']).isNotEmpty) ...[
                   const SizedBox(width: 8),
                   Container(
                     constraints: const BoxConstraints(maxWidth: 130),
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
                       color: color.withValues(alpha: 0.08),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(cleanText(row['norm_quantity']),
                         textAlign: TextAlign.right,
-                        style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w900)),
+                        style: TextStyle(
+                            color: color,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w900)),
                   ),
                 ],
               ],

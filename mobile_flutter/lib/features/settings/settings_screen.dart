@@ -23,8 +23,8 @@ class HomeActionsSheet extends ConsumerWidget {
     final busy = sync.isLoading || sync.asData?.value.busy == true;
     return SafeArea(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(AppSpacing.page, AppSpacing.x2,
-            AppSpacing.page, AppSpacing.x3),
+        padding: const EdgeInsets.fromLTRB(
+            AppSpacing.page, AppSpacing.x2, AppSpacing.page, AppSpacing.x3),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -58,7 +58,9 @@ class HomeActionsSheet extends ConsumerWidget {
             _ActionRow(
               icon: Icons.cloud_download_outlined,
               title: 'Fetch latest data',
-              subtitle: busy ? 'Downloading from PostgreSQL...' : 'Refresh station data now',
+              subtitle: busy
+                  ? 'Downloading from PostgreSQL...'
+                  : 'Refresh station data now',
               onTap: busy ? null : onFetchLatest,
             ),
             _ActionRow(
@@ -75,7 +77,8 @@ class HomeActionsSheet extends ConsumerWidget {
 }
 
 class SettingsSheet extends ConsumerWidget {
-  const SettingsSheet({required this.onFetchLatest, required this.onSync, super.key});
+  const SettingsSheet(
+      {required this.onFetchLatest, required this.onSync, super.key});
 
   final VoidCallback onFetchLatest;
   final VoidCallback onSync;
@@ -86,24 +89,29 @@ class SettingsSheet extends ConsumerWidget {
     final busy = state.isLoading || state.asData?.value.busy == true;
     return SafeArea(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(AppSpacing.page, AppSpacing.x2,
-            AppSpacing.page, AppSpacing.x3),
+        padding: const EdgeInsets.fromLTRB(
+            AppSpacing.page, AppSpacing.x2, AppSpacing.page, AppSpacing.x3),
         child: ListView(
           shrinkWrap: true,
           children: [
-            const PageHeading(title: 'Settings', subtitle: 'Control the app and its data connection.'),
+            const PageHeading(
+                title: 'Settings',
+                subtitle: 'Control the app and its data connection.'),
             const SizedBox(height: AppSpacing.x2),
             GlassPanel(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Data connection', style: TextStyle(fontWeight: FontWeight.w900)),
+                  const Text('Data connection',
+                      style: TextStyle(fontWeight: FontWeight.w900)),
                   const SizedBox(height: 6),
-                  Text(AppConfig.apiBaseUrl, style: Theme.of(context).textTheme.bodySmall),
+                  Text(AppConfig.apiBaseUrl,
+                      style: Theme.of(context).textTheme.bodySmall),
                   const SizedBox(height: AppSpacing.x2),
                   Text(state.asData?.value.message ?? 'Ready'),
                   if (state.asData?.value.lastSyncAt != null)
-                    Text('Last refresh ${shortDate(state.asData!.value.lastSyncAt)}'),
+                    Text(
+                        'Last refresh ${shortDate(state.asData!.value.lastSyncAt)}'),
                   const SizedBox(height: AppSpacing.x2),
                   AppButton(
                     expand: true,
@@ -132,7 +140,8 @@ class SettingsSheet extends ConsumerWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Appearance', style: TextStyle(fontWeight: FontWeight.w900)),
+                        Text('Appearance',
+                            style: TextStyle(fontWeight: FontWeight.w900)),
                         SizedBox(height: 4),
                         Text('Choose the Rail Inspect visual theme.'),
                       ],
@@ -195,21 +204,24 @@ class _ProfileSheetState extends ConsumerState<ProfileSheet> {
   Widget build(BuildContext context) {
     return SafeArea(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(AppSpacing.page, AppSpacing.x2,
-            AppSpacing.page, AppSpacing.x3),
+        padding: const EdgeInsets.fromLTRB(
+            AppSpacing.page, AppSpacing.x2, AppSpacing.page, AppSpacing.x3),
         child: _loading
             ? const GlassLoadingList(itemCount: 2)
             : ListView(
                 shrinkWrap: true,
                 children: [
-                  const PageHeading(title: 'Profile', subtitle: 'This name is used on this device.'),
+                  const PageHeading(
+                      title: 'Profile',
+                      subtitle: 'This name is used on this device.'),
                   const SizedBox(height: AppSpacing.x2),
                   Center(
                     child: CircleAvatar(
                       radius: 38,
                       backgroundColor: const Color(0xFFDCEBFF),
                       child: Icon(Icons.person_rounded,
-                          size: 44, color: Theme.of(context).colorScheme.primary),
+                          size: 44,
+                          color: Theme.of(context).colorScheme.primary),
                     ),
                   ),
                   const SizedBox(height: AppSpacing.x2),
@@ -237,7 +249,11 @@ class _ProfileSheetState extends ConsumerState<ProfileSheet> {
 }
 
 class _ActionRow extends StatelessWidget {
-  const _ActionRow({required this.icon, required this.title, required this.subtitle, required this.onTap});
+  const _ActionRow(
+      {required this.icon,
+      required this.title,
+      required this.subtitle,
+      required this.onTap});
 
   final IconData icon;
   final String title;

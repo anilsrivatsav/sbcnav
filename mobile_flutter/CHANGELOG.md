@@ -18,3 +18,9 @@
 - Added contract validity dates and remaining-day indicators.
 - Added commercial contract payment history to station detail responses.
 - Clarified Findings and PostgreSQL refresh actions.
+## 0.7.3+10
+
+- Added a dedicated offline Reports workspace with overview, contract alerts, and findings tabs.
+- Added consistent contract validity fields to station detail responses.
+- Removed stale contract expiry notifications after refreshed station data.
+- Refreshed the home profile and notification counts after sheets close.

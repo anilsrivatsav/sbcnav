@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../shared/widgets.dart';
 import '../assistant/assistant_screen.dart';
-import '../findings/findings_screen.dart';
+import '../reports/reports_screen.dart';
 import '../home/today_screen.dart';
 import '../inspections/inspections_screen.dart';
 import '../stations/stations_screen.dart';
@@ -36,7 +36,7 @@ class _MobileShellState extends State<MobileShell> {
       selectedIcon: Icons.fact_check_rounded,
     ),
     _Destination(
-      label: 'Findings',
+      label: 'Reports',
       icon: Icons.bar_chart_outlined,
       selectedIcon: Icons.bar_chart_rounded,
     ),
@@ -74,7 +74,7 @@ class _MobileShellState extends State<MobileShell> {
       TodayScreen(onNavigate: _select),
       const StationsScreen(),
       const InspectionsScreen(),
-      const FindingsScreen(),
+      const ReportsScreen(),
       const AssistantScreen(),
     ];
     return PopScope(
@@ -338,7 +338,7 @@ class _NavItem extends StatelessWidget {
       'Home' => colors.tertiary,
       'Stations' => colors.primary,
       'Inspect' => colors.secondary,
-      'Findings' => statusTone('pending'),
+      'Reports' => statusTone('pending'),
       _ => colors.primary,
     };
   }

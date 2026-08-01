@@ -20,14 +20,15 @@ class _NotificationsSheetState extends ConsumerState<NotificationsSheet> {
     _rows = ref.read(databaseProvider).notifications();
   }
 
-  void _reload() => setState(() => _rows = ref.read(databaseProvider).notifications());
+  void _reload() =>
+      setState(() => _rows = ref.read(databaseProvider).notifications());
 
   @override
   Widget build(BuildContext context) {
     return SafeArea(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(AppSpacing.page, AppSpacing.x2,
-            AppSpacing.page, AppSpacing.x3),
+        padding: const EdgeInsets.fromLTRB(
+            AppSpacing.page, AppSpacing.x2, AppSpacing.page, AppSpacing.x3),
         child: FutureBuilder<List<Map<String, dynamic>>>(
           future: _rows,
           builder: (context, snapshot) {
@@ -46,7 +47,9 @@ class _NotificationsSheetState extends ConsumerState<NotificationsSheet> {
                     if (rows.any((row) => row['is_read'] == 0))
                       TextButton(
                         onPressed: () async {
-                          await ref.read(databaseProvider).markAllNotificationsRead();
+                          await ref
+                              .read(databaseProvider)
+                              .markAllNotificationsRead();
                           _reload();
                         },
                         child: const Text('Mark all read'),
@@ -107,7 +110,10 @@ class _NotificationRow extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(read ? Icons.notifications_none_rounded : Icons.notifications_active_rounded,
+            Icon(
+                read
+                    ? Icons.notifications_none_rounded
+                    : Icons.notifications_active_rounded,
                 color: read ? Theme.of(context).colorScheme.outline : color),
             const SizedBox(width: 11),
             Expanded(
@@ -121,7 +127,12 @@ class _NotificationRow extends StatelessWidget {
                 ],
               ),
             ),
-            if (!read) Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+            if (!read)
+              Container(
+                  width: 8,
+                  height: 8,
+                  decoration:
+                      BoxDecoration(color: color, shape: BoxShape.circle)),
           ],
         ),
       ),

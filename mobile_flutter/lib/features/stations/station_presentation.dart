@@ -322,13 +322,15 @@ List<ContractSummary> buildContracts(
         type: cleanText(row['type_of_unit'], fallback: 'Catering'),
         earnings: earnings,
         status: cleanText(row['unit_status'], fallback: 'Status unavailable'),
-        validFrom: _contractDate(row, ['contract_from', 'contract_period_from']),
-        validTo: _contractDate(row, ['contract_to', 'contract_upto']),
+        validFrom: _contractDate(
+            row, ['valid_from', 'contract_from', 'contract_period_from']),
+        validTo:
+            _contractDate(row, ['valid_to', 'contract_to', 'contract_upto']),
         renewalState: _renewalState(
-          _contractDate(row, ['contract_to', 'contract_upto']),
+          _contractDate(row, ['valid_to', 'contract_to', 'contract_upto']),
         ),
         daysToExpiry: _daysToExpiry(
-          _contractDate(row, ['contract_to', 'contract_upto']),
+          _contractDate(row, ['valid_to', 'contract_to', 'contract_upto']),
         ),
         details: row,
         payments: _paymentRows(row),
@@ -356,13 +358,15 @@ List<ContractSummary> buildContracts(
             numericValue(row['annual_license_fee']) ??
             0,
         status: _contractStatus(row),
-        validFrom: _contractDate(row, ['contract_period_from', 'contract_from']),
-        validTo: _contractDate(row, ['contract_upto', 'contract_to']),
+        validFrom: _contractDate(
+            row, ['valid_from', 'contract_period_from', 'contract_from']),
+        validTo:
+            _contractDate(row, ['valid_to', 'contract_upto', 'contract_to']),
         renewalState: _renewalState(
-          _contractDate(row, ['contract_upto', 'contract_to']),
+          _contractDate(row, ['valid_to', 'contract_upto', 'contract_to']),
         ),
         daysToExpiry: _daysToExpiry(
-          _contractDate(row, ['contract_upto', 'contract_to']),
+          _contractDate(row, ['valid_to', 'contract_upto', 'contract_to']),
         ),
         details: row,
         payments: _paymentRows(row),
@@ -488,16 +492,19 @@ DateTime? _contractDate(Map<String, dynamic> row, List<String> keys) {
     if (text.isEmpty) continue;
     final iso = DateTime.tryParse(text);
     if (iso != null) return DateTime(iso.year, iso.month, iso.day);
-    final match = RegExp(r'^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})').firstMatch(text);
+    final match =
+        RegExp(r'^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})').firstMatch(text);
     if (match != null) {
       final year = int.parse(match.group(3)!) < 100
           ? 2000 + int.parse(match.group(3)!)
           : int.parse(match.group(3)!);
-      return DateTime(year, int.parse(match.group(2)!), int.parse(match.group(1)!));
+      return DateTime(
+          year, int.parse(match.group(2)!), int.parse(match.group(1)!));
     }
     final monthYear = RegExp(r'^(\d{1,2})[/-](\d{4})$').firstMatch(text);
     if (monthYear != null) {
-      return DateTime(int.parse(monthYear.group(2)!), int.parse(monthYear.group(1)!), 1);
+      return DateTime(
+          int.parse(monthYear.group(2)!), int.parse(monthYear.group(1)!), 1);
     }
   }
   return null;
@@ -529,7 +536,8 @@ String contractValidityLabel(ContractSummary contract) {
   return 'Valid till $date · $days days remaining';
 }
 
-String formatContractDate(DateTime date) => DateFormat('dd MMM yyyy').format(date);
+String formatContractDate(DateTime date) =>
+    DateFormat('dd MMM yyyy').format(date);
 
 int? _progress(Object? value) {
   final number = numericValue(value);

@@ -1418,13 +1418,35 @@ def get_station_detail(station_code: str) -> dict[str, Any] | None:
         for earning in earnings:
             if earning.get("unit_no"):
                 earnings_by_unit.setdefault(earning["unit_no"], []).append(earning)
+        today = date.today()
+
+        def with_validity(row: dict[str, Any], start_keys: tuple[str, ...], end_keys: tuple[str, ...]) -> dict[str, Any]:
+            enriched = dict(row)
+            start_value = next((row.get(key) for key in start_keys if row.get(key)), None)
+            end_value = next((row.get(key) for key in end_keys if row.get(key)), None)
+            start_date = parse_date_value(start_value)
+            end_date = parse_date_value(end_value)
+            enriched["valid_from"] = start_date.isoformat() if start_date else None
+            enriched["valid_to"] = end_date.isoformat() if end_date else None
+            days = (end_date - today).days if end_date else None
+            enriched["days_to_expiry"] = days
+            enriched["renewal_state"] = (
+                "Date unavailable" if days is None else
+                "Expired" if days < 0 else
+                "Due within 7 days" if days <= 7 else
+                "Renewal due within 30 days" if days <= 30 else
+                "Renewal upcoming" if days <= 90 else
+                "Active"
+            )
+            return enriched
+
         contracts = [
-            {
+            with_validity({
                 **unit,
                 "earnings": earnings_by_unit.get(unit.get("unit_no"), []),
                 "earnings_total": sum(to_money(row.get("amount")) for row in earnings_by_unit.get(unit.get("unit_no"), [])),
                 "pending_receipts": sum(1 for row in earnings_by_unit.get(unit.get("unit_no"), []) if "pending" in normalize(row.get("receipt_type"))),
-            }
+            }, ("contract_from",), ("contract_to",))
             for unit in units
         ]
 
@@ -1446,6 +1468,7 @@ def get_station_detail(station_code: str) -> dict[str, Any] | None:
             for payment in payment_rows:
                 commercial_payments.setdefault(payment.contract_key, []).append(row_to_dict(payment))
         for contract in commercial_contracts:
+            contract.update(with_validity(contract, ("contract_period_from",), ("contract_upto",)))
             payments = commercial_payments.get(contract.get("contract_key"), [])
             contract["payments"] = payments
             contract["payment_total"] = sum(to_money(row.get("amount_paid")) for row in payments)

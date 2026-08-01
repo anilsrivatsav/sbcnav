@@ -97,7 +97,7 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
             physics: const ClampingScrollPhysics(),
             padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
             children: [
-      _HomeHeader(
+              _HomeHeader(
                 inspector: data.inspector,
                 syncBusy: syncBusy,
                 pendingSync: data.pendingSync,
@@ -110,7 +110,8 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
                 onNotifications: () => showGlassBottomSheet<void>(
                   context,
                   builder: (_) => const NotificationsSheet(),
-                ),
+                ).then((_) => _refresh()),
+                onProfileChanged: _refresh,
               ),
               const SizedBox(height: 22),
               _InspectionPulse(data: data),
@@ -171,7 +172,7 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
                     ),
                     _QuickAction(
                       icon: Icons.bar_chart_rounded,
-                      label: 'Findings',
+                      label: 'Reports',
                       tone: const Color(0xFFF59E0B),
                       onTap: () => widget.onNavigate(3),
                     ),
@@ -363,6 +364,7 @@ class _HomeHeader extends StatelessWidget {
     required this.onSync,
     required this.onFetchLatest,
     required this.onNotifications,
+    required this.onProfileChanged,
   });
 
   final String inspector;
@@ -372,6 +374,7 @@ class _HomeHeader extends StatelessWidget {
   final VoidCallback onSync;
   final VoidCallback onFetchLatest;
   final VoidCallback onNotifications;
+  final VoidCallback onProfileChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -389,7 +392,7 @@ class _HomeHeader extends StatelessWidget {
                   onFetchLatest: onFetchLatest,
                   onSync: onSync,
                 ),
-              ),
+              ).then((_) => onProfileChanged()),
             ),
             const SizedBox(width: 14),
             const Expanded(
@@ -479,7 +482,7 @@ class _HomeHeader extends StatelessWidget {
               onTap: () => showGlassBottomSheet<void>(
                 context,
                 builder: (_) => const ProfileSheet(),
-              ),
+              ).then((_) => onProfileChanged()),
               child: CircleAvatar(
                 radius: 28,
                 backgroundColor: const Color(0xFFDCEBFF),

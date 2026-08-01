@@ -459,7 +459,8 @@ class AppDatabase {
 
   Future<int> unreadNotificationCount() async {
     return Sqflite.firstIntValue(
-          await db.rawQuery('SELECT COUNT(*) FROM notifications WHERE is_read = 0'),
+          await db
+              .rawQuery('SELECT COUNT(*) FROM notifications WHERE is_read = 0'),
         ) ??
         0;
   }
@@ -508,6 +509,7 @@ class AppDatabase {
           : const []),
     ];
     final now = DateTime.now();
+    final activeIds = <String>{};
     for (final raw in contracts) {
       if (raw is! Map) continue;
       final row = Map<String, dynamic>.from(raw);
@@ -515,12 +517,22 @@ class AppDatabase {
         row['contract_to'] ?? row['contract_upto'] ?? row['contract_period_to'],
       );
       if (end == null) continue;
-      final days = end.difference(DateTime(now.year, now.month, now.day)).inDays;
+      final days =
+          end.difference(DateTime(now.year, now.month, now.day)).inDays;
       if (days > 90) continue;
-      final bucket = days < 0 ? 'expired' : days <= 7 ? '7d' : days <= 30 ? '30d' : '90d';
-      final key = '${row['unit_no'] ?? row['contract_key'] ?? row['contract_name'] ?? 'contract'}';
+      final bucket = days < 0
+          ? 'expired'
+          : days <= 7
+              ? '7d'
+              : days <= 30
+                  ? '30d'
+                  : '90d';
+      final key =
+          '${row['unit_no'] ?? row['contract_key'] ?? row['contract_name'] ?? 'contract'}';
       final id = 'contract-expiry-$stationCode-$key-$bucket';
-      final name = '${row['contract_name'] ?? row['licensee_name'] ?? row['unit_no'] ?? 'Contract'}';
+      activeIds.add(id);
+      final name =
+          '${row['contract_name'] ?? row['licensee_name'] ?? row['unit_no'] ?? 'Contract'}';
       final body = days < 0
           ? '$name expired ${-days} days ago at $stationCode.'
           : '$name expires in $days days at $stationCode.';
@@ -533,13 +545,30 @@ class AppDatabase {
           'body': body,
           'related_type': 'contract',
           'related_id': key,
-          'severity': days < 0 || days <= 7 ? 'critical' : days <= 30 ? 'high' : 'medium',
+          'severity': days < 0 || days <= 7
+              ? 'critical'
+              : days <= 30
+                  ? 'high'
+                  : 'medium',
           'is_read': 0,
           'due_at': end.toIso8601String(),
           'created_at': DateTime.now().toUtc().toIso8601String(),
         },
         conflictAlgorithm: ConflictAlgorithm.ignore,
       );
+    }
+    final existing = await db.query(
+      'notifications',
+      columns: ['notification_id'],
+      where: 'notification_id LIKE ?',
+      whereArgs: ['contract-expiry-$stationCode-%'],
+    );
+    for (final row in existing) {
+      final id = '${row['notification_id']}';
+      if (!activeIds.contains(id)) {
+        await db.delete('notifications',
+            where: 'notification_id = ?', whereArgs: [id]);
+      }
     }
   }
 
@@ -548,11 +577,13 @@ class AppDatabase {
     if (text.isEmpty || text == '-' || text.toLowerCase() == 'n/a') return null;
     final iso = DateTime.tryParse(text);
     if (iso != null) return DateTime(iso.year, iso.month, iso.day);
-    final match = RegExp(r'^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})').firstMatch(text);
+    final match =
+        RegExp(r'^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})').firstMatch(text);
     if (match != null) {
       final yearValue = int.parse(match.group(3)!);
       final year = yearValue < 100 ? 2000 + yearValue : yearValue;
-      return DateTime(year, int.parse(match.group(2)!), int.parse(match.group(1)!));
+      return DateTime(
+          year, int.parse(match.group(2)!), int.parse(match.group(1)!));
     }
     for (final format in ['dd MMM yyyy', 'dd-MMM-yyyy']) {
       try {
