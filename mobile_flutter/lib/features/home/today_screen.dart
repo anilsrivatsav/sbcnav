@@ -5,6 +5,7 @@ import '../../data/local/app_database.dart';
 import '../../data/sync/sync_service.dart';
 import '../../shared/widgets.dart';
 import '../inspections/inspection_form_screen.dart';
+import '../settings/settings_screen.dart';
 
 class TodayScreen extends ConsumerStatefulWidget {
   const TodayScreen({required this.onNavigate, super.key});
@@ -21,12 +22,14 @@ class _TodayData {
     required this.inspections,
     required this.openFindings,
     required this.pendingSync,
+    required this.inspector,
   });
 
   final int stations;
   final List<Map<String, dynamic>> inspections;
   final int openFindings;
   final int pendingSync;
+  final String inspector;
 
   int get completed =>
       inspections.where((row) => row['status'] == 'submitted').length;
@@ -45,6 +48,7 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
   Future<_TodayData> _load() async {
     final database = ref.read(databaseProvider);
     final inspections = await database.inspections();
+    final profileName = await database.metadata('profile_name');
     return _TodayData(
       stations: (await database.stations()).length,
       inspections: inspections,
@@ -52,6 +56,10 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
           .where((row) => row['status'] != 'closed')
           .length,
       pendingSync: await database.pendingCount(),
+      inspector: profileName ??
+          (inspections.isEmpty
+              ? 'Commercial Inspector'
+              : '${inspections.first['inspector_name']}'),
     );
   }
 
@@ -78,9 +86,6 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
             return ErrorPane(error: snapshot.error!, retry: _refresh);
           }
           final data = snapshot.data!;
-          final inspector = data.inspections.isEmpty
-              ? 'Commercial Inspector'
-              : '${data.inspections.first['inspector_name']}';
           final progress = data.inspections.isEmpty
               ? 0.0
               : data.completed / data.inspections.length;
@@ -88,12 +93,15 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
             physics: const ClampingScrollPhysics(),
             padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
             children: [
-              _HomeHeader(
-                inspector: inspector,
+      _HomeHeader(
+                inspector: data.inspector,
                 syncBusy: syncBusy,
                 pendingSync: data.pendingSync,
                 onSync: () =>
                     ref.read(syncControllerProvider.notifier).synchronize(),
+                onFetchLatest: () => ref
+                    .read(syncControllerProvider.notifier)
+                    .refreshFromServer(),
               ),
               const SizedBox(height: 22),
               _InspectionPulse(data: data),
@@ -343,12 +351,14 @@ class _HomeHeader extends StatelessWidget {
     required this.syncBusy,
     required this.pendingSync,
     required this.onSync,
+    required this.onFetchLatest,
   });
 
   final String inspector;
   final bool syncBusy;
   final int pendingSync;
   final VoidCallback onSync;
+  final VoidCallback onFetchLatest;
 
   @override
   Widget build(BuildContext context) {
@@ -357,11 +367,16 @@ class _HomeHeader extends StatelessWidget {
       children: [
         Row(
           children: [
-            Container(
-              width: 46,
-              height: 46,
-              decoration: _softDecoration(context, radius: 15),
-              child: const Icon(Icons.menu_rounded),
+            AppIconButton(
+              tooltip: 'Profile and settings',
+              icon: Icons.menu_rounded,
+              onPressed: () => showGlassBottomSheet<void>(
+                context,
+                builder: (_) => HomeActionsSheet(
+                  onFetchLatest: onFetchLatest,
+                  onSync: onSync,
+                ),
+              ),
             ),
             const SizedBox(width: 14),
             const Expanded(
@@ -414,6 +429,12 @@ class _HomeHeader extends StatelessWidget {
               ],
             ),
             const SizedBox(width: 6),
+            AppIconButton(
+              tooltip: 'Fetch latest data from PostgreSQL',
+              icon: Icons.cloud_download_outlined,
+              onPressed: syncBusy ? null : onFetchLatest,
+            ),
+            const SizedBox(width: 6),
           ],
         ),
         const SizedBox(height: 26),
@@ -441,13 +462,19 @@ class _HomeHeader extends StatelessWidget {
                 ],
               ),
             ),
-            CircleAvatar(
-              radius: 28,
-              backgroundColor: const Color(0xFFDCEBFF),
-              child: Icon(
-                Icons.person_rounded,
-                size: 32,
-                color: Theme.of(context).colorScheme.primary,
+            GestureDetector(
+              onTap: () => showGlassBottomSheet<void>(
+                context,
+                builder: (_) => const ProfileSheet(),
+              ),
+              child: CircleAvatar(
+                radius: 28,
+                backgroundColor: const Color(0xFFDCEBFF),
+                child: Icon(
+                  Icons.person_rounded,
+                  size: 32,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
               ),
             ),
           ],

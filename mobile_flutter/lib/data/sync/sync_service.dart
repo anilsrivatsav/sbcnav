@@ -140,6 +140,10 @@ class SyncController extends AsyncNotifier<SyncSnapshot> {
     });
   }
 
+  /// Downloads the current PostgreSQL-backed station snapshot and replaces
+  /// the cached station details while preserving local inspection work.
+  Future<void> refreshFromServer() => bootstrap();
+
   Future<void> synchronize() async {
     state = const AsyncLoading();
     state = await AsyncValue.guard(() async {
