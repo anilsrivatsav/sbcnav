@@ -6,9 +6,13 @@ import 'package:printing/printing.dart';
 Future<void> exportContractExpiryPdf({
   required List<Map<String, dynamic>> rows,
   required int windowDays,
+  bool moreThanFiftyDays = false,
 }) async {
+  final periodLabel = moreThanFiftyDays
+      ? 'with more than 50 days remaining'
+      : 'expiring within $windowDays days';
   final document = pw.Document(
-    title: 'Contracts expiring within $windowDays days',
+    title: 'Contracts $periodLabel',
     author: 'Rail Inspect',
   );
   final generatedAt = DateFormat('dd MMM yyyy, HH:mm').format(DateTime.now());
@@ -62,7 +66,7 @@ Future<void> exportContractExpiryPdf({
         ),
         pw.SizedBox(height: 4),
         pw.Text(
-          '${rows.length} contracts expiring within the next $windowDays days',
+          '${rows.length} contracts $periodLabel',
           style: const pw.TextStyle(fontSize: 11, color: PdfColors.blueGrey700),
         ),
         pw.SizedBox(height: 18),
@@ -79,19 +83,21 @@ Future<void> exportContractExpiryPdf({
         else
           pw.TableHelper.fromTextArray(
             headers: const [
+              'Code',
               'Contract',
-              'Details',
+              'Station',
               'Valid till',
               'Days',
               'Risk',
             ],
             data: rows
                 .map((row) => [
-                      _contractName(row),
-                      '${row['body'] ?? ''}',
-                      _formatDate(row['due_at']),
-                      '${row['_days_remaining'] ?? ''}',
-                      _riskLabel(row['_days_remaining']),
+                      '${row['contract_code'] ?? '-'}',
+                      '${row['contract_name'] ?? 'Contract'}',
+                      '${row['station_code'] ?? '-'}',
+                      _formatDate(row['valid_to']),
+                      '${row['days_remaining'] ?? ''}',
+                      _riskLabel(row['days_remaining']),
                     ])
                 .toList(),
             headerDecoration: const pw.BoxDecoration(color: PdfColors.blue800),
@@ -100,11 +106,12 @@ Future<void> exportContractExpiryPdf({
             cellPadding:
                 const pw.EdgeInsets.symmetric(horizontal: 7, vertical: 7),
             columnWidths: const {
-              0: pw.FlexColumnWidth(1.3),
-              1: pw.FlexColumnWidth(2.4),
-              2: pw.FlexColumnWidth(1),
-              3: pw.FixedColumnWidth(34),
-              4: pw.FixedColumnWidth(48),
+              0: pw.FlexColumnWidth(0.8),
+              1: pw.FlexColumnWidth(2.2),
+              2: pw.FlexColumnWidth(0.75),
+              3: pw.FlexColumnWidth(1),
+              4: pw.FixedColumnWidth(34),
+              5: pw.FixedColumnWidth(48),
             },
             border:
                 pw.TableBorder.all(color: PdfColors.blueGrey100, width: 0.5),
@@ -117,18 +124,10 @@ Future<void> exportContractExpiryPdf({
 
   await Printing.sharePdf(
     bytes: await document.save(),
-    filename: 'contract-expiry-$windowDays-days.pdf',
+    filename: moreThanFiftyDays
+        ? 'contract-validity-50-plus-days.pdf'
+        : 'contract-expiry-$windowDays-days.pdf',
   );
-}
-
-String _contractName(Map<String, dynamic> row) {
-  final body = '${row['body'] ?? ''}'.trim();
-  final match = RegExp(r'^(.*?)\s+(?:expires|expired)\b', caseSensitive: false)
-      .firstMatch(body);
-  if (match != null && match.group(1)!.trim().isNotEmpty) {
-    return match.group(1)!.trim();
-  }
-  return '${row['related_id'] ?? row['title'] ?? 'Contract'}';
 }
 
 String _formatDate(Object? value) {

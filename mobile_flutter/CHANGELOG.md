@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.6+13 - 2026-08-03
+
+- Replaced oversized contract-validity cards with compact, station-aware rows.
+- Added structured unit or contract codes, contract names, station codes, and validity dates to reports and PDF exports.
+- Added a green `50+` validity segment for contracts with more than 50 days remaining.
+- Kept multi-station contracts distinct per linked station in validity reports.
+
 ## 0.7.5+12 - 2026-08-03
 
 - Standardized Catering, MPS, and commercial contract detail sheets.

@@ -109,6 +109,7 @@ function Badge({ children, tone = "neutral" }) {
   const tones = {
     neutral: "border-line bg-surfaceStrong text-muted",
     accent: "border-accent/30 bg-accentSoft text-accentStrong",
+    success: "border-emerald-300/70 bg-emerald-500/10 text-emerald-700",
     warning: "border-amber-300/70 bg-amber-500/10 text-amber-700",
     danger: "border-red-300/70 bg-red-500/10 text-red-600",
   };
@@ -1001,7 +1002,7 @@ export default function Page() {
     const unique = new Map();
     const add = (row) => {
       const days = contractDaysRemaining(row.valid_to);
-      if (days === null || days < 0 || days > 30) return;
+      if (days === null || days < 0) return;
       if (!matchesReportScope(row)) return;
       if (!matchesQuery(row, ["contract_name", "licensee_name", "station_code", "station_name", "contract_type", "valid_to"], search.reports)) return;
       const existing = unique.get(row.key);
@@ -1011,16 +1012,18 @@ export default function Page() {
     };
     units.forEach((row) => add({
       ...row,
-      key: `unit:${pretty(row.unit_no)}`,
+      key: `unit:${pretty(row.station_code)}:${pretty(row.unit_no)}`,
       source_type: "unit",
+      contract_code: pretty(row.unit_no),
       contract_name: pretty(row.licensee_name) === "NA" ? pretty(row.unit_no) : pretty(row.licensee_name),
       contract_type: pretty(row.type_of_unit) === "NA" ? "Catering" : pretty(row.type_of_unit),
       valid_to: row.valid_to || row.contract_to,
     }));
     commercialContracts.forEach((row) => add({
       ...row,
-      key: `commercial:${pretty(row.contract_key || row.contract_name)}`,
+      key: `commercial:${pretty(row.station_code)}:${pretty(row.contract_key || row.allocation_code || row.contract_name)}`,
       source_type: "commercial",
+      contract_code: pretty(row.allocation_code || row.contract_key),
       contract_name: pretty(row.contract_name),
       contract_type: pretty(row.sub_category || row.policy),
       valid_to: row.valid_to || row.contract_upto,
@@ -1029,10 +1032,10 @@ export default function Page() {
   }, [units, commercialContracts, search.reports, reportFilters, stationByCode]);
 
   const visibleContractExpiryRows = useMemo(
-    () => contractExpiryRows.filter((row) => row.days_remaining <= contractExpiryWindow),
+    () => contractExpiryRows.filter((row) => contractExpiryWindow === 51 ? row.days_remaining > 50 : row.days_remaining <= contractExpiryWindow),
     [contractExpiryRows, contractExpiryWindow],
   );
-  const contractExpiryCount = (days) => contractExpiryRows.filter((row) => row.days_remaining <= days).length;
+  const contractExpiryCount = (days) => contractExpiryRows.filter((row) => days === 51 ? row.days_remaining > 50 : row.days_remaining <= days).length;
 
   const reportAlerts = reports?.license_fee_alerts?.rows || [];
   const filteredReportAlerts = useMemo(() => {
@@ -1293,6 +1296,7 @@ export default function Page() {
   ];
 
   const contractExpiryColumns = [
+    { key: "contract_code", label: "Code" },
     { key: "contract_name", label: "Contract" },
     { key: "contract_type", label: "Type" },
     { key: "station_code", label: "Station" },
@@ -1301,7 +1305,7 @@ export default function Page() {
   ];
 
   const activeReport = (() => {
-    if (reportTab === "contract-expiry") return { rows: visibleContractExpiryRows, columns: contractExpiryColumns, fileName: `contract-expiry-${contractExpiryWindow}-days.xls` };
+    if (reportTab === "contract-expiry") return { rows: visibleContractExpiryRows, columns: contractExpiryColumns, fileName: contractExpiryWindow === 51 ? "contract-validity-50-plus-days.xls" : `contract-expiry-${contractExpiryWindow}-days.xls` };
     if (reportTab === "stations") return { rows: filteredReportStations, columns: stationColumns, fileName: "station-report.xls" };
     if (reportTab === "units") return { rows: filteredReportUnits, columns: unitColumns, fileName: "unit-report.xls" };
     if (reportTab === "earnings") return { rows: filteredReportEarnings, columns: earningColumns, fileName: "earnings-report.xls" };
@@ -2169,7 +2173,7 @@ export default function Page() {
                   subtitle="Contracts approaching their validity end date, ordered by urgency."
                   action={
                     <div className="flex flex-wrap gap-2">
-                      {[30, 10, 5].map((days) => (
+                      {[30, 10, 5, 51].map((days) => (
                         <button
                           key={days}
                           type="button"
@@ -2177,22 +2181,26 @@ export default function Page() {
                           className={cx(
                             "focus-ring rounded-full border px-3 py-2 text-xs font-black transition",
                             contractExpiryWindow === days
-                              ? days <= 10
+                              ? days === 51
+                                ? "border-emerald-600 bg-emerald-600 text-white shadow-raised"
+                                : days <= 10
                                 ? "border-red-600 bg-red-600 text-white shadow-raised"
                                 : "border-amber-500 bg-amber-500 text-white shadow-raised"
-                              : days <= 10
+                              : days === 51
+                                ? "border-emerald-300 bg-emerald-500/10 text-emerald-700 hover:border-emerald-500"
+                                : days <= 10
                                 ? "border-red-300 bg-red-500/10 text-red-600 hover:border-red-500"
                                 : "border-amber-300 bg-amber-500/10 text-amber-700 hover:border-amber-500",
                           )}
                         >
-                          {days} days ({contractExpiryCount(days)})
+                          {days === 51 ? "50+" : `${days} days`} ({contractExpiryCount(days)})
                         </button>
                       ))}
                     </div>
                   }
                 >
                   <ListShell>
-                    <div className="grid gap-3">
+                    <div className="grid gap-2">
                       {visibleContractExpiryRows.map((row) => (
                         <button
                           key={row.key}
@@ -2206,30 +2214,30 @@ export default function Page() {
                             const contract = commercialContracts.find((item) => pretty(item.contract_key || item.contract_name) === pretty(row.contract_key || row.contract_name));
                             if (contract) openCommercialContract(contract);
                           }}
-                          className="soft-raised group grid gap-3 rounded-lg border border-line p-4 text-left transition hover:-translate-y-0.5 hover:border-accent md:grid-cols-[1.4fr_0.8fr_auto]"
+                          className="soft-raised group flex min-h-16 items-center gap-3 rounded-lg border border-line px-3 py-2 text-left transition hover:-translate-y-0.5 hover:border-accent"
                         >
-                          <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <div className="truncate text-sm font-black text-ink">{pretty(row.contract_name)}</div>
-                              <Badge tone={row.days_remaining <= 10 ? "danger" : "warning"}>
-                                {row.days_remaining === 0 ? "Expires today" : `${row.days_remaining} days`}
-                              </Badge>
+                          <div className="flex h-11 w-14 shrink-0 items-center justify-center rounded-md bg-accent/10 px-1 text-center text-[10px] font-black text-accent">
+                            {pretty(row.contract_code)}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-sm font-black text-ink">{pretty(row.contract_name)}</div>
+                            <div className="mt-0.5 truncate text-xs text-muted">
+                              {pretty(row.station_code)}{pretty(row.station_name) !== "NA" ? ` - ${pretty(row.station_name)}` : ""} · Valid till {pretty(row.valid_to)}
                             </div>
-                            <div className="mt-1 text-xs text-muted">{pretty(row.contract_type)} | {pretty(row.station_code)} {pretty(row.station_name) !== "NA" ? `- ${pretty(row.station_name)}` : ""}</div>
                           </div>
-                          <div className="text-xs text-muted">
-                            <div>Valid till</div>
-                            <div className="mt-1 font-black text-ink">{pretty(row.valid_to)}</div>
-                          </div>
-                          <div className="flex items-center justify-end gap-1 text-[11px] font-black uppercase tracking-[0.14em] text-muted">
-                            Open
-                            <ChevronRight size={17} className="transition group-hover:translate-x-0.5" />
+                          <Badge tone={row.days_remaining <= 10 ? "danger" : row.days_remaining <= 30 ? "warning" : "success"}>
+                            {row.days_remaining === 0 ? "Today" : `${row.days_remaining}d`}
+                          </Badge>
+                          <div className="flex items-center text-muted">
+                            <ChevronRight size={18} className="transition group-hover:translate-x-0.5" />
                           </div>
                         </button>
                       ))}
                       {!visibleContractExpiryRows.length ? (
                         <div className="soft-inset rounded-lg border border-line p-5 text-sm text-muted">
-                          No contracts expire within {contractExpiryWindow} days under the current report filters.
+                          {contractExpiryWindow === 51
+                            ? "No contracts have more than 50 days remaining under the current report filters."
+                            : `No contracts expire within ${contractExpiryWindow} days under the current report filters.`}
                         </div>
                       ) : null}
                     </div>

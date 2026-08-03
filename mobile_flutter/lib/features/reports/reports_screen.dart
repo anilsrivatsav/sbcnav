@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 
 import '../../data/local/app_database.dart';
 import '../../shared/widgets.dart';
@@ -34,17 +35,42 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen>
     var contracts = 0;
     var works = 0;
     var openWorks = 0;
+    final contractValidity = <String, Map<String, dynamic>>{};
     for (final row in stations) {
       final detail = row['_station_detail'];
       if (detail is! Map) continue;
-      final contractRows = [
-        ...(detail['contracts'] is List
-            ? detail['contracts'] as List
-            : const []),
-        ...(detail['commercial_contracts'] is List
-            ? detail['commercial_contracts'] as List
-            : const []),
-      ];
+      final stationCode =
+          '${row['station_code'] ?? detail['station_code'] ?? ''}'
+              .trim()
+              .toUpperCase();
+      final stationName =
+          '${row['station_name'] ?? detail['station_name'] ?? ''}'.trim();
+      final cateringRows =
+          detail['contracts'] is List ? detail['contracts'] as List : const [];
+      final commercialRows = detail['commercial_contracts'] is List
+          ? detail['commercial_contracts'] as List
+          : const [];
+      final contractRows = [...cateringRows, ...commercialRows];
+      for (final value in cateringRows) {
+        if (value is! Map) continue;
+        _addContractValidity(
+          contractValidity,
+          value,
+          stationCode: stationCode,
+          stationName: stationName,
+          sourceType: 'unit',
+        );
+      }
+      for (final value in commercialRows) {
+        if (value is! Map) continue;
+        _addContractValidity(
+          contractValidity,
+          value,
+          stationCode: stationCode,
+          stationName: stationName,
+          sourceType: 'commercial',
+        );
+      }
       final unitRows = detail['units'];
       final workRows = detail['works'];
       units += unitRows is List ? unitRows.length : 0;
@@ -64,6 +90,9 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen>
       works: works,
       openWorks: openWorks,
       notifications: notifications,
+      contractValidity: contractValidity.values.toList()
+        ..sort((a, b) =>
+            (a['days_remaining'] as int).compareTo(b['days_remaining'] as int)),
       findings: findings,
     );
   }
@@ -124,7 +153,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen>
                 children: [
                   _OverviewReport(data: data),
                   _ContractReport(
-                    rows: data.notifications,
+                    rows: data.contractValidity,
                     selectedDays: _contractWindow,
                     onSelected: (days) =>
                         setState(() => _contractWindow = days),
@@ -148,6 +177,7 @@ class _ReportData {
     required this.works,
     required this.openWorks,
     required this.notifications,
+    required this.contractValidity,
     required this.findings,
   });
 
@@ -157,7 +187,72 @@ class _ReportData {
   final int works;
   final int openWorks;
   final List<Map<String, dynamic>> notifications;
+  final List<Map<String, dynamic>> contractValidity;
   final List<Map<String, dynamic>> findings;
+}
+
+void _addContractValidity(
+  Map<String, Map<String, dynamic>> target,
+  Map contract, {
+  required String stationCode,
+  required String stationName,
+  required String sourceType,
+}) {
+  final validTo = _parseReportDate(contract['valid_to'] ??
+      contract['contract_to'] ??
+      contract['contract_upto'] ??
+      contract['contract_period_to']);
+  if (validTo == null) return;
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final due = DateTime(validTo.year, validTo.month, validTo.day);
+  final days = due.difference(today).inDays;
+  if (days < 0) return;
+
+  final code =
+      '${contract['unit_no'] ?? contract['allocation_code'] ?? contract['contract_key'] ?? ''}'
+          .trim();
+  final rawName =
+      '${contract['contract_name'] ?? contract['licensee_name'] ?? ''}'.trim();
+  final type =
+      '${contract['type_of_unit'] ?? contract['sub_category'] ?? contract['policy'] ?? 'Contract'}'
+          .trim();
+  final name = rawName.isEmpty || rawName.toUpperCase() == 'NA'
+      ? (type.isEmpty ? 'Contract' : type)
+      : rawName;
+  final identity = code.isNotEmpty ? code : name;
+  final key = '$sourceType:$stationCode:${identity.toUpperCase()}';
+  target[key] = {
+    ...contract.map((key, value) => MapEntry('$key', value)),
+    'key': key,
+    'source_type': sourceType,
+    'contract_code': code.isEmpty ? 'No code' : code,
+    'contract_name': name,
+    'contract_type': type,
+    'station_code': stationCode,
+    'station_name': stationName,
+    'valid_to': due.toIso8601String(),
+    'days_remaining': days,
+  };
+}
+
+DateTime? _parseReportDate(Object? value) {
+  final text = '${value ?? ''}'.trim();
+  if (text.isEmpty || text.toLowerCase() == 'null') return null;
+  final iso = DateTime.tryParse(text);
+  if (iso != null) return iso;
+  final parts = text.split(RegExp(r'[/\-.]'));
+  if (parts.length != 3) return null;
+  final first = int.tryParse(parts[0]);
+  final month = int.tryParse(parts[1]);
+  final last = int.tryParse(parts[2]);
+  if (first == null || month == null || last == null) return null;
+  final year = parts[2].length == 2 ? 2000 + last : last;
+  try {
+    return DateTime(year, month, first);
+  } on ArgumentError {
+    return null;
+  }
 }
 
 class _OverviewReport extends StatelessWidget {
@@ -261,7 +356,7 @@ class _ContractReport extends StatefulWidget {
 }
 
 class _ContractReportState extends State<_ContractReport> {
-  static const _rowsPerPage = 3;
+  static const _rowsPerPage = 5;
   int _page = 0;
   bool _exporting = false;
 
@@ -274,39 +369,14 @@ class _ContractReportState extends State<_ContractReport> {
     }
   }
 
-  int? _daysRemaining(Map<String, dynamic> row) {
-    final dueAt = DateTime.tryParse('${row['due_at'] ?? ''}');
-    if (dueAt == null) return null;
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final due = DateTime(dueAt.year, dueAt.month, dueAt.day);
-    return due.difference(today).inDays;
-  }
-
-  String _contractName(Map<String, dynamic> row) {
-    final body = '${row['body'] ?? ''}'.trim();
-    final match =
-        RegExp(r'^(.*?)\s+(?:expires|expired)\b', caseSensitive: false)
-            .firstMatch(body);
-    if (match != null && match.group(1)!.trim().isNotEmpty) {
-      return match.group(1)!.trim();
-    }
-    return '${row['related_id'] ?? row['title'] ?? 'Contract'}';
-  }
-
-  Future<void> _export(
-      List<({Map<String, dynamic> row, int? days})> alerts) async {
+  Future<void> _export(List<Map<String, dynamic>> alerts) async {
     if (_exporting) return;
     setState(() => _exporting = true);
     try {
       await exportContractExpiryPdf(
-        rows: alerts
-            .map((item) => {
-                  ...item.row,
-                  '_days_remaining': item.days,
-                })
-            .toList(),
+        rows: alerts,
         windowDays: widget.selectedDays,
+        moreThanFiftyDays: widget.selectedDays == 51,
       );
     } catch (error) {
       if (!mounted) return;
@@ -321,15 +391,16 @@ class _ContractReportState extends State<_ContractReport> {
   @override
   Widget build(BuildContext context) {
     final source = widget.rows
-        .where((row) => row['type'] == 'contract_expiry')
-        .map((row) => (row: row, days: _daysRemaining(row)))
-        .where((item) => item.days != null && item.days! >= 0)
+        .where((row) => row['days_remaining'] is int)
         .toList()
-      ..sort((a, b) => a.days!.compareTo(b.days!));
-    int countWithin(int days) =>
-        source.where((item) => item.days! <= days).length;
-    final alerts =
-        source.where((item) => item.days! <= widget.selectedDays).toList();
+      ..sort((a, b) =>
+          (a['days_remaining'] as int).compareTo(b['days_remaining'] as int));
+    final alerts = widget.selectedDays == 51
+        ? source.where((item) => (item['days_remaining'] as int) > 50).toList()
+        : source
+            .where((item) =>
+                (item['days_remaining'] as int) <= widget.selectedDays)
+            .toList();
     final pageCount =
         alerts.isEmpty ? 1 : (alerts.length / _rowsPerPage).ceil();
     final safePage = _page.clamp(0, pageCount - 1);
@@ -342,17 +413,14 @@ class _ContractReportState extends State<_ContractReport> {
           padding: const EdgeInsets.symmetric(horizontal: AppSpacing.page),
           child: Row(
             children: [
-              for (final days in const [30, 10, 5])
+              for (final days in const [30, 10, 5, 51])
                 Expanded(
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 3),
                     child: GlassFilterChip(
-                      label: '${days}d (${countWithin(days)})',
+                      label: days == 51 ? '50+' : '${days}d',
                       selected: widget.selectedDays == days,
                       onTap: () => widget.onSelected(days),
-                      icon: days == 5
-                          ? Icons.warning_amber_rounded
-                          : Icons.event_available_rounded,
                     ),
                   ),
                 ),
@@ -366,7 +434,9 @@ class _ContractReportState extends State<_ContractReport> {
             children: [
               Expanded(
                 child: Text(
-                  '${alerts.length} contracts within ${widget.selectedDays} days',
+                  widget.selectedDays == 51
+                      ? '${alerts.length} contracts valid beyond 50 days'
+                      : '${alerts.length} contracts within ${widget.selectedDays} days',
                   style: Theme.of(context)
                       .textTheme
                       .labelLarge
@@ -388,7 +458,9 @@ class _ContractReportState extends State<_ContractReport> {
           child: alerts.isEmpty
               ? EmptyState(
                   icon: Icons.verified_rounded,
-                  title: 'No contracts due within ${widget.selectedDays} days',
+                  title: widget.selectedDays == 51
+                      ? 'No contracts valid beyond 50 days'
+                      : 'No contracts due within ${widget.selectedDays} days',
                   message:
                       'The list updates from actual contract validity dates after a PostgreSQL refresh.',
                 )
@@ -398,21 +470,37 @@ class _ContractReportState extends State<_ContractReport> {
                   child: Column(
                     children: [
                       for (final item in pageRows) ...[
-                        Expanded(
+                        SizedBox(
+                          height: 62,
                           child: GlassPanel(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 8),
+                                horizontal: 10, vertical: 6),
                             child: Row(
                               children: [
-                                Icon(
-                                  item.days! <= 10
-                                      ? Icons.warning_rounded
-                                      : Icons.event_available_rounded,
-                                  color: item.days! <= 10
-                                      ? Colors.red
-                                      : Colors.orange,
+                                Container(
+                                  width: 42,
+                                  height: 42,
+                                  alignment: Alignment.center,
+                                  decoration: BoxDecoration(
+                                    color: _contractTone(
+                                            item['days_remaining'] as int)
+                                        .withValues(alpha: 0.12),
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
+                                  child: Text(
+                                    '${item['contract_code']}',
+                                    maxLines: 2,
+                                    textAlign: TextAlign.center,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w900,
+                                      color: _contractTone(
+                                          item['days_remaining'] as int),
+                                    ),
+                                  ),
                                 ),
-                                const SizedBox(width: 10),
+                                const SizedBox(width: 9),
                                 Expanded(
                                   child: Column(
                                     mainAxisAlignment: MainAxisAlignment.center,
@@ -420,30 +508,53 @@ class _ContractReportState extends State<_ContractReport> {
                                         CrossAxisAlignment.start,
                                     children: [
                                       Text(
-                                        _contractName(item.row),
+                                        '${item['contract_name']}',
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
                                         style: const TextStyle(
                                             fontWeight: FontWeight.w900),
                                       ),
-                                      const SizedBox(height: 3),
-                                      Text(
-                                        '${item.row['body']}',
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .bodySmall,
+                                      const SizedBox(height: 2),
+                                      Row(
+                                        children: [
+                                          Icon(Icons.location_on_rounded,
+                                              size: 12,
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .primary),
+                                          const SizedBox(width: 2),
+                                          Text(
+                                            '${item['station_code']}',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .bodySmall
+                                                ?.copyWith(
+                                                    fontWeight:
+                                                        FontWeight.w800),
+                                          ),
+                                          const Text('  ·  '),
+                                          Flexible(
+                                            child: Text(
+                                              _shortDate(item['valid_to']),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .bodySmall,
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ],
                                   ),
                                 ),
                                 const SizedBox(width: 8),
                                 StatusBadge(
-                                  item.days == 0 ? 'Today' : '${item.days}d',
-                                  tone: item.days! <= 10
-                                      ? Colors.red
-                                      : Colors.orange,
+                                  (item['days_remaining'] as int) == 0
+                                      ? 'Today'
+                                      : '${item['days_remaining']}d',
+                                  tone: _contractTone(
+                                      item['days_remaining'] as int),
                                 ),
                               ],
                             ),
@@ -451,10 +562,6 @@ class _ContractReportState extends State<_ContractReport> {
                         ),
                         const SizedBox(height: AppSpacing.x1),
                       ],
-                      for (var index = pageRows.length;
-                          index < _rowsPerPage;
-                          index++)
-                        const Expanded(child: SizedBox()),
                     ],
                   ),
                 ),
@@ -492,6 +599,19 @@ class _ContractReportState extends State<_ContractReport> {
           ),
       ],
     );
+  }
+
+  Color _contractTone(int days) {
+    if (days <= 10) return Colors.red;
+    if (days <= 30) return Colors.orange;
+    return Colors.green;
+  }
+
+  String _shortDate(Object? value) {
+    final date = DateTime.tryParse('${value ?? ''}');
+    return date == null
+        ? 'Date unavailable'
+        : DateFormat('dd MMM yyyy').format(date);
   }
 }
 
