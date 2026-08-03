@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.4+11 - 2026-08-03
+
+- Added contract-validity report chips for the next 30, 10, and 5 days.
+- Sorted expiring contracts by nearest validity end date.
+- Added matching contract-expiry reporting to the Next.js dashboard.
+
 ## 0.7.0+7 - 2026-07-31
 
 - Added explicit ABSS station flags for the 19 designated stations.

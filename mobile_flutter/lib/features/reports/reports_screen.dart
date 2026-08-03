@@ -15,6 +15,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabs;
   late Future<_ReportData> _report;
+  int _contractWindow = 30;
 
   @override
   void initState() {
@@ -121,7 +122,12 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen>
                 controller: _tabs,
                 children: [
                   _OverviewReport(data: data),
-                  _ContractReport(rows: data.notifications),
+                  _ContractReport(
+                    rows: data.notifications,
+                    selectedDays: _contractWindow,
+                    onSelected: (days) =>
+                        setState(() => _contractWindow = days),
+                  ),
                   _FindingReport(rows: data.findings),
                 ],
               ),
@@ -239,43 +245,100 @@ class _ReportMetric extends StatelessWidget {
 }
 
 class _ContractReport extends StatelessWidget {
-  const _ContractReport({required this.rows});
+  const _ContractReport({
+    required this.rows,
+    required this.selectedDays,
+    required this.onSelected,
+  });
+
   final List<Map<String, dynamic>> rows;
+  final int selectedDays;
+  final ValueChanged<int> onSelected;
+
+  int? _daysRemaining(Map<String, dynamic> row) {
+    final dueAt = DateTime.tryParse('${row['due_at'] ?? ''}');
+    if (dueAt == null) return null;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final due = DateTime(dueAt.year, dueAt.month, dueAt.day);
+    return due.difference(today).inDays;
+  }
 
   @override
   Widget build(BuildContext context) {
-    final alerts =
-        rows.where((row) => row['type'] == 'contract_expiry').toList();
-    if (alerts.isEmpty) {
-      return const EmptyState(
-          icon: Icons.verified_rounded,
-          title: 'No contract alerts',
-          message:
-              'No contracts are due within the current 90-day alert window.');
-    }
-    return ListView.separated(
-      padding:
-          const EdgeInsets.fromLTRB(AppSpacing.page, 0, AppSpacing.page, 28),
-      itemCount: alerts.length,
-      separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.x1),
-      itemBuilder: (context, index) {
-        final row = alerts[index];
-        return GlassPanel(
-          child: ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: Icon(
-                row['severity'] == 'critical'
-                    ? Icons.warning_rounded
-                    : Icons.event_available_rounded,
-                color:
-                    row['severity'] == 'critical' ? Colors.red : Colors.orange),
-            title: Text('${row['title']}',
-                style: const TextStyle(fontWeight: FontWeight.w800)),
-            subtitle: Text('${row['body']}'),
-            trailing: row['is_read'] == 1 ? null : const StatusBadge('New'),
+    final source = rows
+        .where((row) => row['type'] == 'contract_expiry')
+        .map((row) => (row: row, days: _daysRemaining(row)))
+        .where((item) => item.days != null && item.days! >= 0)
+        .toList()
+      ..sort((a, b) => a.days!.compareTo(b.days!));
+    int countWithin(int days) =>
+        source.where((item) => item.days! <= days).length;
+    final alerts = source.where((item) => item.days! <= selectedDays).toList();
+
+    return Column(
+      children: [
+        SizedBox(
+          height: 42,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.page),
+            children: [
+              for (final days in const [30, 10, 5]) ...[
+                GlassFilterChip(
+                  label: '$days days (${countWithin(days)})',
+                  selected: selectedDays == days,
+                  onTap: () => onSelected(days),
+                  icon: days == 5
+                      ? Icons.warning_amber_rounded
+                      : Icons.event_available_rounded,
+                ),
+                const SizedBox(width: AppSpacing.x1),
+              ],
+            ],
           ),
-        );
-      },
+        ),
+        const SizedBox(height: AppSpacing.x2),
+        Expanded(
+          child: alerts.isEmpty
+              ? EmptyState(
+                  icon: Icons.verified_rounded,
+                  title: 'No contracts due within $selectedDays days',
+                  message:
+                      'The list updates from actual contract validity dates after a PostgreSQL refresh.',
+                )
+              : ListView.separated(
+                  padding: const EdgeInsets.fromLTRB(
+                      AppSpacing.page, 0, AppSpacing.page, 28),
+                  itemCount: alerts.length,
+                  separatorBuilder: (_, __) =>
+                      const SizedBox(height: AppSpacing.x1),
+                  itemBuilder: (context, index) {
+                    final item = alerts[index];
+                    final row = item.row;
+                    return GlassPanel(
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(
+                          item.days! <= 5
+                              ? Icons.warning_rounded
+                              : Icons.event_available_rounded,
+                          color: item.days! <= 5 ? Colors.red : Colors.orange,
+                        ),
+                        title: Text('${row['title']}',
+                            style:
+                                const TextStyle(fontWeight: FontWeight.w800)),
+                        subtitle: Text('${row['body']}'),
+                        trailing: StatusBadge(
+                          item.days == 0 ? 'Today' : '${item.days} days',
+                          tone: item.days! <= 5 ? Colors.red : Colors.orange,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ],
     );
   }
 }

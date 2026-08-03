@@ -50,6 +50,26 @@ const compactDate = (value) => {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
 };
+const parseContractDate = (value) => {
+  if (!value) return null;
+  const text = String(value).trim();
+  const dayFirst = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
+  if (dayFirst) {
+    const yearValue = Number(dayFirst[3]);
+    const year = yearValue < 100 ? 2000 + yearValue : yearValue;
+    return new Date(year, Number(dayFirst[2]) - 1, Number(dayFirst[1]));
+  }
+  const parsed = new Date(text);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+const contractDaysRemaining = (value) => {
+  const due = parseContractDate(value);
+  if (!due) return null;
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const target = new Date(due.getFullYear(), due.getMonth(), due.getDate());
+  return Math.round((target.getTime() - today.getTime()) / 86400000);
+};
 const monthKey = (value) => compactDate(value).slice(0, 7);
 const htmlEscape = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
 
@@ -567,6 +587,7 @@ export default function Page() {
   const [workTab, setWorkTab] = useState("station");
   const [stationModalTab, setStationModalTab] = useState("overview");
   const [reportTab, setReportTab] = useState("overview");
+  const [contractExpiryWindow, setContractExpiryWindow] = useState(30);
   const [reportFilters, setReportFilters] = useState({
     month: "",
     dateFrom: "",
@@ -967,6 +988,43 @@ export default function Page() {
     });
   }, [commercialContracts, search.reports, reportFilters, stationByCode]);
 
+  const contractExpiryRows = useMemo(() => {
+    const unique = new Map();
+    const add = (row) => {
+      const days = contractDaysRemaining(row.valid_to);
+      if (days === null || days < 0 || days > 30) return;
+      if (!matchesReportScope(row)) return;
+      if (!matchesQuery(row, ["contract_name", "licensee_name", "station_code", "station_name", "contract_type", "valid_to"], search.reports)) return;
+      const existing = unique.get(row.key);
+      if (!existing || days < existing.days_remaining) {
+        unique.set(row.key, { ...row, days_remaining: days });
+      }
+    };
+    units.forEach((row) => add({
+      ...row,
+      key: `unit:${pretty(row.unit_no)}`,
+      source_type: "unit",
+      contract_name: pretty(row.licensee_name) === "NA" ? pretty(row.unit_no) : pretty(row.licensee_name),
+      contract_type: pretty(row.type_of_unit) === "NA" ? "Catering" : pretty(row.type_of_unit),
+      valid_to: row.valid_to || row.contract_to,
+    }));
+    commercialContracts.forEach((row) => add({
+      ...row,
+      key: `commercial:${pretty(row.contract_key || row.contract_name)}`,
+      source_type: "commercial",
+      contract_name: pretty(row.contract_name),
+      contract_type: pretty(row.sub_category || row.policy),
+      valid_to: row.valid_to || row.contract_upto,
+    }));
+    return [...unique.values()].sort((a, b) => a.days_remaining - b.days_remaining || pretty(a.contract_name).localeCompare(pretty(b.contract_name)));
+  }, [units, commercialContracts, search.reports, reportFilters, stationByCode]);
+
+  const visibleContractExpiryRows = useMemo(
+    () => contractExpiryRows.filter((row) => row.days_remaining <= contractExpiryWindow),
+    [contractExpiryRows, contractExpiryWindow],
+  );
+  const contractExpiryCount = (days) => contractExpiryRows.filter((row) => row.days_remaining <= days).length;
+
   const reportAlerts = reports?.license_fee_alerts?.rows || [];
   const filteredReportAlerts = useMemo(() => {
     const q = search.reports;
@@ -996,6 +1054,7 @@ export default function Page() {
 
   const reportTabs = [
     { value: "overview", label: "Overview", icon: BarChart3 },
+    { value: "contract-expiry", label: "Contract Expiry", icon: Timer },
     { value: "stations", label: "Stations", icon: TrainFront },
     { value: "units", label: "Units", icon: Users },
     { value: "earnings", label: "Earnings", icon: Wallet },
@@ -1222,7 +1281,16 @@ export default function Page() {
     ...filteredCommercialContracts.filter((row) => /unmatched|asset/i.test(pretty(row.station_match_status))).map((row) => ({ module: "Commercial", record: row.contract_name, problem: `Station link: ${pretty(row.station_match_status)}`, station_code: row.station_code })),
   ];
 
+  const contractExpiryColumns = [
+    { key: "contract_name", label: "Contract" },
+    { key: "contract_type", label: "Type" },
+    { key: "station_code", label: "Station" },
+    { key: "valid_to", label: "Valid Till" },
+    { key: "days_remaining", label: "Days Remaining" },
+  ];
+
   const activeReport = (() => {
+    if (reportTab === "contract-expiry") return { rows: visibleContractExpiryRows, columns: contractExpiryColumns, fileName: `contract-expiry-${contractExpiryWindow}-days.xls` };
     if (reportTab === "stations") return { rows: filteredReportStations, columns: stationColumns, fileName: "station-report.xls" };
     if (reportTab === "units") return { rows: filteredReportUnits, columns: unitColumns, fileName: "unit-report.xls" };
     if (reportTab === "earnings") return { rows: filteredReportEarnings, columns: earningColumns, fileName: "earnings-report.xls" };
@@ -2084,6 +2152,76 @@ export default function Page() {
                 </>
               ) : null}
 
+              {reportTab === "contract-expiry" ? (
+                <Panel
+                  title="Contract Validity Watch"
+                  subtitle="Contracts approaching their validity end date, ordered by urgency."
+                  action={
+                    <div className="flex flex-wrap gap-2">
+                      {[30, 10, 5].map((days) => (
+                        <button
+                          key={days}
+                          type="button"
+                          onClick={() => setContractExpiryWindow(days)}
+                          className={cx(
+                            "focus-ring rounded-full border px-3 py-2 text-xs font-black transition",
+                            contractExpiryWindow === days
+                              ? "border-accent bg-accent text-white shadow-raised"
+                              : "border-line bg-surface text-muted hover:border-accent hover:text-accentStrong",
+                          )}
+                        >
+                          {days} days ({contractExpiryCount(days)})
+                        </button>
+                      ))}
+                    </div>
+                  }
+                >
+                  <ListShell>
+                    <div className="grid gap-3">
+                      {visibleContractExpiryRows.map((row) => (
+                        <button
+                          key={row.key}
+                          type="button"
+                          onClick={() => {
+                            if (row.source_type === "unit") {
+                              const unit = units.find((item) => pretty(item.unit_no) === pretty(row.unit_no));
+                              if (unit) openUnit(unit);
+                              return;
+                            }
+                            const contract = commercialContracts.find((item) => pretty(item.contract_key || item.contract_name) === pretty(row.contract_key || row.contract_name));
+                            if (contract) openCommercialContract(contract);
+                          }}
+                          className="soft-raised group grid gap-3 rounded-lg border border-line p-4 text-left transition hover:-translate-y-0.5 hover:border-accent md:grid-cols-[1.4fr_0.8fr_auto]"
+                        >
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <div className="truncate text-sm font-black text-ink">{pretty(row.contract_name)}</div>
+                              <Badge tone={row.days_remaining <= 5 ? "danger" : "accent"}>
+                                {row.days_remaining === 0 ? "Expires today" : `${row.days_remaining} days`}
+                              </Badge>
+                            </div>
+                            <div className="mt-1 text-xs text-muted">{pretty(row.contract_type)} | {pretty(row.station_code)} {pretty(row.station_name) !== "NA" ? `- ${pretty(row.station_name)}` : ""}</div>
+                          </div>
+                          <div className="text-xs text-muted">
+                            <div>Valid till</div>
+                            <div className="mt-1 font-black text-ink">{pretty(row.valid_to)}</div>
+                          </div>
+                          <div className="flex items-center justify-end gap-1 text-[11px] font-black uppercase tracking-[0.14em] text-muted">
+                            Open
+                            <ChevronRight size={17} className="transition group-hover:translate-x-0.5" />
+                          </div>
+                        </button>
+                      ))}
+                      {!visibleContractExpiryRows.length ? (
+                        <div className="soft-inset rounded-lg border border-line p-5 text-sm text-muted">
+                          No contracts expire within {contractExpiryWindow} days under the current report filters.
+                        </div>
+                      ) : null}
+                    </div>
+                  </ListShell>
+                </Panel>
+              ) : null}
+
               {reportTab === "stations" ? (
                 <Panel title="Station Reports" subtitle="Coverage by category, division, and linked activity">
                   <KeyValueGrid
@@ -2198,7 +2336,7 @@ export default function Page() {
                 </Panel>
               ) : null}
 
-              {reportTab !== "overview" ? (
+              {reportTab !== "overview" && reportTab !== "contract-expiry" ? (
                 <Panel title={`${reportTabs.find((tab) => tab.value === reportTab)?.label || "Report"} Records`} subtitle={`${activeReport.rows.length} records after report filters. Click a row to open its detail modal where applicable.`}>
                   <DataTable
                     columns={activeReport.columns}
