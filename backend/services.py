@@ -1443,8 +1443,13 @@ def get_station_detail(station_code: str) -> dict[str, Any] | None:
         contracts = [
             with_validity({
                 **unit,
+                "licensee_name": unit.get("licensee_name") or next(
+                    (row.get("licensee_name") for row in earnings_by_unit.get(unit.get("unit_no"), []) if clean(row.get("licensee_name"))),
+                    None,
+                ),
                 "earnings": earnings_by_unit.get(unit.get("unit_no"), []),
                 "earnings_total": sum(to_money(row.get("amount")) for row in earnings_by_unit.get(unit.get("unit_no"), [])),
+                "payment_total": sum(to_money(row.get("amount")) for row in earnings_by_unit.get(unit.get("unit_no"), [])),
                 "pending_receipts": sum(1 for row in earnings_by_unit.get(unit.get("unit_no"), []) if "pending" in normalize(row.get("receipt_type"))),
             }, ("contract_from",), ("contract_to",))
             for unit in units

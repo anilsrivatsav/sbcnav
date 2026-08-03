@@ -1,9 +1,19 @@
 # Changelog
 
+## 0.7.5+12 - 2026-08-03
+
+- Standardized Catering, MPS, and commercial contract detail sheets.
+- Added validity dates, remaining days, renewal status, payment totals, paid-through date, and receipt history.
+- Added consistent contract risk colours in Station 360 and Reports: red within 10 days, amber within 30 days, green active, grey missing dates.
+- Recovered missing catering licensee names from linked earnings where available.
+- Added fixed-screen contract-expiry reporting with native PDF export.
+
 ## 0.7.4+11 - 2026-08-03
 
 - Added contract-validity report chips for the next 30, 10, and 5 days.
 - Sorted expiring contracts by nearest validity end date.
+- Reworked the mobile validity report into a fixed, paginated single-screen layout.
+- Added native PDF export for all contracts in the selected validity window.
 - Added matching contract-expiry reporting to the Next.js dashboard.
 
 ## 0.7.0+7 - 2026-07-31

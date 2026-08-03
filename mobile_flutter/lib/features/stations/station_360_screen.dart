@@ -1251,7 +1251,7 @@ class _ContractList extends StatelessWidget {
               title: '${contract.name} · ${contractValidityLabel(contract)}',
               subtitle:
                   '${contract.type}  •  ${formatCurrency(contract.earnings)}',
-              trailing: contract.status,
+              trailing: contractRiskLabel(contract),
               onTap: () => _showContractDetails(context, contract),
             ),
           ),
@@ -1634,14 +1634,16 @@ Future<void> _showContractDetails(
     'licensee_name',
     'type_of_unit',
     'unit_status',
+    'station_code',
+    'pf_no',
+    'station_category',
     'policy',
     'sub_category',
-    'allocation',
-    'station',
-    'contract_period',
-    'contract_upto',
+    'allocation_code',
+    'asset_scope',
     'license_fee',
     'annual_license_fee',
+    'quarterly_license_fee',
     'total_license_fee_2026_2027',
   ];
   final details = <MapEntry<String, dynamic>>[];
@@ -1649,20 +1651,55 @@ Future<void> _showContractDetails(
     final value = contract.details[key];
     if (_hasDetailValue(value)) details.add(MapEntry(key, value));
   }
+  final paymentTotal = contract.payments.fold<double>(
+    0,
+    (sum, payment) =>
+        sum +
+        (numericValue(payment['amount'] ??
+                payment['amount_paid'] ??
+                payment['paid_amount']) ??
+            0),
+  );
+  final paidThrough = _latestPaymentValue(contract.payments, 'period_to');
+  final lastReceipt = _latestPaymentValue(
+      contract.payments, 'date_of_receipt', 'receipt_date', 'mr_date');
+  final remainingDays = contract.daysToExpiry == null
+      ? 'Not calculable - validity end date not recorded'
+      : contract.daysToExpiry! < 0
+          ? 'Expired ${-contract.daysToExpiry!} days ago'
+          : contract.daysToExpiry == 0
+              ? 'Expires today'
+              : '${contract.daysToExpiry} days';
   await _showDetailSheet(
     context,
     title: contract.name,
     icon: Icons.storefront_rounded,
-    status: contract.status,
+    status: contractRiskLabel(contract),
     sections: [
       _DetailGroup(title: 'Contract summary', rows: [
         MapEntry('Type', contract.type),
-        MapEntry('Earnings / license fee', formatCurrency(contract.earnings)),
+        MapEntry('Contract status', contract.status),
+        MapEntry('Risk level', contractRiskLabel(contract)),
+        MapEntry('Renewal status', contract.renewalState),
+        MapEntry(
+            'Valid from',
+            contract.validFrom == null
+                ? 'Not recorded'
+                : formatContractDate(contract.validFrom!)),
+        MapEntry(
+            'Valid till',
+            contract.validTo == null
+                ? 'Not recorded'
+                : formatContractDate(contract.validTo!)),
+        MapEntry('Remaining days', remainingDays),
         MapEntry('Validity', contractValidityLabel(contract)),
-        if (contract.validFrom != null)
-          MapEntry('Valid from', formatContractDate(contract.validFrom!)),
-        if (contract.validTo != null)
-          MapEntry('Valid till', formatContractDate(contract.validTo!)),
+        MapEntry('Payment entries', contract.payments.length),
+        MapEntry(
+            'Payments recorded',
+            formatCurrency(
+                paymentTotal > 0 ? paymentTotal : contract.earnings)),
+        MapEntry('Last receipt', lastReceipt ?? 'Not recorded'),
+        MapEntry('Paid through', paidThrough ?? 'Not recorded'),
       ]),
       if (details.isNotEmpty)
         _DetailGroup(
@@ -1677,8 +1714,16 @@ Future<void> _showContractDetails(
                 MapEntry('Payment history', 'No payment records available')
               ]
             : [
+                MapEntry(
+                    'Total paid',
+                    formatCurrency(
+                        paymentTotal > 0 ? paymentTotal : contract.earnings)),
                 for (var i = 0; i < contract.payments.length; i++)
-                  MapEntry('Payment ${i + 1}',
+                  MapEntry(
+                      cleanText(
+                        contract.payments[i]['mr_no'],
+                        fallback: 'Payment ${i + 1}',
+                      ),
                       _paymentSummary(contract.payments[i])),
               ],
       ),
@@ -1687,15 +1732,62 @@ Future<void> _showContractDetails(
 }
 
 String _paymentSummary(Map<String, dynamic> payment) {
-  final date = payment['date'] ?? payment['receipt_date'] ?? payment['month'];
-  final amount =
-      payment['amount'] ?? payment['paid_amount'] ?? payment['earnings'];
-  final status = payment['status'] ?? payment['payment_status'];
+  final date = payment['date_of_receipt'] ??
+      payment['receipt_date'] ??
+      payment['mr_date'] ??
+      payment['payment_month'] ??
+      payment['month'] ??
+      payment['date'];
+  final amount = payment['amount'] ??
+      payment['amount_paid'] ??
+      payment['paid_amount'] ??
+      payment['earnings'];
+  final periodFrom = payment['period_from'];
+  final periodTo = payment['period_to'];
+  final receiptType =
+      payment['receipt_type'] ?? payment['payment_status'] ?? payment['status'];
+  final gst = payment['gst'];
   return [
-    if (_hasDetailValue(date)) cleanText(date),
-    if (_hasDetailValue(amount)) cleanText(amount),
-    if (_hasDetailValue(status)) cleanText(status),
+    if (_hasDetailValue(date)) 'Received ${cleanText(date)}',
+    if (_hasDetailValue(amount))
+      'Amount ${formatCurrency(numericValue(amount) ?? 0)}',
+    if (_hasDetailValue(gst)) 'GST ${formatCurrency(numericValue(gst) ?? 0)}',
+    if (_hasDetailValue(periodFrom) || _hasDetailValue(periodTo))
+      'Period ${cleanText(periodFrom, fallback: '?')} to ${cleanText(periodTo, fallback: '?')}',
+    if (_hasDetailValue(receiptType)) cleanText(receiptType),
   ].join('  |  ');
+}
+
+String? _latestPaymentValue(
+  List<Map<String, dynamic>> payments,
+  String primary, [
+  String? secondary,
+  String? tertiary,
+]) {
+  final values = <String>[];
+  for (final payment in payments) {
+    final value = payment[primary] ??
+        (secondary == null ? null : payment[secondary]) ??
+        (tertiary == null ? null : payment[tertiary]);
+    if (_hasDetailValue(value)) values.add(cleanText(value));
+  }
+  if (values.isEmpty) return null;
+  values.sort((a, b) => _sortableDate(a).compareTo(_sortableDate(b)));
+  return values.last;
+}
+
+DateTime _sortableDate(String value) {
+  final iso = DateTime.tryParse(value);
+  if (iso != null) return iso;
+  final match =
+      RegExp(r'^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})').firstMatch(value);
+  if (match == null) return DateTime(1900);
+  final yearValue = int.parse(match.group(3)!);
+  return DateTime(
+    yearValue < 100 ? 2000 + yearValue : yearValue,
+    int.parse(match.group(2)!),
+    int.parse(match.group(1)!),
+  );
 }
 
 Future<void> _showSanctionedWorkDetails(

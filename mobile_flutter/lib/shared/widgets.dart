@@ -48,7 +48,9 @@ Color statusTone(String status, [Color? fallback]) {
   if (value.contains('pending') ||
       value.contains('sanction') ||
       value.contains('draft') ||
-      value.contains('tender')) {
+      value.contains('tender') ||
+      value.contains('attention') ||
+      value.contains('due')) {
     return AppPalette.amber;
   }
   if (value.contains('critical') ||

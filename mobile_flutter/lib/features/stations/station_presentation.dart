@@ -304,9 +304,15 @@ List<ContractSummary> buildContracts(
   for (final raw in catering) {
     final row = _map(raw);
     final unitNo = cleanText(row['unit_no'], fallback: '');
+    final paymentRows = _paymentRows(row);
+    final paymentLicensee = paymentRows
+        .map((payment) => cleanText(payment['licensee_name'], fallback: ''))
+        .firstWhere((value) => value.isNotEmpty, orElse: () => '');
     final name = cleanText(
       row['licensee_name'],
-      fallback: cleanText(row['type_of_unit'], fallback: 'Catering contract'),
+      fallback: paymentLicensee.isNotEmpty
+          ? paymentLicensee
+          : cleanText(row['type_of_unit'], fallback: 'Catering contract'),
     );
     final earnings = numericValue(row['earnings_total']) ??
         _list(row['earnings']).fold<double>(
@@ -333,7 +339,7 @@ List<ContractSummary> buildContracts(
           _contractDate(row, ['valid_to', 'contract_to', 'contract_upto']),
         ),
         details: row,
-        payments: _paymentRows(row),
+        payments: paymentRows,
       ),
     );
   }
@@ -534,6 +540,15 @@ String contractValidityLabel(ContractSummary contract) {
   if (days < 0) return 'Expired on $date';
   if (days == 0) return 'Expires today';
   return 'Valid till $date · $days days remaining';
+}
+
+String contractRiskLabel(ContractSummary contract) {
+  final days = contract.daysToExpiry;
+  if (days == null) return 'Validity missing';
+  if (days < 0) return 'Expired';
+  if (days <= 10) return days == 0 ? 'Critical - today' : 'Critical - ${days}d';
+  if (days <= 30) return 'Attention - ${days}d';
+  return 'Active';
 }
 
 String formatContractDate(DateTime date) =>

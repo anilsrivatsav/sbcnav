@@ -70,6 +70,14 @@ const contractDaysRemaining = (value) => {
   const target = new Date(due.getFullYear(), due.getMonth(), due.getDate());
   return Math.round((target.getTime() - today.getTime()) / 86400000);
 };
+const contractRisk = (value) => {
+  const days = contractDaysRemaining(value);
+  if (days === null) return { days: null, label: "Validity missing", tone: "neutral" };
+  if (days < 0) return { days, label: "Expired", tone: "danger" };
+  if (days <= 10) return { days, label: days === 0 ? "Critical - today" : `Critical - ${days}d`, tone: "danger" };
+  if (days <= 30) return { days, label: `Attention - ${days}d`, tone: "warning" };
+  return { days, label: "Active", tone: "accent" };
+};
 const monthKey = (value) => compactDate(value).slice(0, 7);
 const htmlEscape = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
 
@@ -101,6 +109,7 @@ function Badge({ children, tone = "neutral" }) {
   const tones = {
     neutral: "border-line bg-surfaceStrong text-muted",
     accent: "border-accent/30 bg-accentSoft text-accentStrong",
+    warning: "border-amber-300/70 bg-amber-500/10 text-amber-700",
     danger: "border-red-300/70 bg-red-500/10 text-red-600",
   };
   return (
@@ -1104,6 +1113,7 @@ export default function Page() {
     { key: "type_of_unit", label: "Type" },
     { key: "station_category", label: "Category" },
     { key: "license_fee", label: "Fee" },
+    { key: "contract_to", label: "Validity Risk", value: (row) => contractRisk(row.valid_to || row.contract_to).label, render: (row) => { const risk = contractRisk(row.valid_to || row.contract_to); return <Badge tone={risk.tone}>{risk.label}</Badge>; } },
     { key: "unit_status", label: "Status", value: (row) => pretty(row.unit_status), render: (row) => <Badge tone={/active/i.test(pretty(row.unit_status)) ? "accent" : "neutral"}>{pretty(row.unit_status)}</Badge> },
   ];
   const earningColumns = [
@@ -1136,6 +1146,7 @@ export default function Page() {
     { key: "station_code", label: "Station" },
     { key: "annual_license_fee", label: "Annual Fee", value: (row) => row.annual_license_fee || 0, render: (row) => <span className="font-semibold">{money(row.annual_license_fee)}</span> },
     { key: "contract_upto", label: "Upto" },
+    { key: "validity_risk", label: "Validity Risk", value: (row) => contractRisk(row.valid_to || row.contract_upto).label, render: (row) => { const risk = contractRisk(row.valid_to || row.contract_upto); return <Badge tone={risk.tone}>{risk.label}</Badge>; } },
     { key: "station_match_status", label: "Link", value: (row) => pretty(row.station_match_status), render: (row) => <Badge tone={/unmatched|asset/i.test(pretty(row.station_match_status)) ? "danger" : "accent"}>{pretty(row.station_match_status)}</Badge> },
   ];
   const commercialPaymentColumns = [
@@ -2166,8 +2177,12 @@ export default function Page() {
                           className={cx(
                             "focus-ring rounded-full border px-3 py-2 text-xs font-black transition",
                             contractExpiryWindow === days
-                              ? "border-accent bg-accent text-white shadow-raised"
-                              : "border-line bg-surface text-muted hover:border-accent hover:text-accentStrong",
+                              ? days <= 10
+                                ? "border-red-600 bg-red-600 text-white shadow-raised"
+                                : "border-amber-500 bg-amber-500 text-white shadow-raised"
+                              : days <= 10
+                                ? "border-red-300 bg-red-500/10 text-red-600 hover:border-red-500"
+                                : "border-amber-300 bg-amber-500/10 text-amber-700 hover:border-amber-500",
                           )}
                         >
                           {days} days ({contractExpiryCount(days)})
@@ -2196,7 +2211,7 @@ export default function Page() {
                           <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
                               <div className="truncate text-sm font-black text-ink">{pretty(row.contract_name)}</div>
-                              <Badge tone={row.days_remaining <= 5 ? "danger" : "accent"}>
+                              <Badge tone={row.days_remaining <= 10 ? "danger" : "warning"}>
                                 {row.days_remaining === 0 ? "Expires today" : `${row.days_remaining} days`}
                               </Badge>
                             </div>

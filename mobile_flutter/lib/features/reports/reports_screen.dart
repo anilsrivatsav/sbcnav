@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/local/app_database.dart';
 import '../../shared/widgets.dart';
+import 'report_pdf_export.dart';
 
 class ReportsScreen extends ConsumerStatefulWidget {
   const ReportsScreen({super.key});
@@ -244,7 +245,7 @@ class _ReportMetric extends StatelessWidget {
   }
 }
 
-class _ContractReport extends StatelessWidget {
+class _ContractReport extends StatefulWidget {
   const _ContractReport({
     required this.rows,
     required this.selectedDays,
@@ -255,6 +256,24 @@ class _ContractReport extends StatelessWidget {
   final int selectedDays;
   final ValueChanged<int> onSelected;
 
+  @override
+  State<_ContractReport> createState() => _ContractReportState();
+}
+
+class _ContractReportState extends State<_ContractReport> {
+  static const _rowsPerPage = 3;
+  int _page = 0;
+  bool _exporting = false;
+
+  @override
+  void didUpdateWidget(covariant _ContractReport oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.selectedDays != widget.selectedDays ||
+        oldWidget.rows != widget.rows) {
+      _page = 0;
+    }
+  }
+
   int? _daysRemaining(Map<String, dynamic> row) {
     final dueAt = DateTime.tryParse('${row['due_at'] ?? ''}');
     if (dueAt == null) return null;
@@ -264,9 +283,44 @@ class _ContractReport extends StatelessWidget {
     return due.difference(today).inDays;
   }
 
+  String _contractName(Map<String, dynamic> row) {
+    final body = '${row['body'] ?? ''}'.trim();
+    final match =
+        RegExp(r'^(.*?)\s+(?:expires|expired)\b', caseSensitive: false)
+            .firstMatch(body);
+    if (match != null && match.group(1)!.trim().isNotEmpty) {
+      return match.group(1)!.trim();
+    }
+    return '${row['related_id'] ?? row['title'] ?? 'Contract'}';
+  }
+
+  Future<void> _export(
+      List<({Map<String, dynamic> row, int? days})> alerts) async {
+    if (_exporting) return;
+    setState(() => _exporting = true);
+    try {
+      await exportContractExpiryPdf(
+        rows: alerts
+            .map((item) => {
+                  ...item.row,
+                  '_days_remaining': item.days,
+                })
+            .toList(),
+        windowDays: widget.selectedDays,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('PDF export failed: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final source = rows
+    final source = widget.rows
         .where((row) => row['type'] == 'contract_expiry')
         .map((row) => (row: row, days: _daysRemaining(row)))
         .where((item) => item.days != null && item.days! >= 0)
@@ -274,70 +328,168 @@ class _ContractReport extends StatelessWidget {
       ..sort((a, b) => a.days!.compareTo(b.days!));
     int countWithin(int days) =>
         source.where((item) => item.days! <= days).length;
-    final alerts = source.where((item) => item.days! <= selectedDays).toList();
+    final alerts =
+        source.where((item) => item.days! <= widget.selectedDays).toList();
+    final pageCount =
+        alerts.isEmpty ? 1 : (alerts.length / _rowsPerPage).ceil();
+    final safePage = _page.clamp(0, pageCount - 1);
+    final start = safePage * _rowsPerPage;
+    final pageRows = alerts.skip(start).take(_rowsPerPage).toList();
 
     return Column(
       children: [
-        SizedBox(
-          height: 42,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.page),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.page),
+          child: Row(
             children: [
-              for (final days in const [30, 10, 5]) ...[
-                GlassFilterChip(
-                  label: '$days days (${countWithin(days)})',
-                  selected: selectedDays == days,
-                  onTap: () => onSelected(days),
-                  icon: days == 5
-                      ? Icons.warning_amber_rounded
-                      : Icons.event_available_rounded,
+              for (final days in const [30, 10, 5])
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 3),
+                    child: GlassFilterChip(
+                      label: '${days}d (${countWithin(days)})',
+                      selected: widget.selectedDays == days,
+                      onTap: () => widget.onSelected(days),
+                      icon: days == 5
+                          ? Icons.warning_amber_rounded
+                          : Icons.event_available_rounded,
+                    ),
+                  ),
                 ),
-                const SizedBox(width: AppSpacing.x1),
-              ],
             ],
           ),
         ),
-        const SizedBox(height: AppSpacing.x2),
+        const SizedBox(height: AppSpacing.x1),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.page),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '${alerts.length} contracts within ${widget.selectedDays} days',
+                  style: Theme.of(context)
+                      .textTheme
+                      .labelLarge
+                      ?.copyWith(fontWeight: FontWeight.w900),
+                ),
+              ),
+              AppIconButton(
+                tooltip: 'Export all matching contracts to PDF',
+                icon: _exporting
+                    ? Icons.hourglass_top_rounded
+                    : Icons.picture_as_pdf_rounded,
+                onPressed: _exporting ? null : () => _export(alerts),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: AppSpacing.x1),
         Expanded(
           child: alerts.isEmpty
               ? EmptyState(
                   icon: Icons.verified_rounded,
-                  title: 'No contracts due within $selectedDays days',
+                  title: 'No contracts due within ${widget.selectedDays} days',
                   message:
                       'The list updates from actual contract validity dates after a PostgreSQL refresh.',
                 )
-              : ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(
-                      AppSpacing.page, 0, AppSpacing.page, 28),
-                  itemCount: alerts.length,
-                  separatorBuilder: (_, __) =>
-                      const SizedBox(height: AppSpacing.x1),
-                  itemBuilder: (context, index) {
-                    final item = alerts[index];
-                    final row = item.row;
-                    return GlassPanel(
-                      child: ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: Icon(
-                          item.days! <= 5
-                              ? Icons.warning_rounded
-                              : Icons.event_available_rounded,
-                          color: item.days! <= 5 ? Colors.red : Colors.orange,
+              : Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: AppSpacing.page),
+                  child: Column(
+                    children: [
+                      for (final item in pageRows) ...[
+                        Expanded(
+                          child: GlassPanel(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 8),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  item.days! <= 10
+                                      ? Icons.warning_rounded
+                                      : Icons.event_available_rounded,
+                                  color: item.days! <= 10
+                                      ? Colors.red
+                                      : Colors.orange,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        _contractName(item.row),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                            fontWeight: FontWeight.w900),
+                                      ),
+                                      const SizedBox(height: 3),
+                                      Text(
+                                        '${item.row['body']}',
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                StatusBadge(
+                                  item.days == 0 ? 'Today' : '${item.days}d',
+                                  tone: item.days! <= 10
+                                      ? Colors.red
+                                      : Colors.orange,
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
-                        title: Text('${row['title']}',
-                            style:
-                                const TextStyle(fontWeight: FontWeight.w800)),
-                        subtitle: Text('${row['body']}'),
-                        trailing: StatusBadge(
-                          item.days == 0 ? 'Today' : '${item.days} days',
-                          tone: item.days! <= 5 ? Colors.red : Colors.orange,
-                        ),
-                      ),
-                    );
-                  },
+                        const SizedBox(height: AppSpacing.x1),
+                      ],
+                      for (var index = pageRows.length;
+                          index < _rowsPerPage;
+                          index++)
+                        const Expanded(child: SizedBox()),
+                    ],
+                  ),
                 ),
         ),
+        if (alerts.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+                AppSpacing.page, 4, AppSpacing.page, 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                AppIconButton(
+                  tooltip: 'Previous page',
+                  icon: Icons.chevron_left_rounded,
+                  onPressed: safePage == 0
+                      ? null
+                      : () => setState(() => _page = safePage - 1),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  child: Text(
+                    'Page ${safePage + 1} of $pageCount',
+                    style: const TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                ),
+                AppIconButton(
+                  tooltip: 'Next page',
+                  icon: Icons.chevron_right_rounded,
+                  onPressed: safePage >= pageCount - 1
+                      ? null
+                      : () => setState(() => _page = safePage + 1),
+                ),
+              ],
+            ),
+          ),
       ],
     );
   }
