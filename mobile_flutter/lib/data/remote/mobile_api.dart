@@ -75,6 +75,16 @@ class MobileApi {
         ),
       );
 
+  Future<Map<String, dynamic>> syncCateringFromGoogleSheet() => _request(
+        () => _dio.post(
+          '/api/catering/sync',
+          options: Options(
+            receiveTimeout: const Duration(seconds: 180),
+            sendTimeout: const Duration(seconds: 30),
+          ),
+        ),
+      );
+
   Future<Map<String, dynamic>> _request(
     Future<Response<dynamic>> Function() operation,
   ) async {

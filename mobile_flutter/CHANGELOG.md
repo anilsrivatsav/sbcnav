@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.9.2+19 - 2026-08-04
+
+- Classifies units without a licensee and contract period as available for allotment.
+- Displays availability remarks instead of contract validity and payment information.
+- Excludes tender and EMD receipts from contract earnings while retaining them for audit.
+- Adds optional Remarks-column support to future catering-sheet synchronizations.
+
+## 0.9.1+18 - 2026-08-03
+
+- Removed source and synchronization metadata from complete station records.
+- Renamed the detailed amenity group to Passenger amenity details.
+- Retained every operational station and passenger amenity field.
+
+## 0.9.0+17 - 2026-08-03
+
+- Rebuilt Station 360 as focused Overview, Amenities, Contracts, Works, and Inspection workspaces.
+- Added compact module navigation with consistent selected-state pills and record counts.
+- Added a concise station overview with direct access to each available linked dataset.
+- Preserved every source field through a complete station record bottom sheet.
+- Kept normalized FOB data when no authoritative FOB access record is available.
+- Reduced the station hero height and added animated workspace transitions.
+
+## 0.8.2+16 - 2026-08-03
+
+- Added a Settings action to refresh catering units and earnings from the configured Google Sheet.
+- Refreshes PostgreSQL first and then replaces the device's offline station snapshot.
+- Shows unit, receipt, and duplicate-removal results with online and server error handling.
+- Records the last successful catering refresh time on the device.
+
+## 0.8.1+15 - 2026-08-03
+
+- Reorganized Station 360 so platforms, FOB details, amenity categories, and norms live under Passenger Amenities.
+- Replaced oversized amenity cards with a compact horizontal category summary and full-detail bottom sheets.
+- Removed the duplicate normalized FOB tile while preserving the authoritative FOB access record.
+- Replaced inline norm expansion with grouped, tabbed norm details that retain every source row.
+- Moved Action Centre to the end of Station 360 and made action and detail surfaces fully opaque.
+
+## 0.8.0+14 - 2026-08-03
+
+- Added a Station 360 action centre for deficiencies, inspection history, contract alerts, and sync state.
+- Added deficiency ownership, target dates, overdue visibility, and full corrective-action status tracking.
+- Added structured contract alert fields with 1, 5, 10, 30, and 50-day expiry bands.
+- Added resilient per-record synchronization, failed-record retry, queue diagnostics, and sync history.
+- Preserved all existing offline inspections and cached station data through a versioned database migration.
+
 ## 0.7.6+13 - 2026-08-03
 
 - Replaced oversized contract-validity cards with compact, station-aware rows.
@@ -47,3 +92,20 @@
 - Added consistent contract validity fields to station detail responses.
 - Removed stale contract expiry notifications after refreshed station data.
 - Refreshed the home profile and notification counts after sheets close.
+## 0.9.3+20
+
+- Added station-wise lift, ramp, and escalator details from the combined accessibility sheet.
+- Added a Passenger Amenities card with a readable detail bottom sheet in Station 360.
+## 0.9.4+21
+
+- Completed inspections now generate and share a full PDF report.
+- Reports are retained locally under the inspection reports folder before sharing.
+- Submitted inspections have a Share PDF action for later reuse.
+## 0.9.5+22
+
+- Moved lift, ramp and escalator details into the FOB detail bottom sheet.
+- Empty and `NA` accessibility values are omitted.
+## 0.9.6+23
+
+- Station details now refresh from the API when opened, while preserving offline cache fallback.
+- Newly imported FOB accessibility details become visible without clearing app data.

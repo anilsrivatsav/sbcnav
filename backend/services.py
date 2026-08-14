@@ -109,7 +109,16 @@ def is_active_status(value: Any) -> bool:
     text = normalize(clean(value))
     if not text:
         return True
-    return not any(token in text for token in ["closed", "inactive", "terminated", "expired", "vacant", "surrender"])
+    return not any(token in text for token in ["available", "closed", "inactive", "terminated", "expired", "vacant", "surrender"])
+
+
+def is_available_unit(unit: Unit | dict[str, Any]) -> bool:
+    def value(key: str) -> Any:
+        return unit.get(key) if isinstance(unit, dict) else getattr(unit, key, None)
+
+    if normalize(value("unit_status")) == "available":
+        return True
+    return not clean(value("licensee_name")) and not clean(value("contract_from")) and not clean(value("contract_to"))
 
 
 def is_license_fee_row(row: Earning) -> bool:
@@ -254,6 +263,10 @@ def parse_works(text: str) -> list[dict[str, Any]]:
     parsed: list[dict[str, Any]] = []
     last_sn = 0
     for row in rows[header_idx + 1 :]:
+        # The worksheet contains a second supplementary table below the
+        # 152-row sanctioned-works register. It is not part of the total.
+        if any(normalize(cell) == "projectid" for cell in row):
+            break
         item: dict[str, Any] = {}
         for idx, header in enumerate(headers):
             value = row[idx] if idx < len(row) else ""
@@ -300,6 +313,39 @@ def parse_works(text: str) -> list[dict[str, Any]]:
             suffix = item.get("source_sn") or index
             item["project_id"] = f"{item['source_project_id']}__SN{suffix}"
     return parsed
+
+
+def parse_works_xlsx(content: bytes) -> list[dict[str, Any]]:
+    """Parse the complete sanctioned-works worksheet from an XLSX export.
+
+    The Google Sheets CSV export can reflect the current sheet view/filter and
+    is therefore not a reliable import source for this register. XLSX keeps
+    the complete first table, including numeric cells and the 152-row range.
+    The existing CSV parser remains the canonical field mapping/parser.
+    """
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    worksheet = workbook["All Sanctioned Works"]
+    rows = list(worksheet.iter_rows(values_only=True))
+    header_idx = next(
+        i for i, row in enumerate(rows)
+        if any(normalize(cell) == "projectid" for cell in row)
+    )
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    for row in rows[header_idx:]:
+        if row and any(normalize(cell) == "projectid" for cell in row) and row is not rows[header_idx]:
+            break
+        converted = []
+        for value in row:
+            if isinstance(value, (datetime, date)):
+                converted.append(value.strftime("%Y-%m-%d"))
+            else:
+                converted.append("" if value is None else str(value))
+        writer.writerow(converted)
+    return parse_works(output.getvalue())
 
 
 def _header_map(headers: list[str]) -> dict[str, int]:
@@ -380,6 +426,59 @@ def parse_platform_details(text: str) -> list[dict[str, Any]]:
         }
         if item["station_code"] and item["platform"]:
             out.append(item)
+    return out
+
+
+def parse_combined_accessibility(text: str) -> list[dict[str, Any]]:
+    """Parse the station-wise combined lift, ramp and escalator sheet."""
+    rows = parse_csv(text)
+    header_idx = next(
+        (idx for idx, row in enumerate(rows) if normalize(_cell(row, _header_map(row), "station code")) == "station code"),
+        1 if len(rows) > 1 else 0,
+    )
+    if header_idx >= len(rows):
+        return []
+    indexes = _header_map(rows[header_idx])
+    out: list[dict[str, Any]] = []
+    for source_row, row in enumerate(rows[header_idx + 1:], start=header_idx + 2):
+        station_code = _cell(row, indexes, "station code").upper()
+        if not station_code or station_code in {"TOTAL", "NA", "NIL"}:
+            continue
+        lift = _cell(row, indexes, "lift")
+        ramp = _cell(row, indexes, "ramp")
+        escalator = _cell(row, indexes, "escalator")
+        status_parts = [
+            part for part in (
+                "Lift: " + lift if lift else "",
+                "Ramp: " + ramp if ramp else "",
+                "Escalator: " + escalator if escalator else "",
+            ) if part
+        ]
+        out.append({
+            "station_code": station_code,
+            "category": _cell(row, indexes, "category"),
+            "source_category": _cell(row, indexes, "category"),
+            "pf_extension_wip": False,
+            "pf_extension_proposed": False,
+            "raising_extension_proposed": False,
+            "platform_extension_work_proposed": False,
+            "ramp_feasible": False,
+            "fob_without": False,
+            "fob_ramp_available": "ramp" in ramp.lower() and "available" in ramp.lower(),
+            "fob_wip": False,
+            "lift_available": "available" in lift.lower() and "proposed" not in lift.lower(),
+            "lift_proposed": "proposed" in lift.lower() or "sanctioned" in lift.lower() or "wip" in lift.lower(),
+            "ramp_proposed": "proposed" in ramp.lower(),
+            "not_feasible_lift_ramp": "not feasible" in (lift + " " + ramp).lower(),
+            "footfall_day": to_int(_cell(row, indexes, "footfall / day", "footfall")),
+            "lift_details": lift,
+            "ramp_details": ramp,
+            "escalator_details": escalator,
+            "accessibility_source": "Combined lift, escalator and ramp sheet",
+            "source_rows": str(source_row),
+            "status_text": " | ".join(status_parts),
+            "remarks": "Station-wise accessibility details from the latest combined sheet.",
+        })
     return out
 
 
@@ -1081,21 +1180,29 @@ def get_passenger_amenity_reports() -> dict[str, Any]:
 def get_stats() -> dict[str, Any]:
     session = SessionLocal()
     try:
+        contract_earnings = session.query(Earning).filter(
+            (Earning.earning_scope.is_(None)) | (Earning.earning_scope != "tender_emd")
+        )
+        commercial_station_filter = (
+            Station.is_active.is_(True),
+            func.lower(func.trim(Station.categorisation)).notin_(("", "test", "non-commercial")),
+        )
         return {
-            "stations": session.query(func.count(Station.station_code)).scalar() or 0,
+            "stations": session.query(func.count(Station.station_code)).filter(*commercial_station_filter).scalar() or 0,
             "units": session.query(func.count(Unit.unit_no)).scalar() or 0,
             "works": session.query(func.count(Work.work_key)).scalar() or 0,
-            "earnings": session.query(func.count(Earning.earning_key)).scalar() or 0,
+            "earnings": contract_earnings.count(),
             "commercialContracts": session.query(func.count(CommercialContract.contract_key)).scalar() or 0,
             "commercialRevenue": session.query(func.coalesce(func.sum(CommercialContract.annual_license_fee), 0)).scalar() or 0,
             "links": session.query(func.count(WorkLink.id)).scalar() or 0,
-            "earningsTotal": session.query(func.coalesce(func.sum(Earning.amount), 0)).scalar() or 0,
-            "footfall": session.query(func.coalesce(func.sum(Station.passenger_footfall), 0)).scalar() or 0,
+            "earningsTotal": contract_earnings.with_entities(func.coalesce(func.sum(Earning.amount), 0)).scalar() or 0,
+            "footfall": session.query(func.coalesce(func.sum(Station.passenger_footfall), 0)).filter(*commercial_station_filter).scalar() or 0,
             "topStations": [
                 {"station_code": code, "station_name": name, "works": works}
                 for code, name, works in session.execute(
                     select(Station.station_code, Station.station_name, func.count(WorkLink.id).label("works"))
                     .join(WorkLink, WorkLink.station_code == Station.station_code, isouter=True)
+                    .where(*commercial_station_filter)
                     .group_by(Station.station_code, Station.station_name, Station.passenger_footfall)
                     .order_by(func.count(WorkLink.id).desc(), Station.passenger_footfall.desc().nullslast())
                     .limit(8)
@@ -1178,10 +1285,17 @@ def list_works(q: str | None = None, scope_type: str | None = None, station_code
         session.close()
 
 
-def list_earnings(q: str | None = None, unit_no: str | None = None, station_code: str | None = None) -> list[dict[str, Any]]:
+def list_earnings(
+    q: str | None = None,
+    unit_no: str | None = None,
+    station_code: str | None = None,
+    include_tender_emd: bool = False,
+) -> list[dict[str, Any]]:
     session = SessionLocal()
     try:
         query = session.query(Earning, EarningLink, Unit.station_category, Unit.unit_status, Unit.type_of_unit, Station.station_name, Station.division, Station.section, Station.categorisation).join(EarningLink, EarningLink.receipt_key == Earning.receipt_key, isouter=True).join(Unit, Unit.unit_no == Earning.unit_no, isouter=True).join(Station, Station.station_code == func.coalesce(Earning.station_code, Unit.station_code), isouter=True)
+        if not include_tender_emd:
+            query = query.filter((Earning.earning_scope.is_(None)) | (Earning.earning_scope != "tender_emd"))
         if q:
             like = f"%{q}%"
             query = query.filter(
@@ -1440,20 +1554,24 @@ def get_station_detail(station_code: str) -> dict[str, Any] | None:
             )
             return enriched
 
-        contracts = [
-            with_validity({
+        contracts = []
+        for unit in units:
+            available = is_available_unit(unit)
+            unit_earnings = [] if available else earnings_by_unit.get(unit.get("unit_no"), [])
+            enriched = {
                 **unit,
-                "licensee_name": unit.get("licensee_name") or next(
-                    (row.get("licensee_name") for row in earnings_by_unit.get(unit.get("unit_no"), []) if clean(row.get("licensee_name"))),
+                "unit_status": "Available" if available else unit.get("unit_status"),
+                "availability_remarks": unit.get("remarks") or (unit.get("unit_status") if available else None),
+                "licensee_name": None if available else unit.get("licensee_name") or next(
+                    (row.get("licensee_name") for row in unit_earnings if clean(row.get("licensee_name"))),
                     None,
                 ),
-                "earnings": earnings_by_unit.get(unit.get("unit_no"), []),
-                "earnings_total": sum(to_money(row.get("amount")) for row in earnings_by_unit.get(unit.get("unit_no"), [])),
-                "payment_total": sum(to_money(row.get("amount")) for row in earnings_by_unit.get(unit.get("unit_no"), [])),
-                "pending_receipts": sum(1 for row in earnings_by_unit.get(unit.get("unit_no"), []) if "pending" in normalize(row.get("receipt_type"))),
-            }, ("contract_from",), ("contract_to",))
-            for unit in units
-        ]
+                "earnings": unit_earnings,
+                "earnings_total": sum(to_money(row.get("amount")) for row in unit_earnings),
+                "payment_total": sum(to_money(row.get("amount")) for row in unit_earnings),
+                "pending_receipts": sum(1 for row in unit_earnings if "pending" in normalize(row.get("receipt_type"))),
+            }
+            contracts.append(with_validity(enriched, ("contract_from",), ("contract_to",)))
 
         works = list_works(station_code=code)
         commercial_contracts = list_commercial_contracts(station_code=code)
@@ -1543,7 +1661,9 @@ def get_reports(today: date | None = None) -> dict[str, Any]:
     try:
         stations = session.query(Station).all()
         units = session.query(Unit, Station.station_name, Station.division, Station.section).join(Station, Station.station_code == Unit.station_code, isouter=True).all()
-        earnings = session.query(Earning).all()
+        earnings = session.query(Earning).filter(
+            (Earning.earning_scope.is_(None)) | (Earning.earning_scope != "tender_emd")
+        ).all()
         works = session.query(Work, WorkLink, Station.station_name).join(WorkLink, WorkLink.project_id == Work.project_id, isouter=True).join(Station, Station.station_code == WorkLink.station_code, isouter=True).all()
 
         by_unit: dict[str, list[Earning]] = {}
@@ -1636,6 +1756,8 @@ def get_reports(today: date | None = None) -> dict[str, Any]:
                 if (parsed := parse_date_value(row.period_to or row.date_of_receipt or row.mr_date))
                 and "pending" not in normalize(row.receipt_type)
             ]
+            if sheet_paid_upto := parse_date_value(unit.paid_upto):
+                paid_through_values.append(sheet_paid_upto)
             last_paid_through = max(paid_through_values) if paid_through_values else None
             contract_to = parse_date_value(unit.contract_to)
             license_fee_amount = to_money(unit.license_fee)

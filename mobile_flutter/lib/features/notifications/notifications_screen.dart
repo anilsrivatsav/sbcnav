@@ -122,6 +122,20 @@ class _NotificationRow extends StatelessWidget {
                 children: [
                   Text('${row['title']}',
                       style: const TextStyle(fontWeight: FontWeight.w900)),
+                  if (row['station_code'] != null ||
+                      row['contract_code'] != null) ...[
+                    const SizedBox(height: 5),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: [
+                        if (row['station_code'] != null)
+                          StatusBadge('${row['station_code']}'),
+                        if (row['contract_code'] != null)
+                          StatusBadge('${row['contract_code']}', tone: color),
+                      ],
+                    ),
+                  ],
                   const SizedBox(height: 4),
                   Text('${row['body']}'),
                 ],

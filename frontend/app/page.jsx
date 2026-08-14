@@ -30,12 +30,18 @@ import { BottomSheet, DataTable } from "../components/ui";
 import { Station360 } from "../components/station-360";
 import { StationQuickView } from "../components/station-quick-view";
 import { ReportTemplatesPanel } from "../components/reports/report-templates-panel";
-import { API_URL, aiQueryUrl, commercialContractDetailUrl, fetchJson, importCommercialContractsUrl, importPassengerAmenitiesUrl, importPfExtensionUrl, importSanctionedWorksUrl, stationDetailUrl } from "../lib/api";
+import { API_URL, aiQueryUrl, cateringSyncUrl, commercialContractDetailUrl, fetchJson, importCommercialContractsUrl, importPassengerAmenitiesUrl, importPfExtensionUrl, importSanctionedWorksUrl, stationDetailUrl } from "../lib/api";
 import { reportTemplates, templateFilterState, templatePreset } from "../lib/report-templates";
 import { useRailDashboardData } from "../hooks/use-rail-dashboard-data";
 
 const money = (value) => `INR ${Number(value || 0).toLocaleString("en-IN")}`;
 const pretty = (value) => (value === null || value === undefined || value === "" ? "NA" : String(value));
+const isAvailableUnit = (unit = {}) => {
+  if (String(unit.unit_status || "").trim().toLowerCase() === "available") return true;
+  return !String(unit.licensee_name || "").trim()
+    && !String(unit.contract_from || "").trim()
+    && !String(unit.contract_to || "").trim();
+};
 const toNumber = (value) => Number(value || 0);
 const cx = (...classes) => classes.filter(Boolean).join(" ");
 const normalizeText = (value) => pretty(value).toLowerCase().replace(/[–—]/g, "-").replace(/\s+/g, " ").trim();
@@ -80,6 +86,34 @@ const contractRisk = (value) => {
 };
 const monthKey = (value) => compactDate(value).slice(0, 7);
 const htmlEscape = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
+const workReportSection = (row) => {
+  const text = pretty(row.section).toLowerCase().trim();
+  if (text.includes("north")) return "North";
+  if (text.includes("south")) return "South";
+  if (text.includes("east")) return "East";
+  if (text.includes("west")) return "West";
+  if (text === "div" || text.includes("division")) return "Division";
+  if (text.includes("cao/cn") || text.includes("cao cn")) return "CAO/CN";
+  if (text.includes("sr.dcm") || text.includes("sr dcm")) return "Sr.DCM";
+  if (text.includes("sr.dste") || text.includes("sr dste")) return "Sr.DSTE";
+  if (text.includes("sdee")) return "SDEE";
+  if (text.includes("gsu") || text.includes("gati sakthi")) return "GSU/SBC";
+  return pretty(row.section) === "NA" ? "Other" : pretty(row.section);
+};
+const workReportType = (row) => {
+  const text = normalizeText(`${row.short_name_of_work || ""} ${row.work_name || ""} ${row.remarks || ""} ${row.category || ""} ${row.parent_work || ""} ${row.block_section_station || ""} ${row.scope_type || ""} ${row.scope_value || ""} ${row.match_status || ""} ${row.section || ""}`);
+  const scope = normalizeText(`${row.scope_type || ""} ${row.scope_value || ""} ${row.match_status || ""} ${row.block_section_station || ""}`);
+  if (scope.includes("abss")) return "ABSS works";
+  if (text.includes("cao/cn") || text.includes("cao cn")) return "CAO/CN works";
+  if (text.includes("goods") || text.includes("csgr") || text.includes("goods shed")) return "Goods / CSGR works";
+  if (text.includes("fob") || text.includes("foot over")) return "FOB works";
+  if (text.includes("platform shelter") || text.includes("shelter")) return "Platform shelter works";
+  if (text.includes("platform") || text.includes("pf ext") || text.includes("raising")) return "Platform extension works";
+  if (text.includes("divyang") || text.includes("ramp") || text.includes("accessible") || text.includes("lift")) return "Divyangjan works";
+  if (text.includes("toilet") || text.includes("water") || text.includes("waiting hall") || text.includes("amenit")) return "Passenger amenity works";
+  return "Other works";
+};
+const workDeletionRecommended = (row) => /proposal dropped|proposed for deletion|recommended for deletion|work deleted|deletion recommended/i.test(`${row.remarks || ""} ${row.engg_remarks || ""} ${row.status || ""}`);
 
 const buttonClasses = {
   primary: "border border-accent bg-accent text-white shadow-raised hover:bg-accentStrong active:shadow-pressed",
@@ -503,6 +537,7 @@ export default function Page() {
       { name: "licensee_name", label: "Licensee Name" },
       { name: "license_fee", label: "License Fee" },
       { name: "unit_status", label: "Unit Status" },
+      { name: "remarks", label: "Remarks" },
       { name: "contract_from", label: "Contract From" },
       { name: "contract_to", label: "Contract To" },
       { name: "pf_no", label: "PF No." },
@@ -609,6 +644,8 @@ export default function Page() {
   });
   const [reportPresets, setReportPresets] = useState([]);
   const [reportPresetName, setReportPresetName] = useState("");
+  const [reportWorkSection, setReportWorkSection] = useState("All");
+  const [reportWorkType, setReportWorkType] = useState("All");
   const [drillDown, setDrillDown] = useState({ open: false, title: "", rows: [], columns: [], type: null });
   const [filters, setFilters] = useState({
     stationCategory: "All",
@@ -638,6 +675,7 @@ export default function Page() {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiResult, setAiResult] = useState(null);
   const [aiError, setAiError] = useState("");
+  const [cateringSyncResult, setCateringSyncResult] = useState(null);
 
   const aiSuggestions = [
     "Tell me everything about KSM",
@@ -662,6 +700,26 @@ export default function Page() {
       setActivityStatus(`Passenger Amenity data imported: ${total} rows`);
     } catch (error) {
       setActivityStatus(error?.message || "Passenger Amenity import failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const syncCateringData = async () => {
+    setLoading(true);
+    setCateringSyncResult(null);
+    setActivityStatus("Validating and synchronizing catering units and receipts...");
+    try {
+      const result = await fetchJson(cateringSyncUrl(), { method: "POST" });
+      setCateringSyncResult(result);
+      await loadFromDb();
+      const source = result?.source || {};
+      const applied = result?.applied || {};
+      setActivityStatus(`Catering synchronized: ${source.units || 0} units, ${source.earnings || 0} unique receipts, ${source.duplicate_earning_rows || 0} duplicates removed`);
+      return applied;
+    } catch (error) {
+      setActivityStatus(error?.message || "Catering synchronization failed");
+      return null;
     } finally {
       setLoading(false);
     }
@@ -856,7 +914,7 @@ export default function Page() {
   const filteredUnits = useMemo(() => {
     const q = search.units;
     return units.filter((row) => {
-      const searchOk = matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "unit_status", "station_category", "type_of_unit", "pf_no"], q);
+      const searchOk = matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "unit_status", "remarks", "station_category", "type_of_unit", "pf_no"], q);
       const catOk = sameFilterValue(row.station_category, filters.unitCategory);
       const typeOk = sameFilterValue(row.type_of_unit, filters.unitType);
       const statusOk = sameFilterValue(row.unit_status, filters.unitStatus);
@@ -872,7 +930,7 @@ export default function Page() {
   const filteredContracts = useMemo(() => {
     const q = search.contracts || "";
     return {
-      units: units.filter((row) => matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "unit_status", "station_category", "type_of_unit", "pf_no"], q)),
+      units: units.filter((row) => matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "unit_status", "remarks", "station_category", "type_of_unit", "pf_no"], q)),
       earnings: earnings.filter((row) => matchesQuery(row, ["unit_no", "station_code", "licensee_name", "payment_head", "payment_sub_head", "receipt_type", "mr_no", "amount"], q)),
     };
   }, [units, earnings, search.contracts]);
@@ -965,7 +1023,7 @@ export default function Page() {
   const filteredReportUnits = useMemo(() => {
     const q = search.reports;
     return units.filter((row) => {
-      const textOk = matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "type_of_unit", "unit_status", "station_category"], q);
+      const textOk = matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "type_of_unit", "unit_status", "remarks", "station_category"], q);
       const actionOk = !reportFilters.needsActionOnly || !row.license_fee || !row.station_code || !/active/i.test(pretty(row.unit_status));
       return textOk && actionOk && matchesReportScope(row) && matchesReportDate(row, ["contract_to", "contract_from"]);
     });
@@ -985,9 +1043,17 @@ export default function Page() {
     return works.filter((row) => {
       const textOk = matchesQuery(row, ["project_id", "source_project_id", "source_sn", "short_name_of_work", "station_code", "section", "status", "scope_type", "scope_value", "allocation"], q);
       const actionOk = !reportFilters.needsActionOnly || !/complete|done/i.test(pretty(row.status));
-      return textOk && actionOk && matchesReportScope(row) && matchesReportDate(row, ["date_of_sanction"]);
-    });
-  }, [works, search.reports, reportFilters, stationByCode]);
+      const sectionOk = reportWorkSection === "All" || workReportSection(row) === reportWorkSection;
+      const typeOk = reportWorkType === "All" || workReportType(row) === reportWorkType;
+      return textOk && actionOk && sectionOk && typeOk && matchesReportScope(row) && matchesReportDate(row, ["date_of_sanction"]);
+    }).map((row, index) => ({
+      ...row,
+      sl_no: row.source_sn || index + 1,
+      report_section: workReportSection(row),
+      report_group: workReportType(row),
+      deletion_recommended: workDeletionRecommended(row),
+    }));
+  }, [works, search.reports, reportFilters, stationByCode, reportWorkSection, reportWorkType]);
 
   const filteredReportCommercial = useMemo(() => {
     const q = search.reports;
@@ -1010,7 +1076,7 @@ export default function Page() {
         unique.set(row.key, { ...row, days_remaining: days });
       }
     };
-    units.forEach((row) => add({
+    units.filter((row) => !isAvailableUnit(row)).forEach((row) => add({
       ...row,
       key: `unit:${pretty(row.station_code)}:${pretty(row.unit_no)}`,
       source_type: "unit",
@@ -1111,13 +1177,15 @@ export default function Page() {
   ];
   const unitColumns = [
     { key: "unit_no", label: "Unit", value: (row) => pretty(row.unit_no), render: (row) => <span className="font-black text-blue">{pretty(row.unit_no)}</span> },
-    { key: "licensee_name", label: "Licensee", value: (row) => pretty(row.licensee_name), render: (row) => <span className="font-semibold text-ink">{pretty(row.licensee_name)}</span> },
+    { key: "licensee_name", label: "Licensee", value: (row) => isAvailableUnit(row) ? "Available unit" : pretty(row.licensee_name), render: (row) => <span className="font-semibold text-ink">{isAvailableUnit(row) ? "Available unit" : pretty(row.licensee_name)}</span> },
     { key: "station_code", label: "Station" },
     { key: "type_of_unit", label: "Type" },
     { key: "station_category", label: "Category" },
     { key: "license_fee", label: "Fee" },
-    { key: "contract_to", label: "Validity Risk", value: (row) => contractRisk(row.valid_to || row.contract_to).label, render: (row) => { const risk = contractRisk(row.valid_to || row.contract_to); return <Badge tone={risk.tone}>{risk.label}</Badge>; } },
-    { key: "unit_status", label: "Status", value: (row) => pretty(row.unit_status), render: (row) => <Badge tone={/active/i.test(pretty(row.unit_status)) ? "accent" : "neutral"}>{pretty(row.unit_status)}</Badge> },
+    { key: "paid_upto", label: "Paid Upto" },
+    { key: "contract_to", label: "Validity Risk", value: (row) => isAvailableUnit(row) ? "Not allotted" : contractRisk(row.valid_to || row.contract_to).label, render: (row) => { if (isAvailableUnit(row)) return <Badge tone="neutral">Not allotted</Badge>; const risk = contractRisk(row.valid_to || row.contract_to); return <Badge tone={risk.tone}>{risk.label}</Badge>; } },
+    { key: "unit_status", label: "Status", value: (row) => isAvailableUnit(row) ? "Available" : pretty(row.unit_status), render: (row) => <Badge tone={isAvailableUnit(row) || /active/i.test(pretty(row.unit_status)) ? "accent" : "neutral"}>{isAvailableUnit(row) ? "Available" : pretty(row.unit_status)}</Badge> },
+    { key: "remarks", label: "Remarks", value: (row) => pretty(row.remarks), render: (row) => <span className="text-sm text-muted">{pretty(row.remarks)}</span> },
   ];
   const earningColumns = [
     { key: "unit_no", label: "Unit", value: (row) => pretty(row.unit_no), render: (row) => <span className="font-black text-blue">{pretty(row.unit_no)}</span> },
@@ -1138,6 +1206,14 @@ export default function Page() {
     { key: "section", label: "Section" },
     { key: "cost", label: "Cost", value: (row) => row.cost || 0, render: (row) => <span className="font-semibold">{money(row.cost)}</span> },
     { key: "physical_progress", label: "Physical" },
+  ];
+  const reportWorkColumns = [
+    { key: "sl_no", label: "Sl.no" },
+    { key: "project_id", label: "PID", value: (row) => pretty(row.project_id || row.source_project_id), render: (row) => <span className="font-black text-blue">{pretty(row.project_id || row.source_project_id)}</span> },
+    { key: "date_of_sanction", label: "Date of Sanction" },
+    { key: "short_name_of_work", label: "Name of work", value: (row) => pretty(row.short_name_of_work), render: (row) => <div className="space-y-1"><span className="line-clamp-2 font-medium text-ink">{pretty(row.short_name_of_work)}</span>{row.deletion_recommended ? <Badge tone="danger">Deletion recommended</Badge> : null}</div> },
+    { key: "cost", label: "Cost", value: (row) => row.cost || 0, render: (row) => <span className="font-semibold">{money(row.cost)}</span> },
+    { key: "remarks", label: "Remarks", render: (row) => <div className="max-w-md line-clamp-3">{pretty(row.remarks)}</div> },
   ];
   const commercialContractColumns = [
     { key: "contract_name", label: "Contract", value: (row) => pretty(row.contract_name), render: (row) => <span className="font-black text-blue">{pretty(row.contract_name)}</span> },
@@ -1310,7 +1386,7 @@ export default function Page() {
     if (reportTab === "units") return { rows: filteredReportUnits, columns: unitColumns, fileName: "unit-report.xls" };
     if (reportTab === "earnings") return { rows: filteredReportEarnings, columns: earningColumns, fileName: "earnings-report.xls" };
     if (reportTab === "commercial") return { rows: filteredReportCommercial, columns: commercialContractColumns, fileName: "commercial-contracts-report.xls" };
-    if (reportTab === "works") return { rows: filteredReportWorks, columns: workColumns, fileName: "works-report.xls" };
+    if (reportTab === "works") return { rows: filteredReportWorks, columns: reportWorkColumns, fileName: "works-report.xls" };
     if (reportTab === "actions") return { rows: reportActionRows, columns: actionColumns, fileName: "needs-action-report.xls" };
     if (reportTab === "quality") return { rows: qualityRows, columns: qualityColumns, fileName: "quality-report.xls" };
     if (reportTab === "alerts") return { rows: filteredReportAlerts, columns: alertColumns, fileName: "license-fee-alerts.xls" };
@@ -1448,7 +1524,7 @@ export default function Page() {
     return {
       station,
       contracts: stationUnits.map((unit) => {
-        const unitEarnings = earnings.filter((row) => pretty(row.unit_no) === pretty(unit.unit_no));
+        const unitEarnings = isAvailableUnit(unit) ? [] : earnings.filter((row) => pretty(row.unit_no) === pretty(unit.unit_no));
         return { ...unit, earnings: unitEarnings, earnings_total: unitEarnings.reduce((sum, row) => sum + Number(row.amount || 0), 0), pending_receipts: unitEarnings.filter((row) => /pending/i.test(pretty(row.receipt_type))).length };
       }),
       units: stationUnits,
@@ -1525,12 +1601,16 @@ export default function Page() {
 
   const openUnit = (unit) => {
     const no = unit.unit_no;
+    const unitEarnings = isAvailableUnit(unit) ? [] : earnings.filter((row) => pretty(row.unit_no) === pretty(no));
+    const latestReceipt = [...unitEarnings].sort((left, right) => pretty(right.date_of_receipt).localeCompare(pretty(left.date_of_receipt)))[0];
     setModal({
       open: true,
       type: "unit",
       record: {
         unit,
-        earnings: earnings.filter((row) => pretty(row.unit_no) === pretty(no)),
+        earnings: unitEarnings,
+        earningsTotal: unitEarnings.reduce((sum, row) => sum + Number(row.amount || 0), 0),
+        latestReceipt,
       },
     });
   };
@@ -1856,11 +1936,12 @@ export default function Page() {
             </Button>
             <Button
               variant="secondary"
-              onClick={() => view === "commercial" ? importCommercialContractsWorkbook() : view === "works" ? importSanctionedWorks() : setImportModal({ open: true, resource: view === "dashboard" || view === "amenities" ? "stations" : view === "contracts" ? "units" : view, csvText: "", url: "", result: null })}
+              onClick={() => view === "contracts" ? syncCateringData() : view === "commercial" ? importCommercialContractsWorkbook() : view === "works" ? importSanctionedWorks() : setImportModal({ open: true, resource: view === "dashboard" || view === "amenities" ? "stations" : view, csvText: "", url: "", result: null })}
               className="w-full text-accent"
+              disabled={loading}
             >
-              <UploadCloud size={16} />
-              {view === "commercial" ? "Import Contracts XLSX" : view === "works" ? "Fetch Sanctioned Works" : "Import CSV"}
+              {view === "contracts" ? <RefreshCw size={16} className={loading ? "animate-spin" : ""} /> : <UploadCloud size={16} />}
+              {view === "contracts" ? "Sync Catering Sheet" : view === "commercial" ? "Import Contracts XLSX" : view === "works" ? "Fetch Sanctioned Works" : "Import CSV"}
             </Button>
             <Button
               variant="secondary"
@@ -1987,7 +2068,24 @@ export default function Page() {
                 <Card icon={CircleAlert} label="Pending Payments" value={filteredContracts.earnings.filter((row) => /pending/i.test(pretty(row.receipt_type))).length} subtext="Receipts marked pending" />
                 <Card icon={TrendingUp} label="Revenue" value={money(filteredContracts.earnings.reduce((sum, row) => sum + Number(row.amount || 0), 0))} subtext="Visible contract payments" />
               </div>
-              <Panel title="Contracts Workspace" subtitle="Catering units are the contract records. Payments and earnings are reviewed inside the unit/contract context.">
+              <Panel
+                title="Contracts Workspace"
+                subtitle="Catering units are the contract records. Payments and earnings are reviewed inside the unit/contract context."
+                action={
+                  <Button size="sm" onClick={syncCateringData} disabled={loading}>
+                    <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
+                    Refresh catering data
+                  </Button>
+                }
+              >
+                {cateringSyncResult ? (
+                  <div className="soft-inset mb-4 grid gap-2 rounded-lg border border-line p-3 text-xs text-muted sm:grid-cols-2 lg:grid-cols-4">
+                    <div><span className="font-black text-ink">{cateringSyncResult.source?.units || 0}</span> units</div>
+                    <div><span className="font-black text-ink">{cateringSyncResult.source?.earnings || 0}</span> unique receipts</div>
+                    <div><span className="font-black text-ink">{cateringSyncResult.source?.duplicate_earning_rows || 0}</span> duplicates removed</div>
+                    <div><span className="font-black text-ink">{cateringSyncResult.reconciliation?.linked_earning_rows || 0}</span> unit-linked receipts</div>
+                  </div>
+                ) : null}
                 <Tabs tabs={contractTabs} value={contractTab} onChange={setContractTab} />
                 <div className="mt-4">
                   <DataTable
@@ -2311,7 +2409,7 @@ export default function Page() {
               ) : null}
 
               {reportTab === "works" ? (
-                <Panel title="Works Reports" subtitle="Status, scope, section, and station-wise work load">
+                <Panel title="Works Reports" subtitle="Filter the sanctioned register by section or work category. Click a row for the complete record.">
                   <KeyValueGrid
                     rows={[
                       ["Total Works", reports?.works?.total ?? 0],
@@ -2319,14 +2417,46 @@ export default function Page() {
                       ["Pending/Open", reports?.works?.pending ?? 0],
                     ]}
                   />
-                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                    <div className="soft-inset rounded-lg border border-line p-3">
+                      <div className="mb-2 text-[11px] font-black uppercase tracking-[0.16em] text-muted">Sections</div>
+                      <div className="flex flex-wrap gap-2">
+                        {["All", ...Array.from(new Set(works.map(workReportSection))).sort()].map((value) => (
+                          <button key={value} type="button" onClick={() => setReportWorkSection(value)} className={cx("rounded-full border px-3 py-2 text-xs font-black transition", reportWorkSection === value ? "border-accent bg-accent text-white" : "soft-control text-ink hover:border-accent")}>
+                            {value}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="soft-inset rounded-lg border border-line p-3">
+                      <div className="mb-2 text-[11px] font-black uppercase tracking-[0.16em] text-muted">Work categories</div>
+                      <div className="flex flex-wrap gap-2">
+                        {["All", ...Array.from(new Set(works.map(workReportType))).sort()].map((value) => (
+                          <button key={value} type="button" onClick={() => setReportWorkType(value)} className={cx("rounded-full border px-3 py-2 text-xs font-black transition", reportWorkType === value ? "border-accent bg-accent text-white" : "soft-control text-ink hover:border-accent")}>
+                            {value}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-4">
+                    <DataTable
+                      columns={reportWorkColumns}
+                      rows={filteredReportWorks}
+                      getKey={(row, index) => `${pretty(row.project_id)}-${index}`}
+                      onRowClick={openWork}
+                      emptyTitle="No works match the selected section and category."
+                      fileName="works-report-visible.xls"
+                    />
+                  </div>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
                     <ReportList
                       rows={(reports?.works?.by_status || []).slice(0, 7)}
-                      onSelect={(row) => openDrillDown(`Works: ${row.label}`, filteredReportWorks.filter((work) => pretty(work.status) === pretty(row.label)), workColumns, "works")}
+                      onSelect={(row) => openDrillDown(`Works: ${row.label}`, filteredReportWorks.filter((work) => pretty(work.status) === pretty(row.label)), reportWorkColumns, "works")}
                     />
                     <ReportList
                       rows={(reports?.works?.by_scope || []).slice(0, 7)}
-                      onSelect={(row) => openDrillDown(`Works by scope: ${row.label}`, filteredReportWorks.filter((work) => pretty(work.scope_type || work.block_section_station) === pretty(row.label)), workColumns, "works")}
+                      onSelect={(row) => openDrillDown(`Works by scope: ${row.label}`, filteredReportWorks.filter((work) => pretty(work.scope_type || work.block_section_station) === pretty(row.label)), reportWorkColumns, "works")}
                     />
                   </div>
                 </Panel>
@@ -2695,18 +2825,25 @@ export default function Page() {
             <KeyValueGrid
               rows={[
                 ["Unit No.", modal.record.unit.unit_no],
-                ["Licensee", modal.record.unit.licensee_name],
+                ["Licensee", isAvailableUnit(modal.record.unit) ? "Not allotted" : modal.record.unit.licensee_name],
                 ["Station Code", modal.record.unit.station_code],
                 ["Station Name", modal.record.unit.station_name],
                 ["Category", modal.record.unit.station_category],
                 ["Type", modal.record.unit.type_of_unit],
                 ["Status", modal.record.unit.unit_status],
+                ["Remarks", modal.record.unit.remarks],
                 ["License Fee", modal.record.unit.license_fee],
                 ["Contract From", modal.record.unit.contract_from],
                 ["Contract To", modal.record.unit.contract_to],
+                ["Paid Upto", modal.record.unit.paid_upto],
+                ...(!isAvailableUnit(modal.record.unit) ? [
+                  ["Total Recorded Earnings", money(modal.record.earningsTotal)],
+                  ["Latest Receipt", modal.record.latestReceipt?.date_of_receipt],
+                  ["Latest Paid Period", modal.record.latestReceipt?.period_to],
+                ] : []),
               ]}
             />
-            <Panel title="Linked Earnings" subtitle="Earnings rows linked by unit number">
+            {!isAvailableUnit(modal.record.unit) ? <Panel title="Linked Earnings" subtitle="Earnings rows linked by unit number">
               <div className="space-y-2">
                 {modal.record.earnings.length ? modal.record.earnings.map((row) => (
                   <button key={row.earning_key || `${row.unit_no}-${row.date_of_receipt}`} type="button" onClick={() => openEarning(row)} className="soft-raised flex w-full items-start justify-between gap-3 rounded-lg border border-line px-3 py-3 text-left hover:border-accent">
@@ -2718,7 +2855,7 @@ export default function Page() {
                   </button>
                 )) : <div className="text-sm text-muted">No linked earnings found.</div>}
               </div>
-            </Panel>
+            </Panel> : null}
           </div>
         ) : modal.type === "earning" ? (
           <div className="space-y-4">
@@ -2731,7 +2868,10 @@ export default function Page() {
               rows={[
                 ["Receipt Key", modal.record.earning.receipt_key],
                 ["Unit No.", modal.record.earning.unit_no],
+                ["Source Unit Label", modal.record.earning.raw_unit_no],
                 ["Station Code", modal.record.earning.station_code],
+                ["Source Station", modal.record.earning.raw_station_code],
+                ["Earning Scope", modal.record.earning.earning_scope],
                 ["Licensee", modal.record.earning.licensee_name],
                 ["Receipt Type", modal.record.earning.receipt_type],
                 ["Payment Head", modal.record.earning.payment_head],
@@ -2744,6 +2884,8 @@ export default function Page() {
                 ["MR No.", modal.record.earning.mr_no],
                 ["MR Date", modal.record.earning.mr_date],
                 ["UA Case", modal.record.earning.ua_case],
+                ["Source Rows", modal.record.earning.source_rows],
+                ["Duplicate Count", modal.record.earning.duplicate_count],
               ]}
             />
           </div>

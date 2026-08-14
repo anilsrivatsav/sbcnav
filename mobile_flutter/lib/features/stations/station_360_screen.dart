@@ -3,7 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/local/app_database.dart';
 import '../../data/remote/mobile_api.dart';
+import '../../data/sync/sync_service.dart';
 import '../../shared/widgets.dart';
+import '../findings/findings_screen.dart';
 import '../inspections/start_station_inspection.dart';
 import 'station_presentation.dart';
 
@@ -34,6 +36,17 @@ class _StationDetailBottomSheetState
   void initState() {
     super.initState();
     _detail = _load();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _refreshCachedDetail());
+  }
+
+  Future<void> _refreshCachedDetail() async {
+    try {
+      final fresh = await _load(preferCache: false);
+      if (!mounted) return;
+      setState(() => _detail = Future.value(fresh));
+    } catch (_) {
+      // Cached station details remain available when the device is offline.
+    }
   }
 
   Future<Map<String, dynamic>> _load({bool preferCache = true}) async {
@@ -98,6 +111,17 @@ class _Station360ScreenState extends ConsumerState<Station360Screen> {
   void initState() {
     super.initState();
     _detail = _load();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _refreshCachedDetail());
+  }
+
+  Future<void> _refreshCachedDetail() async {
+    try {
+      final fresh = await _load(preferCache: false);
+      if (!mounted) return;
+      setState(() => _detail = Future.value(fresh));
+    } catch (_) {
+      // Cached station details remain available when the device is offline.
+    }
   }
 
   Future<Map<String, dynamic>> _load({bool preferCache = true}) async {
@@ -151,7 +175,15 @@ class _Station360ScreenState extends ConsumerState<Station360Screen> {
   }
 }
 
-class _StationProfile extends StatelessWidget {
+enum _StationWorkspace {
+  overview,
+  amenities,
+  contracts,
+  works,
+  inspection,
+}
+
+class _StationProfile extends ConsumerStatefulWidget {
   const _StationProfile({
     required this.detail,
     required this.fallbackCode,
@@ -165,7 +197,15 @@ class _StationProfile extends StatelessWidget {
   final ValueChanged<String> onStartInspection;
 
   @override
+  ConsumerState<_StationProfile> createState() => _StationProfileState();
+}
+
+class _StationProfileState extends ConsumerState<_StationProfile> {
+  _StationWorkspace _workspace = _StationWorkspace.overview;
+
+  @override
   Widget build(BuildContext context) {
+    final detail = widget.detail;
     final rawStation =
         _map(detail['station']).isEmpty ? detail : _map(detail['station']);
     // The Stations source sheet is authoritative for officer assignments.
@@ -184,9 +224,16 @@ class _StationProfile extends StatelessWidget {
     final norms = _list(amenities['norms']).isNotEmpty
         ? _list(amenities['norms'])
         : _list(detail['norms']);
-    final amenityGroups = buildAmenityCategories(station, amenities);
     final fobAccess = _fobAccessModes(amenities);
-    final code = cleanText(station['station_code'], fallback: fallbackCode);
+    final amenityGroups = {
+      for (final entry in buildAmenityCategories(station, amenities).entries)
+        entry.key: entry.value
+            .where((item) =>
+                fobAccess.isEmpty || item.label.toLowerCase() != 'fob')
+            .toList(),
+    };
+    final code =
+        cleanText(station['station_code'], fallback: widget.fallbackCode);
     final name =
         cleanText(station['station_name'], fallback: 'Unnamed station');
     final section = cleanText(station['section']);
@@ -202,11 +249,26 @@ class _StationProfile extends StatelessWidget {
       stationPlatforms: station['platforms'],
       declaredPlatforms: station['number_of_platforms'],
     );
+    final passengerAmenityRecordCount =
+        amenityGroups.values.fold<int>(0, (sum, rows) => sum + rows.length) +
+            totalPlatforms +
+            norms.length +
+            (fobAccess.isEmpty ? 0 : 1);
+    final availableWorkspaces = <_StationWorkspace>[
+      _StationWorkspace.overview,
+      _StationWorkspace.amenities,
+      if (contracts.isNotEmpty) _StationWorkspace.contracts,
+      if (works.isNotEmpty) _StationWorkspace.works,
+      _StationWorkspace.inspection,
+    ];
+    final selectedWorkspace = availableWorkspaces.contains(_workspace)
+        ? _workspace
+        : _StationWorkspace.overview;
 
     return CustomScrollView(
       slivers: [
         SliverAppBar(
-          expandedHeight: 300,
+          expandedHeight: 248,
           pinned: true,
           stretch: true,
           backgroundColor: const Color(0xFF143D8F),
@@ -222,7 +284,7 @@ class _StationProfile extends StatelessWidget {
           actions: [
             _HeroButton(
               icon: Icons.refresh_rounded,
-              onTap: onRefresh,
+              onTap: widget.onRefresh,
               tooltip: 'Refresh',
             ),
             const SizedBox(width: 14),
@@ -319,83 +381,123 @@ class _StationProfile extends StatelessWidget {
                     division: cleanText(station['division']),
                   ),
                   const SizedBox(height: 16),
-                  _StationDetails(station: station, amenities: amenities),
-                  const SizedBox(height: 24),
-                  _SectionHeading(
-                    title: 'Passenger amenities',
-                    count: amenityGroups.values
-                        .fold<int>(0, (sum, rows) => sum + rows.length),
+                  _StationWorkspaceNav(
+                    selected: selectedWorkspace,
+                    available: availableWorkspaces,
+                    counts: {
+                      _StationWorkspace.amenities: passengerAmenityRecordCount,
+                      _StationWorkspace.contracts: contracts.length,
+                      _StationWorkspace.works: works.length,
+                    },
+                    onSelected: (value) => setState(() => _workspace = value),
                   ),
-                  const SizedBox(height: 12),
-                  _AmenityGrid(groups: amenityGroups),
-                  if (fobAccess.isNotEmpty) ...[
-                    const SizedBox(height: 16),
-                    _FobAccessCard(modes: fobAccess),
-                  ],
-                  if (norms.isNotEmpty) ...[
-                    const SizedBox(height: 16),
-                    _NormsCard(norms: norms),
-                  ],
-                  const SizedBox(height: 25),
-                  _SectionHeading(
-                    title: 'Platforms',
-                    count: totalPlatforms,
-                  ),
-                  const SizedBox(height: 12),
-                  _PlatformList(
-                    platforms: platforms,
-                    stationLevel: station['platform_type'],
-                  ),
-                  const SizedBox(height: 25),
-                  if (contracts.isNotEmpty) ...[
-                    _SectionHeading(
-                      title: 'Contracts',
-                      count: contracts.length,
-                    ),
-                    const SizedBox(height: 12),
-                    _ContractList(contracts: contracts),
-                    const SizedBox(height: 25),
-                  ],
-                  if (works.isNotEmpty) ...[
-                    _SectionHeading(
-                      title: 'Sanctioned works',
-                      count: works.length,
-                    ),
-                    const SizedBox(height: 12),
-                    _WorkList(works: works),
-                  ],
-                  const SizedBox(height: 26),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 58,
-                    child: FilledButton.icon(
-                      onPressed: () => onStartInspection(code),
-                      icon: const Icon(Icons.fact_check_outlined),
-                      label: const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            'Start inspection',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                          SizedBox(width: 12),
-                          Icon(Icons.arrow_forward_rounded),
-                        ],
+                  const SizedBox(height: 20),
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 260),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    transitionBuilder: (child, animation) => FadeTransition(
+                      opacity: animation,
+                      child: SlideTransition(
+                        position: Tween<Offset>(
+                          begin: const Offset(0.025, 0),
+                          end: Offset.zero,
+                        ).animate(animation),
+                        child: child,
                       ),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFF1C54C7),
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(17),
+                    ),
+                    child: switch (selectedWorkspace) {
+                      _StationWorkspace.overview => _StationOverviewWorkspace(
+                          key: const ValueKey('overview'),
+                          station: station,
+                          amenities: amenities,
+                          amenityCount: passengerAmenityRecordCount,
+                          platformCount: totalPlatforms,
+                          contractCount: contracts.length,
+                          workCount: works.length,
+                          onOpen: (value) => setState(() => _workspace = value),
                         ),
-                        elevation: 5,
-                        shadowColor:
-                            const Color(0xFF1C54C7).withValues(alpha: 0.35),
-                      ),
-                    ),
+                      _StationWorkspace.amenities => Column(
+                          key: const ValueKey('amenities'),
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _SectionHeading(
+                              title: 'Passenger amenities',
+                              count: passengerAmenityRecordCount,
+                            ),
+                            const SizedBox(height: 12),
+                            _AmenitySummary(groups: amenityGroups),
+                            const SizedBox(height: 18),
+                            _AmenitySubheading(
+                              title: 'Platforms',
+                              count: totalPlatforms,
+                            ),
+                            const SizedBox(height: 9),
+                            _PlatformList(
+                              platforms: platforms,
+                              stationLevel: station['platform_type'],
+                            ),
+                            if (fobAccess.isNotEmpty ||
+                                _hasCombinedAccessibility(amenities)) ...[
+                              const SizedBox(height: 12),
+                              _FobAccessCard(
+                                modes: fobAccess,
+                                status: _map(amenities['pf_extension_status']),
+                              ),
+                            ],
+                            if (norms.isNotEmpty) ...[
+                              const SizedBox(height: 12),
+                              _NormsCard(norms: norms),
+                            ],
+                          ],
+                        ),
+                      _StationWorkspace.contracts => Column(
+                          key: const ValueKey('contracts'),
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _SectionHeading(
+                              title: 'Contracts',
+                              count: contracts.length,
+                            ),
+                            const SizedBox(height: 12),
+                            _ContractList(contracts: contracts),
+                          ],
+                        ),
+                      _StationWorkspace.works => Column(
+                          key: const ValueKey('works'),
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _SectionHeading(
+                              title: 'Sanctioned works',
+                              count: works.length,
+                            ),
+                            const SizedBox(height: 12),
+                            _WorkList(works: works),
+                          ],
+                        ),
+                      _StationWorkspace.inspection => Column(
+                          key: const ValueKey('inspection'),
+                          children: [
+                            _StationActionCenter(stationCode: code),
+                            const SizedBox(height: 18),
+                            SizedBox(
+                              width: double.infinity,
+                              height: 56,
+                              child: FilledButton.icon(
+                                onPressed: () => widget.onStartInspection(code),
+                                icon: const Icon(Icons.fact_check_outlined),
+                                label: const Text(
+                                  'Start inspection',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                    },
                   ),
                 ],
               ),
@@ -462,6 +564,293 @@ class _HeroBadge extends StatelessWidget {
     );
   }
 }
+
+class _StationWorkspaceNav extends StatelessWidget {
+  const _StationWorkspaceNav({
+    required this.selected,
+    required this.available,
+    required this.counts,
+    required this.onSelected,
+  });
+
+  final _StationWorkspace selected;
+  final List<_StationWorkspace> available;
+  final Map<_StationWorkspace, int> counts;
+  final ValueChanged<_StationWorkspace> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 52,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+        itemCount: available.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final item = available[index];
+          final active = item == selected;
+          final visual = _workspaceVisual(item);
+          final count = counts[item];
+          return Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () => onSelected(item),
+              borderRadius: BorderRadius.circular(18),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 220),
+                curve: Curves.easeOutCubic,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                decoration: BoxDecoration(
+                  color: active
+                      ? visual.$3.withValues(alpha: 0.16)
+                      : Theme.of(context).colorScheme.surface,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: active
+                        ? visual.$3.withValues(alpha: 0.38)
+                        : Theme.of(context).colorScheme.outlineVariant,
+                  ),
+                  boxShadow: active
+                      ? [
+                          BoxShadow(
+                            color: visual.$3.withValues(alpha: 0.14),
+                            blurRadius: 14,
+                            offset: const Offset(0, 5),
+                          ),
+                        ]
+                      : null,
+                ),
+                child: Row(
+                  children: [
+                    Icon(visual.$2, size: 18, color: visual.$3),
+                    const SizedBox(width: 7),
+                    Text(
+                      visual.$1,
+                      style: TextStyle(
+                        color: active
+                            ? visual.$3
+                            : Theme.of(context).colorScheme.onSurface,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    if (count != null) ...[
+                      const SizedBox(width: 6),
+                      Text(
+                        '$count',
+                        style: TextStyle(
+                          color: visual.$3,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _StationOverviewWorkspace extends StatelessWidget {
+  const _StationOverviewWorkspace({
+    super.key,
+    required this.station,
+    required this.amenities,
+    required this.amenityCount,
+    required this.platformCount,
+    required this.contractCount,
+    required this.workCount,
+    required this.onOpen,
+  });
+
+  final Map<String, dynamic> station;
+  final Map<String, dynamic> amenities;
+  final int amenityCount;
+  final int platformCount;
+  final int contractCount;
+  final int workCount;
+  final ValueChanged<_StationWorkspace> onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final modules = <({
+      _StationWorkspace workspace,
+      String title,
+      String subtitle,
+      IconData icon,
+      Color tone,
+    })>[
+      (
+        workspace: _StationWorkspace.amenities,
+        title: 'Passenger amenities',
+        subtitle: '$amenityCount records · $platformCount platforms',
+        icon: Icons.accessible_forward_rounded,
+        tone: const Color(0xFF12A594),
+      ),
+      if (contractCount > 0)
+        (
+          workspace: _StationWorkspace.contracts,
+          title: 'Contracts',
+          subtitle: '$contractCount linked contracts',
+          icon: Icons.storefront_rounded,
+          tone: const Color(0xFF7C4DDE),
+        ),
+      if (workCount > 0)
+        (
+          workspace: _StationWorkspace.works,
+          title: 'Sanctioned works',
+          subtitle: '$workCount linked works',
+          icon: Icons.engineering_rounded,
+          tone: const Color(0xFFEA8A1A),
+        ),
+      (
+        workspace: _StationWorkspace.inspection,
+        title: 'Inspection',
+        subtitle: 'Findings, alerts and field checks',
+        icon: Icons.fact_check_rounded,
+        tone: const Color(0xFF2670E8),
+      ),
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _StationDetails(station: station, amenities: amenities),
+        const SizedBox(height: 20),
+        Text(
+          'Explore this station',
+          style: Theme.of(context)
+              .textTheme
+              .titleLarge
+              ?.copyWith(fontWeight: FontWeight.w900),
+        ),
+        const SizedBox(height: 10),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final width = (constraints.maxWidth - 10) / 2;
+            return Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                for (final module in modules)
+                  SizedBox(
+                    width: width,
+                    child: _WorkspaceCard(
+                      title: module.title,
+                      subtitle: module.subtitle,
+                      icon: module.icon,
+                      tone: module.tone,
+                      onTap: () => onOpen(module.workspace),
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+}
+
+class _WorkspaceCard extends StatelessWidget {
+  const _WorkspaceCard({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.tone,
+    required this.onTap,
+  });
+
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final Color tone;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(21),
+        child: Ink(
+          height: 128,
+          padding: const EdgeInsets.all(15),
+          decoration: _softCard(context, radius: 21),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: tone.withValues(alpha: 0.13),
+                  borderRadius: BorderRadius.circular(13),
+                ),
+                child: Icon(icon, color: tone, size: 21),
+              ),
+              const Spacer(),
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style:
+                    const TextStyle(fontSize: 13, fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                subtitle,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+(String, IconData, Color) _workspaceVisual(_StationWorkspace workspace) =>
+    switch (workspace) {
+      _StationWorkspace.overview => (
+          'Overview',
+          Icons.dashboard_rounded,
+          const Color(0xFF2670E8),
+        ),
+      _StationWorkspace.amenities => (
+          'Amenities',
+          Icons.accessible_forward_rounded,
+          const Color(0xFF12A594),
+        ),
+      _StationWorkspace.contracts => (
+          'Contracts',
+          Icons.storefront_rounded,
+          const Color(0xFF7C4DDE),
+        ),
+      _StationWorkspace.works => (
+          'Works',
+          Icons.engineering_rounded,
+          const Color(0xFFEA8A1A),
+        ),
+      _StationWorkspace.inspection => (
+          'Inspection',
+          Icons.fact_check_rounded,
+          const Color(0xFFE15478),
+        ),
+    };
 
 class _StationFacts extends StatelessWidget {
   const _StationFacts({
@@ -596,6 +985,477 @@ class _StationActions extends StatelessWidget {
   }
 }
 
+class _StationActionData {
+  const _StationActionData({
+    required this.findings,
+    required this.inspections,
+    required this.contractAlerts,
+  });
+
+  final List<Map<String, dynamic>> findings;
+  final List<Map<String, dynamic>> inspections;
+  final List<Map<String, dynamic>> contractAlerts;
+}
+
+class _StationActionCenter extends ConsumerStatefulWidget {
+  const _StationActionCenter({required this.stationCode});
+
+  final String stationCode;
+
+  @override
+  ConsumerState<_StationActionCenter> createState() =>
+      _StationActionCenterState();
+}
+
+class _StationActionCenterState extends ConsumerState<_StationActionCenter> {
+  late Future<_StationActionData> _data;
+
+  @override
+  void initState() {
+    super.initState();
+    _data = _load();
+  }
+
+  Future<_StationActionData> _load() async {
+    final database = ref.read(databaseProvider);
+    final rows = await Future.wait([
+      database.findingsForStation(widget.stationCode, openOnly: true),
+      database.inspectionsForStation(widget.stationCode),
+      database.contractNotificationsForStation(widget.stationCode),
+    ]);
+    return _StationActionData(
+      findings: rows[0],
+      inspections: rows[1],
+      contractAlerts: rows[2],
+    );
+  }
+
+  void _reload() => setState(() => _data = _load());
+
+  @override
+  Widget build(BuildContext context) {
+    final sync = ref.watch(syncControllerProvider).valueOrNull;
+    return FutureBuilder<_StationActionData>(
+      future: _data,
+      builder: (context, snapshot) {
+        final data = snapshot.data;
+        return Container(
+          padding: const EdgeInsets.all(14),
+          decoration: _solidCard(context, radius: 20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    'Action centre',
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w900),
+                  ),
+                  const Spacer(),
+                  if (snapshot.connectionState == ConnectionState.waiting)
+                    const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              GridView.count(
+                crossAxisCount: 2,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                childAspectRatio: 2.35,
+                crossAxisSpacing: 9,
+                mainAxisSpacing: 9,
+                children: [
+                  _ActionMetric(
+                    icon: Icons.report_problem_outlined,
+                    label: 'Deficiencies',
+                    value: '${data?.findings.length ?? 0}',
+                    tone: const Color(0xFFB91C1C),
+                    onTap: data == null
+                        ? null
+                        : () async {
+                            final selected = await _showStationFindings(
+                              context,
+                              data.findings,
+                            );
+                            if (selected == null || !context.mounted) return;
+                            final changed = await showFindingEditor(
+                              context,
+                              ref,
+                              selected,
+                            );
+                            if (changed) _reload();
+                          },
+                  ),
+                  _ActionMetric(
+                    icon: Icons.history_rounded,
+                    label: 'Inspections',
+                    value: '${data?.inspections.length ?? 0}',
+                    tone: const Color(0xFF2563EB),
+                    onTap: data == null
+                        ? null
+                        : () => _showInspectionHistory(
+                              context,
+                              data.inspections,
+                            ),
+                  ),
+                  _ActionMetric(
+                    icon: Icons.notifications_active_outlined,
+                    label: 'Contract alerts',
+                    value: '${data?.contractAlerts.length ?? 0}',
+                    tone: const Color(0xFFD97706),
+                    onTap: data == null
+                        ? null
+                        : () => _showContractAlerts(
+                              context,
+                              data.contractAlerts,
+                            ),
+                  ),
+                  _ActionMetric(
+                    icon: sync?.failed == 0
+                        ? Icons.cloud_done_outlined
+                        : Icons.sync_problem_rounded,
+                    label: 'Sync',
+                    value: sync == null
+                        ? 'Ready'
+                        : sync.failed > 0
+                            ? '${sync.failed} failed'
+                            : '${sync.pending} pending',
+                    tone: sync?.failed == 0
+                        ? const Color(0xFF0A8F62)
+                        : const Color(0xFFB91C1C),
+                    onTap: () => _showStationSync(context, ref),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ActionMetric extends StatelessWidget {
+  const _ActionMetric({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.tone,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color tone;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: tone.withValues(alpha: 0.08),
+      borderRadius: BorderRadius.circular(15),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(15),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: Row(
+            children: [
+              Icon(icon, color: tone, size: 22),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      value,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: tone,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Future<Map<String, dynamic>?> _showStationFindings(
+  BuildContext context,
+  List<Map<String, dynamic>> rows,
+) {
+  return showModalBottomSheet<Map<String, dynamic>>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    backgroundColor: Theme.of(context).colorScheme.surface,
+    barrierColor: Colors.black54,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+    ),
+    builder: (context) => _StationListSheet(
+      title: 'Open deficiencies',
+      emptyIcon: Icons.task_alt_rounded,
+      emptyText: 'No open deficiencies at this station.',
+      children: [
+        for (final row in rows)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(
+              Icons.report_problem_outlined,
+              color: _severityTone('${row['severity']}'),
+            ),
+            title: Text(
+              '${row['title']}',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            subtitle: Text(
+              '${row['responsible_party'] ?? 'Unassigned'} · ${_findingStatus('${row['status']}')}',
+            ),
+            trailing: const Icon(Icons.chevron_right_rounded),
+            onTap: () => Navigator.of(context).pop(row),
+          ),
+      ],
+    ),
+  );
+}
+
+Future<void> _showInspectionHistory(
+  BuildContext context,
+  List<Map<String, dynamic>> rows,
+) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    backgroundColor: Theme.of(context).colorScheme.surface,
+    barrierColor: Colors.black54,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+    ),
+    builder: (context) => _StationListSheet(
+      title: 'Inspection history',
+      emptyIcon: Icons.fact_check_outlined,
+      emptyText: 'No inspections have been recorded for this station.',
+      children: [
+        for (final row in rows)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.fact_check_outlined),
+            title: Text('${row['inspection_type']} · ${row['status']}'),
+            subtitle: Text(
+              '${row['inspector_name']} · ${shortDate(row['started_at'])}',
+            ),
+            trailing: StatusBadge(
+              '${row['open_finding_count'] ?? 0} open',
+              tone: (row['open_finding_count'] as num?)?.toInt() == 0
+                  ? const Color(0xFF0A8F62)
+                  : const Color(0xFFB91C1C),
+            ),
+          ),
+      ],
+    ),
+  );
+}
+
+Future<void> _showContractAlerts(
+  BuildContext context,
+  List<Map<String, dynamic>> rows,
+) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    backgroundColor: Theme.of(context).colorScheme.surface,
+    barrierColor: Colors.black54,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+    ),
+    builder: (context) => _StationListSheet(
+      title: 'Contract alerts',
+      emptyIcon: Icons.verified_outlined,
+      emptyText: 'No contracts expire within the next 50 days.',
+      children: [
+        for (final row in rows)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(
+              Icons.event_busy_outlined,
+              color: row['severity'] == 'critical'
+                  ? const Color(0xFFB91C1C)
+                  : const Color(0xFFD97706),
+            ),
+            title: Text(
+              '${row['contract_code'] ?? row['related_id']} · ${row['contract_name'] ?? 'Contract'}',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            subtitle: Text('${row['body']}'),
+            trailing: const Icon(Icons.notifications_active_outlined),
+          ),
+      ],
+    ),
+  );
+}
+
+Future<void> _showStationSync(BuildContext context, WidgetRef ref) {
+  final state = ref.read(syncControllerProvider).valueOrNull;
+  return showModalBottomSheet<void>(
+    context: context,
+    useSafeArea: true,
+    backgroundColor: Theme.of(context).colorScheme.surface,
+    barrierColor: Colors.black54,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+    ),
+    builder: (context) => _StationListSheet(
+      title: 'Sync status',
+      emptyIcon: Icons.cloud_done_outlined,
+      emptyText: state == null
+          ? 'Sync status is loading.'
+          : '${state.pending} pending · ${state.failed} failed\n${state.message}',
+      footer: Column(
+        children: [
+          AppButton(
+            expand: true,
+            onPressed: () async {
+              await ref.read(syncControllerProvider.notifier).synchronize();
+              if (context.mounted) Navigator.of(context).pop();
+            },
+            icon: Icons.sync_rounded,
+            label: 'Sync now',
+          ),
+          if ((state?.failed ?? 0) > 0) ...[
+            const SizedBox(height: 8),
+            AppButton(
+              expand: true,
+              kind: AppButtonKind.secondary,
+              onPressed: () async {
+                await ref.read(syncControllerProvider.notifier).retryFailed();
+                if (context.mounted) Navigator.of(context).pop();
+              },
+              icon: Icons.replay_rounded,
+              label: 'Retry failed',
+            ),
+          ],
+        ],
+      ),
+    ),
+  );
+}
+
+class _StationListSheet extends StatelessWidget {
+  const _StationListSheet({
+    required this.title,
+    required this.emptyIcon,
+    required this.emptyText,
+    this.children = const [],
+    this.footer,
+  });
+
+  final String title;
+  final IconData emptyIcon;
+  final String emptyText;
+  final List<Widget> children;
+  final Widget? footer;
+
+  @override
+  Widget build(BuildContext context) {
+    return FractionallySizedBox(
+      heightFactor: children.isEmpty ? 0.42 : 0.72,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 42,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.outlineVariant,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              title,
+              style: Theme.of(context)
+                  .textTheme
+                  .titleLarge
+                  ?.copyWith(fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 10),
+            Expanded(
+              child: children.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(emptyIcon, size: 36),
+                          const SizedBox(height: 10),
+                          Text(emptyText, textAlign: TextAlign.center),
+                        ],
+                      ),
+                    )
+                  : ListView.separated(
+                      itemCount: children.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (_, index) => children[index],
+                    ),
+            ),
+            if (footer != null) ...[
+              const SizedBox(height: 10),
+              footer!,
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+Color _severityTone(String severity) => switch (severity) {
+      'critical' => const Color(0xFFB91C1C),
+      'high' => const Color(0xFFEA580C),
+      'medium' => const Color(0xFFD97706),
+      _ => const Color(0xFF2563EB),
+    };
+
+String _findingStatus(String value) => value
+    .split('_')
+    .map((part) =>
+        part.isEmpty ? part : '${part[0].toUpperCase()}${part.substring(1)}')
+    .join(' ');
+
 class _StationDetails extends StatelessWidget {
   const _StationDetails({required this.station, required this.amenities});
 
@@ -683,10 +1543,66 @@ class _StationDetails extends StatelessWidget {
                 ],
               ),
             ),
+          const Divider(height: 20),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: () =>
+                  _showCompleteStationRecord(context, station, amenities),
+              icon: const Icon(Icons.open_in_new_rounded, size: 17),
+              label: const Text('Complete station record'),
+            ),
+          ),
         ],
       ),
     );
   }
+}
+
+Future<void> _showCompleteStationRecord(
+  BuildContext context,
+  Map<String, dynamic> station,
+  Map<String, dynamic> amenities,
+) {
+  final stationRows = _flattenDetailRows(station);
+  final amenityRows = _flattenDetailRows(amenities);
+  return _showDetailSheet(
+    context,
+    title: cleanText(station['station_name'], fallback: 'Station record'),
+    icon: Icons.account_balance_rounded,
+    status: cleanText(station['station_code'], fallback: ''),
+    sections: [
+      if (stationRows.isNotEmpty)
+        _DetailGroup(title: 'Station master', rows: stationRows),
+      if (amenityRows.isNotEmpty)
+        _DetailGroup(title: 'Passenger amenity details', rows: amenityRows),
+    ],
+  );
+}
+
+List<MapEntry<String, dynamic>> _flattenDetailRows(
+  Object? value, {
+  String prefix = '',
+}) {
+  final rows = <MapEntry<String, dynamic>>[];
+  if (value is Map) {
+    for (final entry in value.entries) {
+      final key = entry.key.toString();
+      if (_internalDetailKey(key)) continue;
+      final label =
+          prefix.isEmpty ? _prettyKey(key) : '$prefix · ${_prettyKey(key)}';
+      rows.addAll(_flattenDetailRows(entry.value, prefix: label));
+    }
+  } else if (value is List) {
+    for (var index = 0; index < value.length; index++) {
+      rows.addAll(
+        _flattenDetailRows(value[index], prefix: '$prefix ${index + 1}'),
+      );
+    }
+  } else if (_hasDetailValue(value)) {
+    rows.add(MapEntry(prefix, value));
+  }
+  return rows;
 }
 
 class _ActionTile extends StatelessWidget {
@@ -769,252 +1685,551 @@ class _SectionHeading extends StatelessWidget {
   }
 }
 
-class _AmenityGrid extends StatelessWidget {
-  const _AmenityGrid({required this.groups});
+class _AmenitySubheading extends StatelessWidget {
+  const _AmenitySubheading({required this.title, required this.count});
+
+  final String title;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            title,
+            style: Theme.of(context)
+                .textTheme
+                .titleMedium
+                ?.copyWith(fontWeight: FontWeight.w900),
+          ),
+        ),
+        StatusBadge('$count'),
+      ],
+    );
+  }
+}
+
+class _AmenitySummary extends StatelessWidget {
+  const _AmenitySummary({required this.groups});
 
   final Map<String, List<AmenityItem>> groups;
 
   @override
   Widget build(BuildContext context) {
-    final items = <({String category, AmenityItem item})>[
-      for (final entry in groups.entries)
-        for (final item in entry.value) (category: entry.key, item: item),
-    ];
-    if (items.isEmpty) {
+    final visible = groups.entries.where((entry) => entry.value.isNotEmpty);
+    final entries = visible.toList();
+    if (entries.isEmpty) {
       return const _EmptySection(
         icon: Icons.chair_alt_outlined,
         text: 'Amenity details are not available offline yet.',
       );
     }
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final columns = constraints.maxWidth >= 720 ? 4 : 2;
-        return GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: items.length,
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: columns,
-            crossAxisSpacing: 10,
-            mainAxisSpacing: 10,
-            childAspectRatio: 1.72,
-          ),
-          itemBuilder: (context, index) {
-            final entry = items[index];
-            final visual = _amenityVisual(entry.item.label, entry.category);
-            return Container(
-              padding: const EdgeInsets.all(12),
-              decoration: _softCard(context, radius: 18),
-              child: Row(
-                children: [
-                  Container(
-                    width: 38,
-                    height: 38,
-                    decoration: BoxDecoration(
-                      color: visual.$2.withValues(alpha: 0.11),
-                      shape: BoxShape.circle,
+    return Container(
+      height: 92,
+      decoration: _solidCard(context, radius: 20),
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 7),
+        itemCount: entries.length,
+        separatorBuilder: (_, __) => VerticalDivider(
+          width: 1,
+          color: Theme.of(context).colorScheme.outlineVariant,
+        ),
+        itemBuilder: (context, index) {
+          final entry = entries[index];
+          final visual = _amenityVisual('', entry.key);
+          return SizedBox(
+            width: 142,
+            child: InkWell(
+              onTap: () => _showAmenityDetails(
+                context,
+                entry.key,
+                entry.value,
+              ),
+              borderRadius: BorderRadius.circular(15),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 35,
+                      height: 35,
+                      decoration: BoxDecoration(
+                        color: visual.$2.withValues(alpha: 0.12),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(visual.$1, color: visual.$2, size: 19),
                     ),
-                    child: Icon(visual.$1, color: visual.$2, size: 20),
-                  ),
-                  const SizedBox(width: 9),
-                  Expanded(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          entry.item.label,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        if (entry.item.quantity != null)
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
                           Text(
-                            '${entry.item.quantity} available',
+                            entry.key,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              height: 1.1,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            '${entry.value.length} items',
                             style: TextStyle(
                               color: visual.$2,
-                              fontSize: 11,
+                              fontSize: 10,
                               fontWeight: FontWeight.w900,
                             ),
                           ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            );
-          },
-        );
-      },
+            ),
+          );
+        },
+      ),
     );
   }
 }
 
+Future<void> _showAmenityDetails(
+  BuildContext context,
+  String category,
+  List<AmenityItem> items,
+) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    backgroundColor: Theme.of(context).colorScheme.surface,
+    barrierColor: Colors.black54,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+    ),
+    builder: (context) => FractionallySizedBox(
+      heightFactor: 0.72,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const _SheetHandle(),
+            const SizedBox(height: 16),
+            Text(
+              category,
+              style: Theme.of(context)
+                  .textTheme
+                  .titleLarge
+                  ?.copyWith(fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 4),
+            Text('${items.length} passenger amenity records'),
+            const SizedBox(height: 12),
+            Expanded(
+              child: ListView.separated(
+                itemCount: items.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  final item = items[index];
+                  final visual = _amenityVisual(item.label, category);
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: visual.$2.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(13),
+                      ),
+                      child: Icon(visual.$1, color: visual.$2, size: 20),
+                    ),
+                    title: Text(
+                      item.label,
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    trailing: item.quantity == null
+                        ? const Icon(Icons.check_circle_outline_rounded)
+                        : StatusBadge('${item.quantity} available'),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
 class _FobAccessCard extends StatelessWidget {
-  const _FobAccessCard({required this.modes});
+  const _FobAccessCard({required this.modes, required this.status});
 
   final List<String> modes;
+  final Map<String, dynamic> status;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => _showFobDetails(context, modes, status),
+        borderRadius: BorderRadius.circular(18),
+        child: Ink(
+          height: 66,
+          padding: const EdgeInsets.symmetric(horizontal: 13),
+          decoration: _solidCard(context, radius: 18),
+          child: Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE4F7F2),
+                  borderRadius: BorderRadius.circular(13),
+                ),
+                child: const Icon(
+                  Icons.stairs_outlined,
+                  color: Color(0xFF149A83),
+                ),
+              ),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Foot over bridge',
+                      style: TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                    Text(
+                      modes.isEmpty
+                          ? 'Accessibility details available'
+                          : modes.join(' · '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+bool _hasCombinedAccessibility(Map<String, dynamic> amenities) {
+  final status = _map(amenities['pf_extension_status']);
+  return ['lift_details', 'ramp_details', 'escalator_details']
+      .any((key) => _meaningfulAccessibilityValue(status[key]));
+}
+
+class _AccessibilityDetailRow extends StatelessWidget {
+  const _AccessibilityDetailRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: _softCard(context, radius: 22),
-      child: Row(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: _solidCard(context, radius: 16),
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: const Color(0xFFE4F7F2),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: const Icon(Icons.stairs_outlined, color: Color(0xFF149A83)),
-          ),
-          const SizedBox(width: 11),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('FOB access',
-                    style: TextStyle(fontWeight: FontWeight.w900)),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: [
-                    for (final mode in modes)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 9, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFE4F7F2),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(mode,
-                            style: const TextStyle(
-                                color: Color(0xFF147D6D),
-                                fontSize: 10,
-                                fontWeight: FontWeight.w900)),
-                      ),
-                  ],
-                ),
-              ],
-            ),
-          ),
+          Text(label, style: const TextStyle(fontWeight: FontWeight.w900)),
+          const SizedBox(height: 5),
+          Text(value, style: Theme.of(context).textTheme.bodyMedium),
         ],
       ),
     );
   }
 }
 
-class _NormsCard extends StatefulWidget {
+Future<void> _showFobDetails(
+  BuildContext context,
+  List<String> modes,
+  Map<String, dynamic> status,
+) {
+  final details = _accessibilityDetails(status);
+  return showModalBottomSheet<void>(
+    context: context,
+    useSafeArea: true,
+    backgroundColor: Theme.of(context).colorScheme.surface,
+    barrierColor: Colors.black54,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+    ),
+    builder: (context) => SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _SheetHandle(),
+          const SizedBox(height: 16),
+          Text(
+            'Foot over bridge',
+            style: Theme.of(context)
+                .textTheme
+                .titleLarge
+                ?.copyWith(fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+              'Access and connectivity details recorded for this station.'),
+          const SizedBox(height: 12),
+          for (final mode in modes)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(
+                Icons.check_circle_outline_rounded,
+                color: Color(0xFF149A83),
+              ),
+              title: Text(
+                mode,
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+          if (details.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            const Text(
+              'Lift, ramp and escalator details',
+              style: TextStyle(fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 8),
+            for (final detail in details)
+              _AccessibilityDetailRow(label: detail.$1, value: detail.$2),
+          ],
+        ],
+      ),
+    ),
+  );
+}
+
+List<(String, String)> _accessibilityDetails(Map<String, dynamic> status) {
+  const fields = [
+    ('Lifts', 'lift_details'),
+    ('Ramps', 'ramp_details'),
+    ('Escalators', 'escalator_details'),
+  ];
+  return [
+    for (final field in fields)
+      if (_meaningfulAccessibilityValue(status[field.$2]))
+        (field.$1, cleanText(status[field.$2])),
+  ];
+}
+
+bool _meaningfulAccessibilityValue(Object? value) {
+  final normalized = cleanText(value, fallback: '').trim().toLowerCase();
+  return normalized.isNotEmpty &&
+      normalized != 'na' &&
+      normalized != 'n/a' &&
+      normalized != '-' &&
+      normalized != 'nil' &&
+      normalized != 'none';
+}
+
+class _NormsCard extends StatelessWidget {
   const _NormsCard({required this.norms});
 
   final List<dynamic> norms;
 
   @override
-  State<_NormsCard> createState() => _NormsCardState();
-}
-
-class _NormsCardState extends State<_NormsCard> {
-  var _expanded = false;
-
-  @override
   Widget build(BuildContext context) {
-    final groups = <String, List<Map<String, dynamic>>>{
-      'MEA': [],
-      'Recommended': [],
-      'Desirable': [],
-      'Divyangjan': [],
-    };
-    for (final raw in widget.norms) {
-      final row = _map(raw);
-      final rawHead = cleanText(row['amenity'], fallback: '').toLowerCase();
-      final heading = rawHead.contains('divyang')
-          ? 'Divyangjan'
-          : rawHead.contains('recommend')
-              ? 'Recommended'
-              : rawHead.contains('desirable')
-                  ? 'Desirable'
-                  : rawHead == 'mea'
-                      ? 'MEA'
-                      : null;
-      if (heading != null) groups[heading]!.add(row);
-    }
+    final groups = _groupNorms(norms);
     final visibleGroups =
         groups.entries.where((entry) => entry.value.isNotEmpty).toList();
-    return Container(
-      decoration: _softCard(context, radius: 22),
-      child: Column(
-        children: [
-          InkWell(
-            onTap: () => setState(() => _expanded = !_expanded),
-            borderRadius: BorderRadius.circular(22),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 14, 14),
-              child: Row(
-                children: [
-                  Container(
-                    width: 38,
-                    height: 38,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFEDE4FF),
-                      borderRadius: BorderRadius.circular(13),
-                    ),
-                    child: const Icon(Icons.rule_rounded,
-                        color: Color(0xFF7650C9), size: 20),
-                  ),
-                  const SizedBox(width: 11),
-                  const Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Passenger amenities norms',
-                            style: TextStyle(fontWeight: FontWeight.w900)),
-                        SizedBox(height: 3),
-                        Text('Based on this station category',
-                            style: TextStyle(fontSize: 11)),
-                      ],
-                    ),
-                  ),
-                  Text('${widget.norms.length}',
-                      style: TextStyle(
-                          color: Theme.of(context).colorScheme.primary,
-                          fontWeight: FontWeight.w900)),
-                  const SizedBox(width: 6),
-                  Icon(_expanded
-                      ? Icons.keyboard_arrow_up_rounded
-                      : Icons.keyboard_arrow_down_rounded),
-                ],
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => _showNormDetails(context, visibleGroups),
+        borderRadius: BorderRadius.circular(18),
+        child: Ink(
+          height: 92,
+          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
+          decoration: _solidCard(context, radius: 18),
+          child: Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEDE4FF),
+                  borderRadius: BorderRadius.circular(13),
+                ),
+                child: const Icon(
+                  Icons.rule_rounded,
+                  color: Color(0xFF7650C9),
+                  size: 20,
+                ),
               ),
-            ),
-          ),
-          if (_expanded)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
-              child: Column(
-                children: [
-                  for (var index = 0;
-                      index < visibleGroups.length;
-                      index++) ...[
-                    if (index > 0) const Divider(height: 22),
-                    _NormGroup(
-                      title: visibleGroups[index].key,
-                      rows: visibleGroups[index].value,
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Passenger amenity norms',
+                      style: TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                    const SizedBox(height: 5),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          for (final entry in visibleGroups) ...[
+                            _NormCountChip(
+                              label: entry.key,
+                              count: entry.value.length,
+                            ),
+                            const SizedBox(width: 5),
+                          ],
+                        ],
+                      ),
                     ),
                   ],
-                ],
+                ),
               ),
-            ),
-        ],
+              const SizedBox(width: 6),
+              const Icon(Icons.chevron_right_rounded),
+            ],
+          ),
+        ),
       ),
     );
   }
+}
+
+class _NormCountChip extends StatelessWidget {
+  const _NormCountChip({required this.label, required this.count});
+
+  final String label;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEDE4FF),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(
+        '$label $count',
+        style: const TextStyle(
+          color: Color(0xFF7650C9),
+          fontSize: 9,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+}
+
+Map<String, List<Map<String, dynamic>>> _groupNorms(List<dynamic> norms) {
+  final groups = <String, List<Map<String, dynamic>>>{
+    'MEA': [],
+    'Recommended': [],
+    'Desirable': [],
+    'Divyangjan': [],
+    'Other': [],
+  };
+  for (final raw in norms) {
+    final row = _map(raw);
+    final rawHead = cleanText(row['amenity'], fallback: '').toLowerCase();
+    final heading = rawHead.contains('divyang')
+        ? 'Divyangjan'
+        : rawHead.contains('recommend')
+            ? 'Recommended'
+            : rawHead.contains('desirable')
+                ? 'Desirable'
+                : rawHead == 'mea'
+                    ? 'MEA'
+                    : 'Other';
+    groups[heading]!.add(row);
+  }
+  return groups;
+}
+
+Future<void> _showNormDetails(
+  BuildContext context,
+  List<MapEntry<String, List<Map<String, dynamic>>>> groups,
+) {
+  if (groups.isEmpty) return Future.value();
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    backgroundColor: Theme.of(context).colorScheme.surface,
+    barrierColor: Colors.black54,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+    ),
+    builder: (context) => FractionallySizedBox(
+      heightFactor: 0.84,
+      child: DefaultTabController(
+        length: groups.length,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 12, 18, 20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _SheetHandle(),
+              const SizedBox(height: 15),
+              Text(
+                'Passenger amenity norms',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 4),
+              const Text('Requirements applicable to this station category.'),
+              const SizedBox(height: 12),
+              TabBar(
+                isScrollable: true,
+                tabAlignment: TabAlignment.start,
+                tabs: [
+                  for (final entry in groups)
+                    Tab(text: '${entry.key} (${entry.value.length})'),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Expanded(
+                child: TabBarView(
+                  children: [
+                    for (final entry in groups)
+                      ListView(
+                        padding: const EdgeInsets.only(top: 4),
+                        children: [
+                          _NormGroup(title: entry.key, rows: entry.value),
+                        ],
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 class _NormGroup extends StatelessWidget {
@@ -1249,8 +2464,13 @@ class _ContractList extends StatelessWidget {
             child: _InfoRow(
               icon: Icons.storefront_rounded,
               title: '${contract.name} · ${contractValidityLabel(contract)}',
-              subtitle:
-                  '${contract.type}  •  ${formatCurrency(contract.earnings)}',
+              subtitle: contract.status.toLowerCase() == 'available'
+                  ? cleanText(
+                      contract.details['remarks'] ??
+                          contract.details['availability_remarks'],
+                      fallback: '${contract.type} available for allotment',
+                    )
+                  : '${contract.type}  •  ${formatCurrency(contract.earnings)}',
               trailing: contractRiskLabel(contract),
               onTap: () => _showContractDetails(context, contract),
             ),
@@ -1531,6 +2751,49 @@ BoxDecoration _softCard(BuildContext context, {double radius = 20}) {
   );
 }
 
+BoxDecoration _solidCard(BuildContext context, {double radius = 20}) {
+  final theme = Theme.of(context);
+  final surface = Color.alphaBlend(
+    theme.colorScheme.primary.withValues(alpha: 0.035),
+    theme.colorScheme.surface,
+  );
+  return BoxDecoration(
+    color: surface,
+    borderRadius: BorderRadius.circular(radius),
+    border: Border.all(
+      color: theme.colorScheme.outlineVariant.withValues(alpha: 0.9),
+    ),
+    boxShadow: [
+      BoxShadow(
+        color: Colors.black.withValues(
+          alpha: theme.brightness == Brightness.dark ? 0.28 : 0.09,
+        ),
+        blurRadius: 20,
+        spreadRadius: -7,
+        offset: const Offset(0, 9),
+      ),
+    ],
+  );
+}
+
+class _SheetHandle extends StatelessWidget {
+  const _SheetHandle();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Container(
+        width: 42,
+        height: 4,
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.outlineVariant,
+          borderRadius: BorderRadius.circular(4),
+        ),
+      ),
+    );
+  }
+}
+
 (IconData, Color) _amenityVisual(String label, String category) {
   final value = label.toLowerCase();
   if (value.contains('lift')) {
@@ -1634,6 +2897,8 @@ Future<void> _showContractDetails(
     'licensee_name',
     'type_of_unit',
     'unit_status',
+    'remarks',
+    'availability_remarks',
     'station_code',
     'pf_no',
     'station_category',
@@ -1670,6 +2935,7 @@ Future<void> _showContractDetails(
           : contract.daysToExpiry == 0
               ? 'Expires today'
               : '${contract.daysToExpiry} days';
+  final available = contract.status.toLowerCase() == 'available';
   await _showDetailSheet(
     context,
     title: contract.name,
@@ -1679,27 +2945,39 @@ Future<void> _showContractDetails(
       _DetailGroup(title: 'Contract summary', rows: [
         MapEntry('Type', contract.type),
         MapEntry('Contract status', contract.status),
-        MapEntry('Risk level', contractRiskLabel(contract)),
-        MapEntry('Renewal status', contract.renewalState),
-        MapEntry(
-            'Valid from',
-            contract.validFrom == null
-                ? 'Not recorded'
-                : formatContractDate(contract.validFrom!)),
-        MapEntry(
-            'Valid till',
-            contract.validTo == null
-                ? 'Not recorded'
-                : formatContractDate(contract.validTo!)),
-        MapEntry('Remaining days', remainingDays),
-        MapEntry('Validity', contractValidityLabel(contract)),
-        MapEntry('Payment entries', contract.payments.length),
-        MapEntry(
-            'Payments recorded',
-            formatCurrency(
-                paymentTotal > 0 ? paymentTotal : contract.earnings)),
-        MapEntry('Last receipt', lastReceipt ?? 'Not recorded'),
-        MapEntry('Paid through', paidThrough ?? 'Not recorded'),
+        if (available)
+          MapEntry(
+            'Remarks',
+            cleanText(
+              contract.details['remarks'] ??
+                  contract.details['availability_remarks'] ??
+                  contract.details['unit_status'],
+              fallback: 'Available for allotment',
+            ),
+          )
+        else ...[
+          MapEntry('Risk level', contractRiskLabel(contract)),
+          MapEntry('Renewal status', contract.renewalState),
+          MapEntry(
+              'Valid from',
+              contract.validFrom == null
+                  ? 'Not recorded'
+                  : formatContractDate(contract.validFrom!)),
+          MapEntry(
+              'Valid till',
+              contract.validTo == null
+                  ? 'Not recorded'
+                  : formatContractDate(contract.validTo!)),
+          MapEntry('Remaining days', remainingDays),
+          MapEntry('Validity', contractValidityLabel(contract)),
+          MapEntry('Payment entries', contract.payments.length),
+          MapEntry(
+              'Payments recorded',
+              formatCurrency(
+                  paymentTotal > 0 ? paymentTotal : contract.earnings)),
+          MapEntry('Last receipt', lastReceipt ?? 'Not recorded'),
+          MapEntry('Paid through', paidThrough ?? 'Not recorded'),
+        ],
       ]),
       if (details.isNotEmpty)
         _DetailGroup(
@@ -1707,26 +2985,27 @@ Future<void> _showContractDetails(
             rows: details
                 .map((e) => MapEntry(_prettyKey(e.key), e.value))
                 .toList()),
-      _DetailGroup(
-        title: 'Payments so far',
-        rows: contract.payments.isEmpty
-            ? const [
-                MapEntry('Payment history', 'No payment records available')
-              ]
-            : [
-                MapEntry(
-                    'Total paid',
-                    formatCurrency(
-                        paymentTotal > 0 ? paymentTotal : contract.earnings)),
-                for (var i = 0; i < contract.payments.length; i++)
+      if (!available)
+        _DetailGroup(
+          title: 'Payments so far',
+          rows: contract.payments.isEmpty
+              ? const [
+                  MapEntry('Payment history', 'No payment records available')
+                ]
+              : [
                   MapEntry(
-                      cleanText(
-                        contract.payments[i]['mr_no'],
-                        fallback: 'Payment ${i + 1}',
-                      ),
-                      _paymentSummary(contract.payments[i])),
-              ],
-      ),
+                      'Total paid',
+                      formatCurrency(
+                          paymentTotal > 0 ? paymentTotal : contract.earnings)),
+                  for (var i = 0; i < contract.payments.length; i++)
+                    MapEntry(
+                        cleanText(
+                          contract.payments[i]['mr_no'],
+                          fallback: 'Payment ${i + 1}',
+                        ),
+                        _paymentSummary(contract.payments[i])),
+                ],
+        ),
     ],
   );
 }
@@ -1913,11 +3192,15 @@ bool _hasDetailValue(Object? value) {
       text != 'â€”';
 }
 
-bool _internalDetailKey(String key) =>
-    key == 'source_hash' ||
-    key == 'created_at' ||
-    key == 'updated_at' ||
-    key == 'is_active';
+bool _internalDetailKey(String key) {
+  final normalized = key.trim().toLowerCase();
+  return normalized.startsWith('source') ||
+      normalized == 'created_at' ||
+      normalized == 'updated_at' ||
+      normalized == 'first_seen_at' ||
+      normalized == 'last_seen_at' ||
+      normalized == 'is_active';
+}
 
 class _DetailGroup {
   const _DetailGroup({required this.title, required this.rows});
@@ -1937,7 +3220,11 @@ Future<void> _showDetailSheet(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
-    backgroundColor: Colors.transparent,
+    backgroundColor: Theme.of(context).colorScheme.surface,
+    barrierColor: Colors.black54,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+    ),
     builder: (context) {
       final colors = Theme.of(context).colorScheme;
       return Padding(
@@ -2075,7 +3362,11 @@ Future<void> _showRawWorkDetails(BuildContext context, WorkSummary work) async {
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
-    backgroundColor: Colors.transparent,
+    backgroundColor: Theme.of(context).colorScheme.surface,
+    barrierColor: Colors.black54,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+    ),
     builder: (context) {
       final colors = Theme.of(context).colorScheme;
       return Padding(

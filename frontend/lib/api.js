@@ -127,6 +127,14 @@ export function importCommercialContractsUrl() {
   return `${API_URL}/api/commercial-contracts/import`;
 }
 
+export function cateringSyncUrl({ dryRun = false } = {}) {
+  return `${API_URL}/api/catering/sync?dry_run=${dryRun ? "true" : "false"}`;
+}
+
+export function cateringSyncHistoryUrl() {
+  return `${API_URL}/api/catering/sync-history`;
+}
+
 export function importSanctionedWorksUrl() {
   return `${API_URL}/api/works/import-sanctioned`;
 }

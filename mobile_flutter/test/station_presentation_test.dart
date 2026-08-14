@@ -73,6 +73,30 @@ void main() {
       expect(result.single.status, 'Active');
     });
 
+    test('unallotted units remain visible without tender earnings', () {
+      final result = buildContracts([
+        {
+          'unit_no': 'CS-09',
+          'type_of_unit': 'Catering stall',
+          'unit_status': 'Tender under Finalisation',
+          'remarks': 'Tender under Finalisation',
+          'earnings_total': 75000,
+          'earnings': [
+            {'amount': 75000, 'payment_head': 'Tender EMD'},
+          ],
+        },
+      ], const []);
+
+      expect(result, hasLength(1));
+      expect(result.single.name, contains('CS-09'));
+      expect(result.single.status, 'Available');
+      expect(result.single.earnings, 0);
+      expect(result.single.payments, isEmpty);
+      expect(result.single.validFrom, isNull);
+      expect(result.single.validTo, isNull);
+      expect(contractValidityLabel(result.single), 'Not allotted');
+    });
+
     test('works expose only concise fields and deduplicate by project id', () {
       final result = buildWorks([
         {

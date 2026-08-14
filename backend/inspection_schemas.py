@@ -23,6 +23,7 @@ class InspectionCreate(BaseModel):
     started_at: datetime | None = None
     completed_at: datetime | None = None
     client_updated_at: datetime | None = None
+    server_version: int = Field(default=0, ge=0)
 
     @field_validator("station_code")
     @classmethod
@@ -43,6 +44,7 @@ class InspectionResponseUpsert(BaseModel):
     evidence_count: int = Field(default=0, ge=0, le=100)
     response_json: dict[str, Any] | list[Any] | None = None
     client_updated_at: datetime | None = None
+    server_version: int = Field(default=0, ge=0)
 
 
 class FindingUpsert(BaseModel):
@@ -67,6 +69,7 @@ class FindingUpsert(BaseModel):
     financial_implication: int | None = Field(default=None, ge=0)
     repeat_observation: bool = False
     client_updated_at: datetime | None = None
+    server_version: int = Field(default=0, ge=0)
 
     @field_validator("station_code")
     @classmethod
@@ -85,6 +88,7 @@ class EvidenceUpsert(BaseModel):
     context: str | None = Field(default=None, max_length=1000)
     created_at: datetime | None = None
     client_updated_at: datetime | None = None
+    server_version: int = Field(default=0, ge=0)
 
 
 class InspectionNoteUpsert(BaseModel):
@@ -97,6 +101,7 @@ class InspectionNoteUpsert(BaseModel):
     context: str | None = Field(default=None, max_length=1000)
     created_at: datetime | None = None
     client_updated_at: datetime | None = None
+    server_version: int = Field(default=0, ge=0)
 
 
 class SyncOperation(BaseModel):

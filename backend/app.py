@@ -16,6 +16,7 @@ from database import SessionLocal, engine, is_sqlite_fallback
 from models import (
     AmenityNorm,
     Base,
+    CateringSyncRun,
     CommercialContract,
     CommercialContractPayment,
     CommercialContractStationLink,
@@ -34,6 +35,12 @@ from models import (
     Work,
     WorkLink,
 )
+from import_catering_workbook import (
+    apply_import as apply_catering_import,
+    load_source as load_catering_source,
+    reconcile as reconcile_catering_source,
+    verify as verify_catering_import,
+)
 from api_utils import envelope, exception_response, filter_search, paginate, sort_items
 from inspection_router import router as inspection_router
 from services import (
@@ -47,6 +54,7 @@ from services import (
     get_station_detail,
     get_stats,
     hash_row,
+    is_available_unit,
     list_earnings,
     list_commercial_contracts,
     list_passenger_amenities,
@@ -56,6 +64,7 @@ from services import (
     parse_earnings,
     parse_commercial_contract_workbook,
     parse_amenity_norms,
+    parse_combined_accessibility,
     parse_fob_works,
     parse_pf_extension_works,
     parse_platform_extension_workbook,
@@ -66,6 +75,7 @@ from services import (
     parse_units,
     parse_wheel_chairs,
     parse_works,
+    parse_works_xlsx,
     passenger_amenity_sort_map,
     row_to_dict,
     split_scopes,
@@ -80,6 +90,7 @@ logger = logging.getLogger("rail_dashboard.api")
 PA_INFRA_SPREADSHEET_ID = "1UdRgQQPEkak1fUTuVH7jIn5R4sE3szAhM4VZJOdFIOU"
 SANCTIONED_WORKS_SPREADSHEET_ID = "1rJbfhcnEVuGMwGkT8yBObb9Bk5Hx0uU224EGxfplGRc"
 SANCTIONED_WORKS_GID = "590791228"
+CATERING_SPREADSHEET_ID = os.getenv("CATERING_SPREADSHEET_ID", "1JSlf6FOZMlSrb2wiAcb0LTk2BZYDPzvC98gNLfUDR-0")
 DEFAULT_PF_EXTENSION_WORKBOOK = r"C:\Users\CMI PA\Downloads\FOB & PF Extn Works (1).xlsx"
 PA_INFRA_TABS = {
     "norms": {"gid": "596063365", "model": AmenityNorm, "parser": parse_amenity_norms, "conflict": ["category", "amenity", "norm"], "skip": {"norm_key"}},
@@ -90,6 +101,7 @@ PA_INFRA_TABS = {
     "fob_works": {"gid": "1044004842", "model": PassengerAmenityWork, "parser": parse_fob_works, "conflict": ["work_type", "station_code", "work_name"], "skip": {"pa_work_key"}},
     "pf_extension": {"gid": "149152202", "model": PassengerAmenityWork, "parser": lambda text: parse_pf_extension_works(text, "PF Extension"), "conflict": ["work_type", "station_code", "work_name"], "skip": {"pa_work_key"}},
     "has": {"gid": "1583406196", "model": PassengerAmenityWork, "parser": lambda text: parse_pf_extension_works(text, "HAS"), "conflict": ["work_type", "station_code", "work_name"], "skip": {"pa_work_key"}},
+    "combined_accessibility": {"gid": "467658571", "model": StationPlatformExtensionStatus, "parser": parse_combined_accessibility, "conflict": ["station_code"], "skip": {"status_key"}},
 }
 
 
@@ -162,6 +174,82 @@ def activity(limit: int = 50):
         return envelope([row_to_dict(row) for row in rows], "ok")
     finally:
         session.close()
+
+
+def _catering_export_url() -> str:
+    return f"https://docs.google.com/spreadsheets/d/{CATERING_SPREADSHEET_ID}/export?format=xlsx"
+
+
+def _record_failed_catering_sync(started_at: datetime, message: str) -> None:
+    session = SessionLocal()
+    try:
+        with session.begin():
+            session.add(CateringSyncRun(
+                source_spreadsheet_id=CATERING_SPREADSHEET_ID,
+                status="failed",
+                started_at=started_at,
+                completed_at=datetime.now(timezone.utc),
+                error_message=message[:4000],
+            ))
+    except Exception:
+        logger.exception("Unable to record failed catering sync")
+    finally:
+        session.close()
+
+
+@app.get("/api/catering/sync-history")
+def catering_sync_history(limit: int = 10):
+    session = SessionLocal()
+    try:
+        rows = (
+            session.query(CateringSyncRun)
+            .order_by(CateringSyncRun.started_at.desc())
+            .limit(max(1, min(limit, 50)))
+            .all()
+        )
+        return envelope([row_to_dict(row) for row in rows], "ok")
+    finally:
+        session.close()
+
+
+@app.post("/api/catering/sync")
+def sync_catering_from_google_sheet(dry_run: bool = False):
+    started_at = datetime.now(timezone.utc)
+    try:
+        response = requests.get(_catering_export_url(), timeout=120)
+        response.raise_for_status()
+        if len(response.content) < 1000 or not response.content.startswith(b"PK"):
+            raise ValueError("Google Sheets did not return a valid XLSX workbook")
+
+        units, raw_earnings, notes = load_catering_source(response.content)
+        earnings, report = reconcile_catering_source(units, raw_earnings)
+        report["source"].update(notes)
+        report["source"]["spreadsheet_id"] = CATERING_SPREADSHEET_ID
+        report["source"]["tabs"] = ["UNITS BASE DATA", "EARNINGS BASE DATA"]
+        report["mode"] = "dry-run" if dry_run else "apply"
+        if not dry_run:
+            apply_catering_import(
+                "Google Sheets BASE DATA",
+                units,
+                earnings,
+                report,
+                spreadsheet_id=CATERING_SPREADSHEET_ID,
+            )
+            verify_catering_import(report)
+        return envelope(report, "Catering data validated" if dry_run else "Catering data synchronized")
+    except requests.RequestException as exc:
+        message = f"Unable to download catering Google Sheet: {exc}"
+        _record_failed_catering_sync(started_at, message)
+        raise HTTPException(status_code=502, detail=message) from exc
+    except (ValueError, RuntimeError) as exc:
+        message = str(exc)
+        _record_failed_catering_sync(started_at, message)
+        raise HTTPException(status_code=422, detail=message) from exc
+    except Exception as exc:
+        logger.exception("Catering synchronization failed")
+        message = f"Catering synchronization failed: {exc}"
+        _record_failed_catering_sync(started_at, message)
+        raise HTTPException(status_code=500, detail=message) from exc
 
 
 @app.post("/api/ai/query")
@@ -362,7 +450,9 @@ def _pa_export_url(gid: str) -> str:
 
 
 def _sanctioned_works_export_url() -> str:
-    return f"https://docs.google.com/spreadsheets/d/{SANCTIONED_WORKS_SPREADSHEET_ID}/export?format=csv&gid={SANCTIONED_WORKS_GID}"
+    # XLSX preserves the complete worksheet, including rows hidden by a Google
+    # Sheets filter and numeric cells. The CSV view is not a full-register import.
+    return f"https://docs.google.com/spreadsheets/d/{SANCTIONED_WORKS_SPREADSHEET_ID}/export?format=xlsx"
 
 
 def _apply_pa_rows(session, tab_key: str, rows: list[dict]) -> int:
@@ -781,6 +871,7 @@ def create_unit(payload: dict):
             if session.get(Unit, payload.get("unit_no")):
                 raise HTTPException(status_code=409, detail="Unit already exists")
             unit = _create_row(Unit, payload, "unit_no")
+            _apply_unit_availability(session, unit)
             session.add(unit)
             _log_change(session, "units", unit.unit_no, "create", "manual")
         return envelope(row_to_dict(unit), "unit created")
@@ -797,10 +888,24 @@ def update_unit(unit_no: str, payload: dict):
             if not unit:
                 raise HTTPException(status_code=404, detail="Unit not found")
             _assign_columns(unit, payload, skip={"unit_no", "created_at", "first_seen_at"})
+            _apply_unit_availability(session, unit)
             _log_change(session, "units", unit.unit_no, "update", "manual")
         return envelope(row_to_dict(unit), "unit updated")
     finally:
         session.close()
+
+
+def _apply_unit_availability(session, unit: Unit) -> None:
+    available = is_available_unit(unit)
+    if available:
+        if not unit.remarks and unit.unit_status and unit.unit_status != "Available":
+            unit.remarks = unit.unit_status
+        unit.unit_status = "Available"
+    scope = "tender_emd" if available else "unit"
+    session.query(Earning).filter(Earning.unit_no == unit.unit_no).update(
+        {"earning_scope": scope},
+        synchronize_session=False,
+    )
 
 
 @app.delete("/api/units/{unit_no}")
@@ -832,7 +937,7 @@ def import_sanctioned_works():
     try:
         response = requests.get(_sanctioned_works_export_url(), timeout=90)
         response.raise_for_status()
-        rows = parse_works(response.content.decode("utf-8-sig"))
+        rows = parse_works_xlsx(response.content)
         count = _replace_all_works(rows)
         return envelope({"rows": len(rows), "upserted": count}, "sanctioned works imported")
     except requests.RequestException as exc:
@@ -890,8 +995,16 @@ def delete_work(project_id: str):
 
 
 @app.get("/api/earnings")
-def earnings(q: str | None = None, unit_no: str | None = None, station_code: str | None = None, page: int = 1, page_size: int = 25, sort_by: str | None = None, sort_order: str = "asc", search: str | None = None):
-    items = filter_search(list_earnings(q=q, unit_no=unit_no, station_code=station_code), search or q)
+def earnings(q: str | None = None, unit_no: str | None = None, station_code: str | None = None, include_tender_emd: bool = False, page: int = 1, page_size: int = 25, sort_by: str | None = None, sort_order: str = "asc", search: str | None = None):
+    items = filter_search(
+        list_earnings(
+            q=q,
+            unit_no=unit_no,
+            station_code=station_code,
+            include_tender_emd=include_tender_emd,
+        ),
+        search or q,
+    )
     items = sort_items(items, sort_by if sort_by in earnings_sort_map() else None, sort_order)
     page_data = paginate(items, page, page_size)
     return envelope({"items": page_data.items, "pagination": {"total": page_data.total, "page": page_data.page, "page_size": page_data.page_size}}, "ok")

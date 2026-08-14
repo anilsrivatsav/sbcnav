@@ -5,8 +5,8 @@ import '../../shared/widgets.dart';
 import '../assistant/assistant_screen.dart';
 import '../reports/reports_screen.dart';
 import '../home/today_screen.dart';
-import '../inspections/inspections_screen.dart';
 import '../stations/stations_screen.dart';
+import '../works/works_screen.dart';
 
 class MobileShell extends StatefulWidget {
   const MobileShell({super.key});
@@ -31,9 +31,9 @@ class _MobileShellState extends State<MobileShell> {
       selectedIcon: Icons.train_rounded,
     ),
     _Destination(
-      label: 'Inspect',
-      icon: Icons.fact_check_outlined,
-      selectedIcon: Icons.fact_check_rounded,
+      label: 'Works',
+      icon: Icons.construction_outlined,
+      selectedIcon: Icons.construction_rounded,
     ),
     _Destination(
       label: 'Reports',
@@ -73,7 +73,7 @@ class _MobileShellState extends State<MobileShell> {
     final pages = [
       TodayScreen(onNavigate: _select),
       const StationsScreen(),
-      const InspectionsScreen(),
+      const WorksScreen(),
       const ReportsScreen(),
       const AssistantScreen(),
     ];
@@ -338,6 +338,7 @@ class _NavItem extends StatelessWidget {
       'Home' => colors.tertiary,
       'Stations' => colors.primary,
       'Inspect' => colors.secondary,
+      'Works' => colors.secondary,
       'Reports' => statusTone('pending'),
       _ => colors.primary,
     };

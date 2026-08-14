@@ -304,21 +304,27 @@ List<ContractSummary> buildContracts(
   for (final raw in catering) {
     final row = _map(raw);
     final unitNo = cleanText(row['unit_no'], fallback: '');
-    final paymentRows = _paymentRows(row);
+    final available = _isAvailableCateringRow(row);
+    final paymentRows =
+        available ? const <Map<String, dynamic>>[] : _paymentRows(row);
     final paymentLicensee = paymentRows
         .map((payment) => cleanText(payment['licensee_name'], fallback: ''))
         .firstWhere((value) => value.isNotEmpty, orElse: () => '');
-    final name = cleanText(
-      row['licensee_name'],
-      fallback: paymentLicensee.isNotEmpty
-          ? paymentLicensee
-          : cleanText(row['type_of_unit'], fallback: 'Catering contract'),
-    );
-    final earnings = numericValue(row['earnings_total']) ??
-        _list(row['earnings']).fold<double>(
-          0,
-          (sum, earning) => sum + (numericValue(_map(earning)['amount']) ?? 0),
-        );
+    final unitType = cleanText(row['type_of_unit'], fallback: 'Catering unit');
+    final name = available
+        ? unitType
+        : cleanText(
+            row['licensee_name'],
+            fallback: paymentLicensee.isNotEmpty ? paymentLicensee : unitType,
+          );
+    final earnings = available
+        ? 0.0
+        : numericValue(row['earnings_total']) ??
+            _list(row['earnings']).fold<double>(
+              0,
+              (sum, earning) =>
+                  sum + (numericValue(_map(earning)['amount']) ?? 0),
+            );
     merge(
       ContractSummary(
         key: _normalizeKey(unitNo.isNotEmpty
@@ -327,17 +333,28 @@ List<ContractSummary> buildContracts(
         name: unitNo.isEmpty ? name : '$unitNo · $name',
         type: cleanText(row['type_of_unit'], fallback: 'Catering'),
         earnings: earnings,
-        status: cleanText(row['unit_status'], fallback: 'Status unavailable'),
-        validFrom: _contractDate(
-            row, ['valid_from', 'contract_from', 'contract_period_from']),
-        validTo:
-            _contractDate(row, ['valid_to', 'contract_to', 'contract_upto']),
-        renewalState: _renewalState(
-          _contractDate(row, ['valid_to', 'contract_to', 'contract_upto']),
-        ),
-        daysToExpiry: _daysToExpiry(
-          _contractDate(row, ['valid_to', 'contract_to', 'contract_upto']),
-        ),
+        status: available
+            ? 'Available'
+            : cleanText(row['unit_status'], fallback: 'Status unavailable'),
+        validFrom: available
+            ? null
+            : _contractDate(
+                row, ['valid_from', 'contract_from', 'contract_period_from']),
+        validTo: available
+            ? null
+            : _contractDate(row, ['valid_to', 'contract_to', 'contract_upto']),
+        renewalState: available
+            ? 'Not allotted'
+            : _renewalState(
+                _contractDate(
+                    row, ['valid_to', 'contract_to', 'contract_upto']),
+              ),
+        daysToExpiry: available
+            ? null
+            : _daysToExpiry(
+                _contractDate(
+                    row, ['valid_to', 'contract_to', 'contract_upto']),
+              ),
         details: row,
         payments: paymentRows,
       ),
@@ -383,6 +400,23 @@ List<ContractSummary> buildContracts(
   final result = grouped.values.toList();
   result.sort((a, b) => a.name.compareTo(b.name));
   return result;
+}
+
+bool _isAvailableCateringRow(Map<String, dynamic> row) {
+  if (cleanText(row['unit_status'], fallback: '').toLowerCase() ==
+      'available') {
+    return true;
+  }
+  final licensee = cleanText(row['licensee_name'], fallback: '');
+  final from = cleanText(
+    row['valid_from'] ?? row['contract_from'] ?? row['contract_period_from'],
+    fallback: '',
+  );
+  final to = cleanText(
+    row['valid_to'] ?? row['contract_to'] ?? row['contract_upto'],
+    fallback: '',
+  );
+  return licensee.isEmpty && from.isEmpty && to.isEmpty;
 }
 
 List<Map<String, dynamic>> _paymentRows(Map<String, dynamic> row) {
@@ -534,6 +568,7 @@ String _renewalState(DateTime? end) {
 }
 
 String contractValidityLabel(ContractSummary contract) {
+  if (contract.status.toLowerCase() == 'available') return 'Not allotted';
   if (contract.validTo == null) return 'Validity date unavailable';
   final date = DateFormat('dd MMM yyyy').format(contract.validTo!);
   final days = contract.daysToExpiry ?? 0;
@@ -543,6 +578,7 @@ String contractValidityLabel(ContractSummary contract) {
 }
 
 String contractRiskLabel(ContractSummary contract) {
+  if (contract.status.toLowerCase() == 'available') return 'Available';
   final days = contract.daysToExpiry;
   if (days == null) return 'Validity missing';
   if (days < 0) return 'Expired';

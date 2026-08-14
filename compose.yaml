@@ -34,6 +34,7 @@ services:
       AI_MODEL: ${AI_MODEL:-gpt-4.1-mini}
       BACKEND_WORKERS: ${BACKEND_WORKERS:-2}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      CATERING_SPREADSHEET_ID: ${CATERING_SPREADSHEET_ID:-1JSlf6FOZMlSrb2wiAcb0LTk2BZYDPzvC98gNLfUDR-0}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     depends_on:

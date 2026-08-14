@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
 
 import '../../data/local/app_database.dart';
+import '../../core/theme/app_theme.dart';
 import '../../shared/widgets.dart';
+import '../findings/findings_screen.dart';
 import 'report_pdf_export.dart';
 
 class ReportsScreen extends ConsumerStatefulWidget {
@@ -17,84 +18,130 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabs;
   late Future<_ReportData> _report;
-  int _contractWindow = 30;
 
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 3, vsync: this);
+    _tabs = TabController(length: 4, vsync: this);
     _report = _load();
   }
 
   Future<_ReportData> _load() async {
     final database = ref.read(databaseProvider);
     final stations = await database.stationOverviewRows();
-    final notifications = await database.notifications();
-    final findings = await database.findings();
-    var units = 0;
-    var contracts = 0;
-    var works = 0;
-    var openWorks = 0;
-    final contractValidity = <String, Map<String, dynamic>>{};
+    final contracts = <Map<String, dynamic>>[];
+    final works = <Map<String, dynamic>>[];
+    final amenities = <Map<String, dynamic>>[];
     for (final row in stations) {
       final detail = row['_station_detail'];
       if (detail is! Map) continue;
-      final stationCode =
-          '${row['station_code'] ?? detail['station_code'] ?? ''}'
-              .trim()
-              .toUpperCase();
-      final stationName =
+      final code = '${row['station_code'] ?? detail['station_code'] ?? ''}'
+          .trim()
+          .toUpperCase();
+      final name =
           '${row['station_name'] ?? detail['station_name'] ?? ''}'.trim();
-      final cateringRows =
-          detail['contracts'] is List ? detail['contracts'] as List : const [];
-      final commercialRows = detail['commercial_contracts'] is List
-          ? detail['commercial_contracts'] as List
-          : const [];
-      final contractRows = [...cateringRows, ...commercialRows];
-      for (final value in cateringRows) {
-        if (value is! Map) continue;
-        _addContractValidity(
-          contractValidity,
-          value,
-          stationCode: stationCode,
-          stationName: stationName,
-          sourceType: 'unit',
-        );
+      final stationRecord = _map(detail['station']);
+      final srDen =
+          _first(row, ['sr_den', 'sr den', 'Sr DEN', 'SR DEN', 'sr.den']) ??
+              _first(stationRecord,
+                  ['sr_den', 'sr den', 'Sr DEN', 'SR DEN', 'sr.den']);
+      final cmi = _first(row, ['cmi', 'CMI', 'commercial_inspector']) ??
+          _first(stationRecord, ['cmi', 'CMI', 'commercial_inspector']);
+      final section = _first(row, ['section', 'Section', 'block_section']) ??
+          _first(stationRecord, ['section', 'Section', 'block_section']);
+      final abss = _truthy(_first(row, ['abss_flag', 'ABSS']) ??
+          _first(stationRecord, ['abss_flag', 'ABSS']));
+      final contractRows = [
+        ..._list(detail['contracts']),
+        ..._list(detail['commercial_contracts']),
+      ];
+      for (final raw in contractRows) {
+        if (raw is! Map) continue;
+        final item = Map<String, dynamic>.from(raw);
+        item['station_code'] = code;
+        item['station_name'] = name;
+        item['report_group'] = _contractGroup(item);
+        contracts.add(item);
       }
-      for (final value in commercialRows) {
-        if (value is! Map) continue;
-        _addContractValidity(
-          contractValidity,
-          value,
-          stationCode: stationCode,
-          stationName: stationName,
-          sourceType: 'commercial',
-        );
+      for (final raw in _list(detail['works'])) {
+        if (raw is! Map) continue;
+        final item = Map<String, dynamic>.from(raw);
+        item['station_code'] = code;
+        item['station_name'] = name;
+        item['sr_den'] = srDen;
+        item['cmi'] = cmi;
+        item['section'] = section;
+        item['report_group'] = _workGroup(item, abss: abss);
+        item['work_section'] = _workSection(item);
+        item['deletion_recommended'] = _deletionRecommended(item);
+        works.add(item);
       }
-      final unitRows = detail['units'];
-      final workRows = detail['works'];
-      units += unitRows is List ? unitRows.length : 0;
-      contracts += contractRows.length;
-      if (workRows is List) {
-        works += workRows.length;
-        openWorks += workRows.where((work) {
-          final status = '${work is Map ? work['status'] : ''}'.toLowerCase();
-          return !status.contains('complete') && !status.contains('done');
-        }).length;
-      }
+      _addAmenities(amenities, code, name, detail['amenities']);
     }
+    final globalWorks = await database.portfolioWorks();
+    final reportWorks = globalWorks.isEmpty
+        ? works
+        : globalWorks.asMap().entries.map((entry) {
+            final raw = entry.value;
+            final item = Map<String, dynamic>.from(raw);
+            item['sl_no'] = item['source_sn'] ?? entry.key + 1;
+            item['report_group'] = _workGroup(item);
+            item['work_section'] = _workSection(item);
+            item['deletion_recommended'] = _deletionRecommended(item);
+            item['sr_den'] = item['sr_den'] ?? item['sr den'] ?? item['Sr DEN'];
+            item['cmi'] = item['cmi'] ?? item['CMI'];
+            item['section'] = item['section'] ?? item['Section'];
+            return item;
+          }).toList();
     return _ReportData(
       stations: stations.length,
-      units: units,
       contracts: contracts,
-      works: works,
-      openWorks: openWorks,
-      notifications: notifications,
-      contractValidity: contractValidity.values.toList()
-        ..sort((a, b) =>
-            (a['days_remaining'] as int).compareTo(b['days_remaining'] as int)),
-      findings: findings,
+      works: reportWorks,
+      amenities: amenities,
     );
+  }
+
+  void _addAmenities(List<Map<String, dynamic>> target, String code,
+      String name, Object? raw) {
+    if (raw is! Map) return;
+    final amenities = Map<String, dynamic>.from(raw);
+    void add(String group, String title, Object? value) {
+      if (value == null ||
+          '$value'.trim().isEmpty ||
+          '$value'.toLowerCase() == 'na') return;
+      target.add({
+        'station_code': code,
+        'station_name': name,
+        'report_group': group,
+        'amenity': title,
+        'details': value
+      });
+    }
+
+    final infra = _map(amenities['infra']);
+    add('Station infrastructure', 'FOB', infra['fob_details']);
+    add('Station infrastructure', 'Shelters', infra['shelter_details']);
+    for (final rawPlatform in _list(amenities['platforms'])) {
+      final platform = _map(rawPlatform);
+      add('Platforms', '${platform['platform'] ?? 'Platform'}',
+          'Length ${platform['length_m'] ?? '-'} m');
+    }
+    final wheelchair = _map(amenities['wheelchairs']);
+    add('Accessibility', 'Wheelchairs', wheelchair['available_good_condition']);
+    final trolley = _map(amenities['trolley']);
+    add('Accessibility', 'Trolley path', trolley['trolley_path']);
+    final access = _map(amenities['pf_extension_status']);
+    add('Accessibility', 'Lifts', access['lift_details']);
+    add('Accessibility', 'Ramps', access['ramp_details']);
+    add('Accessibility', 'Escalators', access['escalator_details']);
+    for (final rawNorm in _list(amenities['norms'])) {
+      final norm = _map(rawNorm);
+      final detail = '${norm['norm'] ?? ''}'.trim();
+      if (detail.isEmpty) continue;
+      final quantity = '${norm['norm_quantity'] ?? ''}'.trim();
+      add('Norms: ${norm['amenity'] ?? 'Other'}', detail,
+          quantity.isEmpty ? 'Norm recorded' : quantity);
+    }
   }
 
   void _reload() => setState(() => _report = _load());
@@ -110,38 +157,35 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen>
     return FutureBuilder<_ReportData>(
       future: _report,
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const GlassLoadingList(itemCount: 5);
-        }
-        if (snapshot.hasError) {
+        if (snapshot.connectionState == ConnectionState.waiting)
+          return const GlassLoadingList(itemCount: 6);
+        if (snapshot.hasError)
           return ErrorPane(error: snapshot.error!, retry: _reload);
-        }
         final data = snapshot.data!;
         return Column(
           children: [
             const Padding(
-              padding: EdgeInsets.fromLTRB(
-                AppSpacing.page,
-                AppSpacing.x3,
-                AppSpacing.page,
-                AppSpacing.x1,
-              ),
+              padding: EdgeInsets.fromLTRB(AppSpacing.page, AppSpacing.x3,
+                  AppSpacing.page, AppSpacing.x1),
               child: PageHeading(
-                title: 'Reports',
-                subtitle:
-                    'Actionable station, contract and inspection summaries.',
-              ),
+                  title: 'Reports',
+                  subtitle:
+                      'Portfolio reports - v1.0.3 - stations, contracts and amenities.'),
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: AppSpacing.page),
-              child: GlassPanel(
-                padding: const EdgeInsets.all(6),
+              child: NeoPanel(
+                padding: const EdgeInsets.all(5),
                 child: TabBar(
                   controller: _tabs,
+                  isScrollable: true,
                   tabs: const [
-                    Tab(text: 'Overview'),
-                    Tab(text: 'Contracts'),
-                    Tab(text: 'Findings'),
+                    Tab(icon: Icon(Icons.dashboard_rounded), text: 'Overview'),
+                    Tab(icon: Icon(Icons.handshake_rounded), text: 'Contracts'),
+                    Tab(
+                        icon: Icon(Icons.accessibility_new_rounded),
+                        text: 'Amenities'),
+                    Tab(icon: Icon(Icons.fact_check_rounded), text: 'Findings'),
                   ],
                 ),
               ),
@@ -152,13 +196,28 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen>
                 controller: _tabs,
                 children: [
                   _OverviewReport(data: data),
-                  _ContractReport(
-                    rows: data.contractValidity,
-                    selectedDays: _contractWindow,
-                    onSelected: (days) =>
-                        setState(() => _contractWindow = days),
-                  ),
-                  _FindingReport(rows: data.findings),
+                  _ReportRegister(
+                      title: 'Contracts register',
+                      rows: data.contracts,
+                      groups: _groups(data.contracts),
+                      columns: const [
+                        'station_code',
+                        'unit_no',
+                        'report_group',
+                        'licensee_name',
+                        'contract_to'
+                      ]),
+                  _ReportRegister(
+                      title: 'Passenger amenities register',
+                      rows: data.amenities,
+                      groups: _groups(data.amenities),
+                      columns: const [
+                        'station_code',
+                        'report_group',
+                        'amenity',
+                        'details'
+                      ]),
+                  const FindingsScreen(embedded: true),
                 ],
               ),
             ),
@@ -170,89 +229,15 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen>
 }
 
 class _ReportData {
-  const _ReportData({
-    required this.stations,
-    required this.units,
-    required this.contracts,
-    required this.works,
-    required this.openWorks,
-    required this.notifications,
-    required this.contractValidity,
-    required this.findings,
-  });
-
+  const _ReportData(
+      {required this.stations,
+      required this.contracts,
+      required this.works,
+      required this.amenities});
   final int stations;
-  final int units;
-  final int contracts;
-  final int works;
-  final int openWorks;
-  final List<Map<String, dynamic>> notifications;
-  final List<Map<String, dynamic>> contractValidity;
-  final List<Map<String, dynamic>> findings;
-}
-
-void _addContractValidity(
-  Map<String, Map<String, dynamic>> target,
-  Map contract, {
-  required String stationCode,
-  required String stationName,
-  required String sourceType,
-}) {
-  final validTo = _parseReportDate(contract['valid_to'] ??
-      contract['contract_to'] ??
-      contract['contract_upto'] ??
-      contract['contract_period_to']);
-  if (validTo == null) return;
-  final now = DateTime.now();
-  final today = DateTime(now.year, now.month, now.day);
-  final due = DateTime(validTo.year, validTo.month, validTo.day);
-  final days = due.difference(today).inDays;
-  if (days < 0) return;
-
-  final code =
-      '${contract['unit_no'] ?? contract['allocation_code'] ?? contract['contract_key'] ?? ''}'
-          .trim();
-  final rawName =
-      '${contract['contract_name'] ?? contract['licensee_name'] ?? ''}'.trim();
-  final type =
-      '${contract['type_of_unit'] ?? contract['sub_category'] ?? contract['policy'] ?? 'Contract'}'
-          .trim();
-  final name = rawName.isEmpty || rawName.toUpperCase() == 'NA'
-      ? (type.isEmpty ? 'Contract' : type)
-      : rawName;
-  final identity = code.isNotEmpty ? code : name;
-  final key = '$sourceType:$stationCode:${identity.toUpperCase()}';
-  target[key] = {
-    ...contract.map((key, value) => MapEntry('$key', value)),
-    'key': key,
-    'source_type': sourceType,
-    'contract_code': code.isEmpty ? 'No code' : code,
-    'contract_name': name,
-    'contract_type': type,
-    'station_code': stationCode,
-    'station_name': stationName,
-    'valid_to': due.toIso8601String(),
-    'days_remaining': days,
-  };
-}
-
-DateTime? _parseReportDate(Object? value) {
-  final text = '${value ?? ''}'.trim();
-  if (text.isEmpty || text.toLowerCase() == 'null') return null;
-  final iso = DateTime.tryParse(text);
-  if (iso != null) return iso;
-  final parts = text.split(RegExp(r'[/\-.]'));
-  if (parts.length != 3) return null;
-  final first = int.tryParse(parts[0]);
-  final month = int.tryParse(parts[1]);
-  final last = int.tryParse(parts[2]);
-  if (first == null || month == null || last == null) return null;
-  final year = parts[2].length == 2 ? 2000 + last : last;
-  try {
-    return DateTime(year, month, first);
-  } on ArgumentError {
-    return null;
-  }
+  final List<Map<String, dynamic>> contracts;
+  final List<Map<String, dynamic>> works;
+  final List<Map<String, dynamic>> amenities;
 }
 
 class _OverviewReport extends StatelessWidget {
@@ -261,128 +246,152 @@ class _OverviewReport extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final openWorks =
+        data.works.where((row) => !_isComplete(row['status'])).length;
+    final groups = <String, int>{};
+    for (final row in data.contracts)
+      groups['${row['report_group']}'] =
+          (groups['${row['report_group']}'] ?? 0) + 1;
     return ListView(
       padding:
           const EdgeInsets.fromLTRB(AppSpacing.page, 0, AppSpacing.page, 28),
       children: [
-        Wrap(
-          spacing: 10,
-          runSpacing: 10,
-          children: [
-            _ReportMetric(
-                label: 'Stations',
-                value: data.stations,
-                icon: Icons.train_rounded),
-            _ReportMetric(
-                label: 'Units',
-                value: data.units,
-                icon: Icons.storefront_rounded),
-            _ReportMetric(
-                label: 'Contracts',
-                value: data.contracts,
-                icon: Icons.assignment_rounded),
-            _ReportMetric(
-                label: 'Works',
-                value: data.works,
-                icon: Icons.construction_rounded),
-            _ReportMetric(
-                label: 'Open works',
-                value: data.openWorks,
-                icon: Icons.pending_actions_rounded),
-          ],
+        Text('Application overview',
+            style: Theme.of(context)
+                .textTheme
+                .titleLarge
+                ?.copyWith(fontWeight: FontWeight.w900)),
+        const SizedBox(height: 10),
+        Wrap(spacing: 10, runSpacing: 10, children: [
+          _Metric('Stations', data.stations, Icons.train_rounded),
+          _Metric('Contracts', data.contracts.length, Icons.handshake_rounded),
+          _Metric('Amenities', data.amenities.length,
+              Icons.accessibility_new_rounded),
+          _Metric('Works', data.works.length, Icons.construction_rounded),
+          _Metric('Open works', openWorks, Icons.pending_actions_rounded),
+        ]),
+        const SizedBox(height: AppSpacing.x2),
+        NeoPanel(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('Contract portfolio',
+                style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+            const SizedBox(height: 12),
+            for (final entry in groups.entries)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(children: [
+                  Expanded(child: Text(entry.key)),
+                  StatusBadge('${entry.value}')
+                ]),
+              ),
+          ]),
         ),
         const SizedBox(height: AppSpacing.x2),
-        GlassPanel(
-          child: Row(
-            children: [
-              Icon(Icons.cloud_done_rounded,
-                  color: Theme.of(context).colorScheme.primary),
-              const SizedBox(width: 10),
-              const Expanded(
-                child: Text(
-                    'Reports use the latest station details stored on this device. Refresh from PostgreSQL to update them.'),
-              ),
-            ],
-          ),
-        ),
+        const NeoPanel(
+            child: Row(children: [
+          Icon(Icons.storage_rounded),
+          SizedBox(width: 10),
+          Expanded(
+              child: Text(
+                  'This report is generated from the latest station data stored offline on this device. Use Sync to refresh PostgreSQL data.'))
+        ])),
       ],
     );
   }
 }
 
-class _ReportMetric extends StatelessWidget {
-  const _ReportMetric(
-      {required this.label, required this.value, required this.icon});
+class _Metric extends StatelessWidget {
+  const _Metric(this.label, this.value, this.icon);
   final String label;
   final int value;
   final IconData icon;
-
   @override
-  Widget build(BuildContext context) {
-    return SizedBox(
+  Widget build(BuildContext context) => SizedBox(
       width: 145,
-      child: GlassPanel(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, color: Theme.of(context).colorScheme.primary),
-            const SizedBox(height: 10),
-            Text('$value',
-                style: Theme.of(context)
-                    .textTheme
-                    .headlineSmall
-                    ?.copyWith(fontWeight: FontWeight.w900)),
-            Text(label),
-          ],
-        ),
-      ),
-    );
-  }
+      child: NeoPanel(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Icon(icon, color: Theme.of(context).colorScheme.primary),
+        const SizedBox(height: 8),
+        Text('$value',
+            style: Theme.of(context)
+                .textTheme
+                .headlineSmall
+                ?.copyWith(fontWeight: FontWeight.w900)),
+        Text(label)
+      ])));
 }
 
-class _ContractReport extends StatefulWidget {
-  const _ContractReport({
-    required this.rows,
-    required this.selectedDays,
-    required this.onSelected,
-  });
-
+class _ReportRegister extends StatefulWidget {
+  const _ReportRegister(
+      {required this.title,
+      required this.rows,
+      required this.groups,
+      this.workFilters = false,
+      this.dimensions = const ['report_group'],
+      required this.columns});
+  final String title;
   final List<Map<String, dynamic>> rows;
-  final int selectedDays;
-  final ValueChanged<int> onSelected;
-
+  final List<String> groups;
+  final bool workFilters;
+  final List<String> dimensions;
+  final List<String> columns;
   @override
-  State<_ContractReport> createState() => _ContractReportState();
+  State<_ReportRegister> createState() => _ReportRegisterState();
 }
 
-class _ContractReportState extends State<_ContractReport> {
-  static const _rowsPerPage = 5;
-  int _page = 0;
+class _ReportRegisterState extends State<_ReportRegister> {
+  String _group = 'All';
+  String _dimension = 'report_group';
+  String _dimensionValue = 'All';
+  String _section = 'All';
+  String _type = 'All';
+  String _query = '';
   bool _exporting = false;
 
-  @override
-  void didUpdateWidget(covariant _ContractReport oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.selectedDays != widget.selectedDays ||
-        oldWidget.rows != widget.rows) {
-      _page = 0;
-    }
+  List<Map<String, dynamic>> get _filtered {
+    final q = _query.trim().toLowerCase();
+    return widget.rows.where((row) {
+      final groupOk = widget.workFilters
+          ? (_type == 'All' || '${row['report_group']}' == _type)
+          : _dimension == 'report_group'
+              ? (_group == 'All' || '${row['report_group']}' == _group)
+              : (_dimensionValue == 'All' ||
+                  '${row[_dimension] ?? 'Unassigned'}' == _dimensionValue);
+      final sectionOk = !widget.workFilters ||
+          _section == 'All' ||
+          '${row['work_section'] ?? 'Other'}' == _section;
+      final queryOk = q.isEmpty ||
+          row.values.any((value) => '$value'.toLowerCase().contains(q));
+      return groupOk && sectionOk && queryOk;
+    }).toList();
   }
 
-  Future<void> _export(List<Map<String, dynamic>> alerts) async {
-    if (_exporting) return;
+  Future<void> _export(bool pdf) async {
     setState(() => _exporting = true);
     try {
-      await exportContractExpiryPdf(
-        rows: alerts,
-        windowDays: widget.selectedDays,
-        moreThanFiftyDays: widget.selectedDays == 51,
-      );
+      final rows = _filtered;
+      if (pdf) {
+        await exportReportPdf(
+            title: widget.title,
+            subtitle: '${rows.length} records · filter: $_group',
+            rows: rows,
+            columns: widget.columns);
+      } else {
+        final file = await exportReportCsv(
+            title: widget.title, rows: rows, columns: widget.columns);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+                content: Text('Excel-compatible CSV saved to ${file.path}')),
+          );
+        }
+      }
     } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('PDF export failed: $error')),
-      );
+      if (mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Export failed: $error')));
     } finally {
       if (mounted) setState(() => _exporting = false);
     }
@@ -390,261 +399,459 @@ class _ContractReportState extends State<_ContractReport> {
 
   @override
   Widget build(BuildContext context) {
-    final source = widget.rows
-        .where((row) => row['days_remaining'] is int)
-        .toList()
-      ..sort((a, b) =>
-          (a['days_remaining'] as int).compareTo(b['days_remaining'] as int));
-    final alerts = widget.selectedDays == 51
-        ? source.where((item) => (item['days_remaining'] as int) > 50).toList()
-        : source
-            .where((item) =>
-                (item['days_remaining'] as int) <= widget.selectedDays)
-            .toList();
-    final pageCount =
-        alerts.isEmpty ? 1 : (alerts.length / _rowsPerPage).ceil();
-    final safePage = _page.clamp(0, pageCount - 1);
-    final start = safePage * _rowsPerPage;
-    final pageRows = alerts.skip(start).take(_rowsPerPage).toList();
-
-    return Column(
-      children: [
-        Padding(
+    final rows = _filtered;
+    final dimensionValues = _dimension == 'report_group'
+        ? widget.groups
+        : (widget.rows
+            .map((row) => '${row[_dimension] ?? 'Unassigned'}')
+            .where((value) => value.trim().isNotEmpty && value != 'null')
+            .toSet()
+            .toList()
+          ..sort());
+    return Column(children: [
+      Padding(
           padding: const EdgeInsets.symmetric(horizontal: AppSpacing.page),
-          child: Row(
-            children: [
-              for (final days in const [30, 10, 5, 51])
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 3),
-                    child: GlassFilterChip(
-                      label: days == 51 ? '50+' : '${days}d',
-                      selected: widget.selectedDays == days,
-                      onTap: () => widget.onSelected(days),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        const SizedBox(height: AppSpacing.x1),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.page),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  widget.selectedDays == 51
-                      ? '${alerts.length} contracts valid beyond 50 days'
-                      : '${alerts.length} contracts within ${widget.selectedDays} days',
-                  style: Theme.of(context)
-                      .textTheme
-                      .labelLarge
-                      ?.copyWith(fontWeight: FontWeight.w900),
-                ),
-              ),
-              AppIconButton(
-                tooltip: 'Export all matching contracts to PDF',
-                icon: _exporting
-                    ? Icons.hourglass_top_rounded
-                    : Icons.picture_as_pdf_rounded,
-                onPressed: _exporting ? null : () => _export(alerts),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: AppSpacing.x1),
-        Expanded(
-          child: alerts.isEmpty
-              ? EmptyState(
-                  icon: Icons.verified_rounded,
-                  title: widget.selectedDays == 51
-                      ? 'No contracts valid beyond 50 days'
-                      : 'No contracts due within ${widget.selectedDays} days',
-                  message:
-                      'The list updates from actual contract validity dates after a PostgreSQL refresh.',
-                )
-              : Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: AppSpacing.page),
-                  child: Column(
-                    children: [
-                      for (final item in pageRows) ...[
-                        SizedBox(
-                          height: 62,
-                          child: GlassPanel(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 6),
-                            child: Row(
-                              children: [
-                                Container(
-                                  width: 42,
-                                  height: 42,
-                                  alignment: Alignment.center,
-                                  decoration: BoxDecoration(
-                                    color: _contractTone(
-                                            item['days_remaining'] as int)
-                                        .withValues(alpha: 0.12),
-                                    borderRadius: BorderRadius.circular(14),
-                                  ),
-                                  child: Text(
-                                    '${item['contract_code']}',
-                                    maxLines: 2,
-                                    textAlign: TextAlign.center,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.w900,
-                                      color: _contractTone(
-                                          item['days_remaining'] as int),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 9),
-                                Expanded(
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        '${item['contract_name']}',
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                            fontWeight: FontWeight.w900),
-                                      ),
-                                      const SizedBox(height: 2),
-                                      Row(
-                                        children: [
-                                          Icon(Icons.location_on_rounded,
-                                              size: 12,
-                                              color: Theme.of(context)
-                                                  .colorScheme
-                                                  .primary),
-                                          const SizedBox(width: 2),
-                                          Text(
-                                            '${item['station_code']}',
-                                            style: Theme.of(context)
-                                                .textTheme
-                                                .bodySmall
-                                                ?.copyWith(
-                                                    fontWeight:
-                                                        FontWeight.w800),
-                                          ),
-                                          const Text('  ·  '),
-                                          Flexible(
-                                            child: Text(
-                                              _shortDate(item['valid_to']),
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: Theme.of(context)
-                                                  .textTheme
-                                                  .bodySmall,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                StatusBadge(
-                                  (item['days_remaining'] as int) == 0
-                                      ? 'Today'
-                                      : '${item['days_remaining']}d',
-                                  tone: _contractTone(
-                                      item['days_remaining'] as int),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: AppSpacing.x1),
-                      ],
-                    ],
-                  ),
-                ),
-        ),
-        if (alerts.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(
-                AppSpacing.page, 4, AppSpacing.page, 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                AppIconButton(
-                  tooltip: 'Previous page',
-                  icon: Icons.chevron_left_rounded,
-                  onPressed: safePage == 0
-                      ? null
-                      : () => setState(() => _page = safePage - 1),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 14),
-                  child: Text(
-                    'Page ${safePage + 1} of $pageCount',
-                    style: const TextStyle(fontWeight: FontWeight.w900),
-                  ),
-                ),
-                AppIconButton(
-                  tooltip: 'Next page',
-                  icon: Icons.chevron_right_rounded,
-                  onPressed: safePage >= pageCount - 1
-                      ? null
-                      : () => setState(() => _page = safePage + 1),
-                ),
-              ],
-            ),
-          ),
+          child: TextField(
+              decoration: const InputDecoration(
+                  prefixIcon: Icon(Icons.search_rounded),
+                  hintText: 'Search this report'),
+              onChanged: (value) => setState(() => _query = value))),
+      const SizedBox(height: 10),
+      if (widget.workFilters)
+        _WorkFilterPanel(
+          rows: widget.rows,
+          groups: widget.groups,
+          section: _section,
+          type: _type,
+          onSection: (value) => setState(() => _section = value),
+          onType: (value) => setState(() => _type = value),
+        )
+      else ...[
+        SizedBox(
+            height: 38,
+            child: ListView.separated(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: AppSpacing.page),
+                scrollDirection: Axis.horizontal,
+                itemCount: widget.dimensions.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 7),
+                itemBuilder: (_, index) {
+                  final label = _label(widget.dimensions[index]);
+                  return _ReportChip(
+                      label: label,
+                      selected: _dimension == widget.dimensions[index],
+                      onTap: () => setState(() {
+                            _dimension = widget.dimensions[index];
+                            _dimensionValue = 'All';
+                            _group = 'All';
+                          }));
+                })),
+        const SizedBox(height: 7),
+        SizedBox(
+            height: 38,
+            child: ListView.separated(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: AppSpacing.page),
+                scrollDirection: Axis.horizontal,
+                itemCount: dimensionValues.length + 1,
+                separatorBuilder: (_, __) => const SizedBox(width: 7),
+                itemBuilder: (_, index) {
+                  final label = index == 0 ? 'All' : dimensionValues[index - 1];
+                  final selected = (_dimension == 'report_group'
+                          ? _group
+                          : _dimensionValue) ==
+                      label;
+                  return _ReportChip(
+                      label: label,
+                      selected: selected,
+                      onTap: () => setState(() {
+                            if (_dimension == 'report_group') {
+                              _group = label;
+                            } else {
+                              _dimensionValue = label;
+                            }
+                          }));
+                })),
       ],
-    );
-  }
-
-  Color _contractTone(int days) {
-    if (days <= 10) return Colors.red;
-    if (days <= 30) return Colors.orange;
-    return Colors.green;
-  }
-
-  String _shortDate(Object? value) {
-    final date = DateTime.tryParse('${value ?? ''}');
-    return date == null
-        ? 'Date unavailable'
-        : DateFormat('dd MMM yyyy').format(date);
+      Padding(
+          padding: const EdgeInsets.fromLTRB(
+              AppSpacing.page, 10, AppSpacing.page, 6),
+          child: Row(children: [
+            Expanded(
+                child: Text('${rows.length} records',
+                    style: const TextStyle(fontWeight: FontWeight.w900))),
+            if (_exporting)
+              const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2))
+            else ...[
+              AppIconButton(
+                  tooltip: 'Export PDF',
+                  icon: Icons.picture_as_pdf_rounded,
+                  onPressed: () => _export(true)),
+              AppIconButton(
+                  tooltip: 'Export Excel CSV',
+                  icon: Icons.table_view_rounded,
+                  onPressed: () => _export(false))
+            ]
+          ])),
+      Expanded(
+          child: rows.isEmpty
+              ? const EmptyState(
+                  icon: Icons.filter_alt_off_rounded,
+                  title: 'No matching records',
+                  message: 'Try another category or search term.')
+              : ListView.separated(
+                  padding: const EdgeInsets.fromLTRB(
+                      AppSpacing.page, 0, AppSpacing.page, 28),
+                  itemCount: rows.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 8),
+                  itemBuilder: (_, index) => _ReportRow(
+                      row: rows[index],
+                      columns: widget.columns,
+                      onTap: () => showGlassBottomSheet<void>(context,
+                          builder: (_) => _ReportDetailSheet(
+                              title: widget.title, row: rows[index]))))),
+    ]);
   }
 }
 
-class _FindingReport extends StatelessWidget {
-  const _FindingReport({required this.rows});
+class _WorkFilterPanel extends StatelessWidget {
+  const _WorkFilterPanel({
+    required this.rows,
+    required this.groups,
+    required this.section,
+    required this.type,
+    required this.onSection,
+    required this.onType,
+  });
+
   final List<Map<String, dynamic>> rows;
+  final List<String> groups;
+  final String section;
+  final String type;
+  final ValueChanged<String> onSection;
+  final ValueChanged<String> onType;
 
   @override
   Widget build(BuildContext context) {
-    if (rows.isEmpty) {
-      return const EmptyState(
-          icon: Icons.task_alt_rounded,
-          title: 'No findings',
-          message: 'Inspection observations needing action will appear here.');
-    }
-    return ListView.separated(
-      padding:
-          const EdgeInsets.fromLTRB(AppSpacing.page, 0, AppSpacing.page, 28),
-      itemCount: rows.length,
-      separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.x1),
-      itemBuilder: (context, index) {
-        final row = rows[index];
-        return GlassPanel(
-          child: ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: Text('${row['title']}',
-                style: const TextStyle(fontWeight: FontWeight.w800)),
-            subtitle: Text(
-                '${row['station_code'] ?? 'Station'} · ${row['status'] ?? 'Open'}'),
-            trailing: StatusBadge('${row['severity'] ?? 'medium'}'),
-          ),
-        );
-      },
+    final sections = rows
+        .map((row) => '${row['work_section'] ?? 'Other'}')
+        .where((value) => value.trim().isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.page),
+      child: NeoPanel(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('Section', style: TextStyle(fontWeight: FontWeight.w900)),
+          const SizedBox(height: 8),
+          _chipList(
+              values: ['All', ...sections],
+              selected: section,
+              onSelected: onSection),
+          const SizedBox(height: 12),
+          const Text('Work type',
+              style: TextStyle(fontWeight: FontWeight.w900)),
+          const SizedBox(height: 8),
+          _chipList(
+              values: ['All', ...groups], selected: type, onSelected: onType),
+        ]),
+      ),
     );
   }
+}
+
+Widget _chipList({
+  required List<String> values,
+  required String selected,
+  required ValueChanged<String> onSelected,
+}) =>
+    SizedBox(
+        height: 38,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: values.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 7),
+          itemBuilder: (_, index) {
+            final value = values[index];
+            return _ReportChip(
+                label: value,
+                selected: selected == value,
+                onTap: () => onSelected(value));
+          },
+        ));
+
+class _ReportRow extends StatelessWidget {
+  const _ReportRow(
+      {required this.row, required this.columns, required this.onTap});
+  final Map<String, dynamic> row;
+  final List<String> columns;
+  final VoidCallback onTap;
+  @override
+  Widget build(BuildContext context) => NeoPanel(
+      onTap: onTap,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Expanded(
+              child: Text('${row[columns.first] ?? '-'}',
+                  style: const TextStyle(fontWeight: FontWeight.w900))),
+          StatusBadge('${row['report_group'] ?? ''}'),
+          if (row['deletion_recommended'] == true)
+            const Padding(
+              padding: EdgeInsets.only(left: 6),
+              child: StatusBadge('Deletion recommended', tone: AppPalette.red),
+            )
+        ]),
+        const SizedBox(height: 6),
+        for (final column in columns.skip(1))
+          if ('${row[column] ?? ''}'.trim().isNotEmpty &&
+              '${row[column]}' != 'null')
+            Padding(
+                padding: const EdgeInsets.only(bottom: 3),
+                child: Text('${_label(column)}: ${row[column]}',
+                    maxLines: 3, overflow: TextOverflow.ellipsis))
+      ]));
+}
+
+class _ReportDetailSheet extends StatelessWidget {
+  const _ReportDetailSheet({required this.title, required this.row});
+
+  final String title;
+  final Map<String, dynamic> row;
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = row.entries
+        .where((entry) =>
+            entry.value != null &&
+            '${entry.value}'.trim().isNotEmpty &&
+            '${entry.value}' != '[]' &&
+            '${entry.value}' != '{}')
+        .toList();
+    return SafeArea(
+      child: Padding(
+        padding:
+            const EdgeInsets.fromLTRB(AppSpacing.page, 8, AppSpacing.page, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+                child: Container(
+                    width: 42,
+                    height: 4,
+                    decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.outlineVariant,
+                        borderRadius: BorderRadius.circular(4)))),
+            const SizedBox(height: 18),
+            Text('${row['station_code'] ?? 'Record'}',
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    color: AppPalette.teal,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1.2)),
+            const SizedBox(height: 4),
+            Text(title.replaceFirst(' register', ''),
+                style: Theme.of(context)
+                    .textTheme
+                    .headlineSmall
+                    ?.copyWith(fontWeight: FontWeight.w900)),
+            if (row['deletion_recommended'] == true) ...[
+              const SizedBox(height: 8),
+              const StatusBadge('Deletion recommended', tone: AppPalette.red),
+            ],
+            const SizedBox(height: 16),
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: entries.length,
+                separatorBuilder: (_, __) => const Divider(height: 16),
+                itemBuilder: (_, index) {
+                  final entry = entries[index];
+                  return Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(
+                            width: 125,
+                            child: Text(_label(entry.key),
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodySmall
+                                    ?.copyWith(fontWeight: FontWeight.w800))),
+                        const SizedBox(width: 12),
+                        Expanded(child: Text('${entry.value}')),
+                      ]);
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ReportChip extends StatelessWidget {
+  const _ReportChip(
+      {required this.label, required this.selected, required this.onTap});
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme.primary;
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+        decoration: BoxDecoration(
+          color: selected ? color : Theme.of(context).colorScheme.surface,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: selected ? color : Colors.white),
+          boxShadow: selected
+              ? [
+                  BoxShadow(
+                      color: color.withValues(alpha: .24),
+                      blurRadius: 10,
+                      offset: const Offset(0, 5))
+                ]
+              : [
+                  BoxShadow(
+                      color: Colors.black.withValues(alpha: .08),
+                      blurRadius: 9,
+                      offset: const Offset(3, 4)),
+                  const BoxShadow(
+                      color: Colors.white,
+                      blurRadius: 7,
+                      offset: Offset(-3, -3)),
+                ],
+        ),
+        child: Text(label,
+            style: TextStyle(
+                color: selected ? Colors.white : null,
+                fontWeight: FontWeight.w800,
+                fontSize: 12)),
+      ),
+    );
+  }
+}
+
+List<String> _groups(List<Map<String, dynamic>> rows) => rows
+    .map((row) => '${row['report_group'] ?? 'Other'}')
+    .where((value) => value.trim().isNotEmpty)
+    .toSet()
+    .toList()
+  ..sort();
+List<dynamic> _list(Object? value) => value is List ? value : const [];
+Map<String, dynamic> _map(Object? value) =>
+    value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{};
+String _label(String value) => value
+    .split('_')
+    .map((part) =>
+        part.isEmpty ? part : '${part[0].toUpperCase()}${part.substring(1)}')
+    .join(' ');
+bool _isComplete(Object? value) {
+  final text = '$value'.toLowerCase();
+  return text.contains('complete') || text.contains('done');
+}
+
+Object? _first(Map raw, List<String> keys) {
+  for (final key in keys) {
+    final value = raw[key];
+    if (value != null && '$value'.trim().isNotEmpty && '$value' != 'null')
+      return value;
+  }
+  return null;
+}
+
+bool _truthy(Object? value) {
+  final text = '$value'.trim().toLowerCase();
+  return text == 'true' || text == 'yes' || text == 'y' || text == '1';
+}
+
+String _contractGroup(Map<String, dynamic> row) {
+  final text =
+      '${row['type_of_unit'] ?? ''} ${row['sub_category'] ?? ''} ${row['policy'] ?? ''} ${row['contract_name'] ?? ''} ${row['remarks'] ?? ''}'
+          .toLowerCase();
+  if (text.contains('milk')) return 'Milk stalls';
+  if (text.contains('mps')) return 'MPS stalls';
+  if (text.contains('rdn')) return 'RDN';
+  if (text.contains('train') ||
+      text.contains('on board') ||
+      text.contains('mobile')) return 'Train-based contracts';
+  if (text.contains('nfr') || text.contains('non fare')) return 'NFR contracts';
+  if (text.contains('catering') ||
+      text.contains('stall') ||
+      text.contains('unit')) return 'Catering units';
+  return '${row['type_of_unit'] ?? row['policy'] ?? 'Other contracts'}'
+          .trim()
+          .isEmpty
+      ? 'Other contracts'
+      : '${row['type_of_unit'] ?? row['policy']}';
+}
+
+String _workGroup(Map<String, dynamic> row, {bool abss = false}) {
+  final text =
+      '${row['short_name_of_work'] ?? ''} ${row['work_name'] ?? ''} ${row['remarks'] ?? ''} ${row['category'] ?? ''} ${row['parent_work'] ?? ''} ${row['block_section_station'] ?? ''} ${row['scope_type'] ?? ''} ${row['scope_value'] ?? ''} ${row['match_status'] ?? ''} ${row['section'] ?? ''}'
+          .toLowerCase();
+  final scope =
+      '${row['scope_type'] ?? ''} ${row['scope_value'] ?? ''} ${row['match_status'] ?? ''} ${row['block_section_station'] ?? ''}'
+          .toLowerCase();
+  if (abss || scope.contains('abss')) return 'ABSS works';
+  if (text.contains('cao/cn') || text.contains('cao cn')) return 'CAO/CN works';
+  if (text.contains('goods') ||
+      text.contains('csgr') ||
+      text.contains('goods shed')) {
+    return 'Goods / CSGR works';
+  }
+  if (text.contains('fob') || text.contains('foot over')) return 'FOB works';
+  if (text.contains('shelter') || text.contains('platform shelter')) {
+    return 'Platform shelter works';
+  }
+  if (text.contains('platform') ||
+      text.contains('pf ext') ||
+      text.contains('raising')) return 'Platform extension works';
+  if (text.contains('divyang') ||
+      text.contains('ramp') ||
+      text.contains('accessible') ||
+      text.contains('lift')) return 'Divyangjan works';
+  if (text.contains('toilet') ||
+      text.contains('water') ||
+      text.contains('waiting hall') ||
+      text.contains('amenit')) return 'Passenger amenity works';
+  return 'Other works';
+}
+
+String _workSection(Map<String, dynamic> row) {
+  final raw = '${row['section'] ?? ''}'.trim();
+  final text = raw.toLowerCase();
+  if (text.contains('north')) return 'North';
+  if (text.contains('south')) return 'South';
+  if (text.contains('east')) return 'East';
+  if (text.contains('west')) return 'West';
+  if (text == 'div' || text.contains('division')) return 'Division';
+  if (text.contains('cao/cn') || text.contains('cao cn')) return 'CAO/CN';
+  if (text.contains('sr.dcm') || text.contains('sr dcm')) return 'Sr.DCM';
+  if (text.contains('sr.dste') || text.contains('sr dste')) return 'Sr.DSTE';
+  if (text.contains('sdee')) return 'SDEE';
+  if (text.contains('gsu') || text.contains('gati sakthi')) return 'GSU/SBC';
+  return raw.isEmpty ? 'Other' : raw;
+}
+
+bool _deletionRecommended(Map<String, dynamic> row) {
+  final text =
+      '${row['remarks'] ?? ''} ${row['engg_remarks'] ?? ''} ${row['status'] ?? ''}'
+          .toLowerCase();
+  return text.contains('proposal dropped') ||
+      text.contains('proposed for deletion') ||
+      text.contains('recommended for deletion') ||
+      text.contains('work deleted') ||
+      text.contains('deletion recommended');
 }

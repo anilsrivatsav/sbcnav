@@ -24,3 +24,14 @@ frontend-only client, backup, restore, networking, and APK build instructions.
 Double-click `Rail Dashboard Control.cmd` to manage the locally installed
 PostgreSQL service, FastAPI, Next.js, logs, and Flutter APK builds without Docker
 or Codex.
+
+## Catering data refresh
+
+The catering refresh reads only `UNITS BASE DATA` and `EARNINGS BASE DATA` from
+the spreadsheet configured by `CATERING_SPREADSHEET_ID`. In the Next.js
+Contracts workspace, use **Refresh catering data** to validate, deduplicate,
+reconcile, and commit the source in one PostgreSQL transaction.
+
+- `POST /api/catering/sync?dry_run=true` validates without writing.
+- `POST /api/catering/sync` updates PostgreSQL.
+- `GET /api/catering/sync-history` returns recent sync outcomes.

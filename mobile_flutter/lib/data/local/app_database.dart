@@ -26,7 +26,7 @@ class AppDatabase {
     final root = await getDatabasesPath();
     _db = await openDatabase(
       join(root, 'rail_inspect.db'),
-      version: 4,
+      version: 5,
       onConfigure: (database) => database.execute('PRAGMA foreign_keys = ON'),
       onUpgrade: (database, oldVersion, _) async {
         if (oldVersion < 2) {
@@ -44,6 +44,27 @@ class AppDatabase {
         }
         if (oldVersion < 4) {
           await _createNotificationTable(database);
+        }
+        if (oldVersion < 5) {
+          await _createSyncHistoryTable(database);
+          await _addColumnIfMissing(
+            database,
+            'notifications',
+            'station_code',
+            'TEXT',
+          );
+          await _addColumnIfMissing(
+            database,
+            'notifications',
+            'contract_name',
+            'TEXT',
+          );
+          await _addColumnIfMissing(
+            database,
+            'notifications',
+            'contract_code',
+            'TEXT',
+          );
         }
       },
       onCreate: (database, _) async {
@@ -166,6 +187,7 @@ class AppDatabase {
         );
         await _createFieldRecordTables(database);
         await _createNotificationTable(database);
+        await _createSyncHistoryTable(database);
       },
     );
     await _seedBundledOfflinePack();
@@ -269,6 +291,24 @@ class AppDatabase {
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  Future<List<Map<String, dynamic>>> portfolioWorks() async {
+    final raw = await metadata('portfolio_works_json');
+    if (raw == null || raw.isEmpty) return const [];
+    final decoded = jsonDecode(raw);
+    if (decoded is! List) return const [];
+    return decoded
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList();
+  }
+
+  Future<Map<String, dynamic>> portfolioTotals() async {
+    final raw = await metadata('portfolio_totals_json');
+    if (raw == null || raw.isEmpty) return const {};
+    final decoded = jsonDecode(raw);
+    return decoded is Map ? Map<String, dynamic>.from(decoded) : const {};
+  }
+
   Future<void> cacheBootstrap(Map<String, dynamic> data) async {
     final now = DateTime.now().toUtc().toIso8601String();
     await db.transaction((txn) async {
@@ -310,6 +350,24 @@ class AppDatabase {
             'value': '${data['cursor'] ?? 0}',
           },
           conflictAlgorithm: ConflictAlgorithm.replace);
+      if (data['all_works'] is List) {
+        await txn.insert(
+            'metadata',
+            {
+              'key': 'portfolio_works_json',
+              'value': jsonEncode(data['all_works']),
+            },
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      if (data['portfolio_totals'] is Map) {
+        await txn.insert(
+            'metadata',
+            {
+              'key': 'portfolio_totals_json',
+              'value': jsonEncode(data['portfolio_totals']),
+            },
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
       await txn.insert(
           'metadata',
           {
@@ -457,6 +515,17 @@ class AppDatabase {
     );
   }
 
+  Future<List<Map<String, dynamic>>> contractNotificationsForStation(
+    String stationCode,
+  ) {
+    return db.query(
+      'notifications',
+      where: 'type = ? AND station_code = ?',
+      whereArgs: ['contract_expiry', stationCode],
+      orderBy: 'due_at',
+    );
+  }
+
   Future<int> unreadNotificationCount() async {
     return Sqflite.firstIntValue(
           await db
@@ -483,6 +552,9 @@ class AppDatabase {
         body TEXT NOT NULL,
         related_type TEXT,
         related_id TEXT,
+        station_code TEXT,
+        contract_name TEXT,
+        contract_code TEXT,
         severity TEXT NOT NULL,
         is_read INTEGER NOT NULL DEFAULT 0,
         due_at TEXT,
@@ -493,6 +565,36 @@ class AppDatabase {
       'CREATE INDEX IF NOT EXISTS ix_local_notifications_read '
       'ON notifications(is_read, created_at)',
     );
+  }
+
+  static Future<void> _createSyncHistoryTable(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS sync_history (
+        sync_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        started_at TEXT NOT NULL,
+        completed_at TEXT NOT NULL,
+        status TEXT NOT NULL,
+        pushed INTEGER NOT NULL DEFAULT 0,
+        failed INTEGER NOT NULL DEFAULT 0,
+        pulled INTEGER NOT NULL DEFAULT 0,
+        error_message TEXT
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS ix_local_sync_history_completed '
+      'ON sync_history(completed_at DESC)',
+    );
+  }
+
+  static Future<void> _addColumnIfMissing(
+    DatabaseExecutor db,
+    String table,
+    String column,
+    String definition,
+  ) async {
+    final columns = await db.rawQuery('PRAGMA table_info($table)');
+    if (columns.any((row) => row['name'] == column)) return;
+    await db.execute('ALTER TABLE $table ADD COLUMN $column $definition');
   }
 
   static Future<void> _createContractNotifications(
@@ -514,19 +616,26 @@ class AppDatabase {
       if (raw is! Map) continue;
       final row = Map<String, dynamic>.from(raw);
       final end = _notificationDate(
-        row['contract_to'] ?? row['contract_upto'] ?? row['contract_period_to'],
+        row['valid_to'] ??
+            row['contract_to'] ??
+            row['contract_upto'] ??
+            row['contract_period_to'],
       );
       if (end == null) continue;
       final days =
           end.difference(DateTime(now.year, now.month, now.day)).inDays;
-      if (days > 90) continue;
+      if (days > 50) continue;
       final bucket = days < 0
           ? 'expired'
-          : days <= 7
-              ? '7d'
-              : days <= 30
-                  ? '30d'
-                  : '90d';
+          : days <= 1
+              ? '1d'
+              : days <= 5
+                  ? '5d'
+                  : days <= 10
+                      ? '10d'
+                      : days <= 30
+                          ? '30d'
+                          : '50d';
       final key =
           '${row['unit_no'] ?? row['contract_key'] ?? row['contract_name'] ?? 'contract'}';
       final id = 'contract-expiry-$stationCode-$key-$bucket';
@@ -545,7 +654,10 @@ class AppDatabase {
           'body': body,
           'related_type': 'contract',
           'related_id': key,
-          'severity': days < 0 || days <= 7
+          'station_code': stationCode,
+          'contract_name': name,
+          'contract_code': key,
+          'severity': days < 0 || days <= 10
               ? 'critical'
               : days <= 30
                   ? 'high'
@@ -555,6 +667,24 @@ class AppDatabase {
           'created_at': DateTime.now().toUtc().toIso8601String(),
         },
         conflictAlgorithm: ConflictAlgorithm.ignore,
+      );
+      await db.update(
+        'notifications',
+        {
+          'title': days < 0 ? 'Contract expired' : 'Contract renewal due',
+          'body': body,
+          'station_code': stationCode,
+          'contract_name': name,
+          'contract_code': key,
+          'severity': days < 0 || days <= 10
+              ? 'critical'
+              : days <= 30
+                  ? 'high'
+                  : 'medium',
+          'due_at': end.toIso8601String(),
+        },
+        where: 'notification_id = ?',
+        whereArgs: [id],
       );
     }
     final existing = await db.query(
@@ -985,6 +1115,86 @@ class AppDatabase {
     );
   }
 
+  Future<List<Map<String, dynamic>>> findingsForStation(
+    String stationCode, {
+    bool openOnly = false,
+  }) {
+    return db.query(
+      'findings',
+      where: openOnly
+          ? 'station_code = ? AND status NOT IN (?, ?)'
+          : 'station_code = ?',
+      whereArgs: openOnly ? [stationCode, 'verified', 'closed'] : [stationCode],
+      orderBy:
+          "CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, target_date, client_updated_at DESC",
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> inspectionsForStation(
+    String stationCode,
+  ) {
+    return db.rawQuery(
+      '''
+      SELECT i.*,
+        (SELECT COUNT(*) FROM findings f
+          WHERE f.inspection_id = i.inspection_id
+          AND f.status NOT IN ('verified', 'closed')) AS open_finding_count
+      FROM inspections i
+      WHERE i.station_code = ?
+      ORDER BY i.client_updated_at DESC
+      ''',
+      [stationCode],
+    );
+  }
+
+  Future<void> updateFindingLifecycle({
+    required String findingId,
+    required String status,
+    String? responsibleParty,
+    String? targetDate,
+  }) async {
+    const allowed = {
+      'open',
+      'assigned',
+      'action_taken',
+      'verification_due',
+      'returned',
+      'verified',
+      'closed',
+    };
+    if (!allowed.contains(status)) {
+      throw ArgumentError.value(status, 'status', 'Unsupported finding status');
+    }
+    final now = DateTime.now().toUtc().toIso8601String();
+    await db.transaction((txn) async {
+      await txn.update(
+        'findings',
+        {
+          'status': status,
+          'responsible_party': responsibleParty?.trim().isEmpty == true
+              ? null
+              : responsibleParty?.trim(),
+          'target_date':
+              targetDate?.trim().isEmpty == true ? null : targetDate?.trim(),
+          'client_updated_at': now,
+        },
+        where: 'finding_id = ?',
+        whereArgs: [findingId],
+      );
+      final rows = await txn.query(
+        'findings',
+        where: 'finding_id = ?',
+        whereArgs: [findingId],
+        limit: 1,
+      );
+      if (rows.isEmpty) throw StateError('Finding no longer exists');
+      await _queue(txn, 'finding', findingId, {
+        ...rows.first,
+        'repeat_observation': rows.first['repeat_observation'] == 1,
+      });
+    });
+  }
+
   Future<int> pendingCount() async {
     final result = Sqflite.firstIntValue(
       await db.rawQuery('SELECT COUNT(*) FROM sync_queue'),
@@ -1011,6 +1221,66 @@ class AppDatabase {
           },
         )
         .toList();
+  }
+
+  Future<List<Map<String, dynamic>>> syncQueueItems({int limit = 100}) {
+    return db.query(
+      'sync_queue',
+      columns: [
+        'operation_id',
+        'entity_type',
+        'entity_id',
+        'attempts',
+        'last_error',
+        'created_at',
+      ],
+      orderBy: 'CASE WHEN last_error IS NULL THEN 1 ELSE 0 END, created_at',
+      limit: limit,
+    );
+  }
+
+  Future<int> failedSyncCount() async {
+    return Sqflite.firstIntValue(
+          await db.rawQuery(
+            'SELECT COUNT(*) FROM sync_queue WHERE last_error IS NOT NULL',
+          ),
+        ) ??
+        0;
+  }
+
+  Future<void> retryFailedOperations() async {
+    await db.update(
+      'sync_queue',
+      {'attempts': 0, 'last_error': null},
+      where: 'last_error IS NOT NULL',
+    );
+  }
+
+  Future<void> recordSyncHistory({
+    required String startedAt,
+    required String status,
+    int pushed = 0,
+    int failed = 0,
+    int pulled = 0,
+    String? errorMessage,
+  }) async {
+    await db.insert('sync_history', {
+      'started_at': startedAt,
+      'completed_at': DateTime.now().toUtc().toIso8601String(),
+      'status': status,
+      'pushed': pushed,
+      'failed': failed,
+      'pulled': pulled,
+      'error_message': errorMessage,
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> syncHistory({int limit = 10}) {
+    return db.query(
+      'sync_history',
+      orderBy: 'completed_at DESC',
+      limit: limit,
+    );
   }
 
   Future<void> markOperationsProcessed(Iterable<String> operationIds) async {
@@ -1048,6 +1318,14 @@ class AppDatabase {
           _ => null,
         };
         if (table == null) continue;
+        final pending = await txn.query(
+          'sync_queue',
+          columns: ['operation_id'],
+          where: 'entity_type = ? AND entity_id = ?',
+          whereArgs: [entity, change['entity_id']],
+          limit: 1,
+        );
+        if (pending.isNotEmpty) continue;
         final idKey = entity == 'note' ? 'note_id' : '${entity}_id';
         if (action == 'delete') {
           await txn.delete(

@@ -165,6 +165,17 @@ def _json_value(value: Any) -> str | None:
     return json.dumps(value, separators=(",", ":"), default=str)
 
 
+def _check_client_version(record: Any, client_version: int) -> None:
+    if client_version < record.server_version:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This record changed on another device. Refresh data, review "
+                "the latest version, and apply your update again."
+            ),
+        )
+
+
 def _record_change(
     session: Session,
     entity_type: str,
@@ -191,8 +202,9 @@ def upsert_inspection(session: Session, payload: dict[str, Any]) -> dict[str, An
         raise HTTPException(status_code=422, detail="Unknown inspection template")
 
     record = session.get(Inspection, data.inspection_id)
-    values = data.model_dump(exclude_none=True)
+    values = data.model_dump(exclude_none=True, exclude={"server_version"})
     if record:
+        _check_client_version(record, data.server_version)
         for key, value in values.items():
             if key != "inspection_id":
                 setattr(record, key, value)
@@ -213,10 +225,11 @@ def upsert_response(session: Session, payload: dict[str, Any]) -> dict[str, Any]
     if not session.get(Inspection, data.inspection_id):
         raise HTTPException(status_code=422, detail="Inspection must be synced before its responses")
     record = session.get(InspectionResponse, data.response_id)
-    values = data.model_dump(exclude_none=True)
+    values = data.model_dump(exclude_none=True, exclude={"server_version"})
     if "response_json" in values:
         values["response_json"] = _json_value(values["response_json"])
     if record:
+        _check_client_version(record, data.server_version)
         for key, value in values.items():
             if key != "response_id":
                 setattr(record, key, value)
@@ -241,8 +254,9 @@ def upsert_finding(session: Session, payload: dict[str, Any]) -> dict[str, Any]:
     if inspection.station_code != data.station_code:
         raise HTTPException(status_code=422, detail="Finding station must match inspection station")
     record = session.get(InspectionFinding, data.finding_id)
-    values = data.model_dump(exclude_none=True)
+    values = data.model_dump(exclude_none=True, exclude={"server_version"})
     if record:
+        _check_client_version(record, data.server_version)
         for key, value in values.items():
             if key != "finding_id":
                 setattr(record, key, value)
@@ -273,9 +287,12 @@ def upsert_evidence(session: Session, payload: dict[str, Any]) -> dict[str, Any]
         raise HTTPException(status_code=422, detail="Photo must be between 1 byte and 6 MB")
 
     record = session.get(InspectionEvidence, data.evidence_id)
-    values = data.model_dump(exclude={"content_base64"}, exclude_none=True)
+    values = data.model_dump(
+        exclude={"content_base64", "server_version"}, exclude_none=True
+    )
     values["content"] = content
     if record:
+        _check_client_version(record, data.server_version)
         for key, value in values.items():
             if key != "evidence_id":
                 setattr(record, key, value)
@@ -306,8 +323,9 @@ def upsert_note(session: Session, payload: dict[str, Any]) -> dict[str, Any]:
     if not session.get(Inspection, data.inspection_id):
         raise HTTPException(status_code=422, detail="Inspection must be synced before its notes")
     record = session.get(InspectionNote, data.note_id)
-    values = data.model_dump(exclude_none=True)
+    values = data.model_dump(exclude_none=True, exclude={"server_version"})
     if record:
+        _check_client_version(record, data.server_version)
         for key, value in values.items():
             if key != "note_id":
                 setattr(record, key, value)

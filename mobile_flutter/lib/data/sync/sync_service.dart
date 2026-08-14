@@ -17,17 +17,25 @@ final syncControllerProvider =
 class SyncSnapshot {
   const SyncSnapshot({
     required this.pending,
+    required this.failed,
     required this.offlineStationDetails,
     required this.offlineStationTotal,
+    this.queue = const [],
+    this.history = const [],
     this.lastSyncAt,
+    this.lastCateringSyncAt,
     this.message = 'Ready',
     this.busy = false,
   });
 
   final int pending;
+  final int failed;
   final int offlineStationDetails;
   final int offlineStationTotal;
+  final List<Map<String, dynamic>> queue;
+  final List<Map<String, dynamic>> history;
   final String? lastSyncAt;
+  final String? lastCateringSyncAt;
   final String message;
   final bool busy;
 
@@ -36,11 +44,81 @@ class SyncSnapshot {
       : (offlineStationDetails / offlineStationTotal).clamp(0, 1);
 }
 
+class SyncRunResult {
+  const SyncRunResult({
+    required this.pushed,
+    required this.failed,
+    required this.pulled,
+  });
+
+  final int pushed;
+  final int failed;
+  final int pulled;
+}
+
+class CateringSyncResult {
+  const CateringSyncResult({
+    required this.units,
+    required this.sourceEarnings,
+    required this.uniqueEarnings,
+    required this.duplicatesRemoved,
+    required this.linkedEarnings,
+    required this.miscellaneousEarnings,
+  });
+
+  final int units;
+  final int sourceEarnings;
+  final int uniqueEarnings;
+  final int duplicatesRemoved;
+  final int linkedEarnings;
+  final int miscellaneousEarnings;
+}
+
 class SyncService {
   const SyncService({required this.database, required this.api});
 
   final AppDatabase database;
   final MobileApi api;
+
+  Future<CateringSyncResult> refreshCateringFromGoogleSheet() async {
+    final connectivity = await Connectivity().checkConnectivity();
+    if (connectivity.every((item) => item == ConnectivityResult.none)) {
+      throw const MobileApiException(
+        'An internet connection is required to refresh catering data.',
+      );
+    }
+
+    final data = await api.syncCateringFromGoogleSheet();
+    final source =
+        Map<String, dynamic>.from(data['source'] as Map? ?? const {});
+    final reconciliation = Map<String, dynamic>.from(
+      data['reconciliation'] as Map? ?? const {},
+    );
+    final result = CateringSyncResult(
+      units: (source['units'] as num?)?.toInt() ?? 0,
+      sourceEarnings: (source['earning_source_rows'] as num?)?.toInt() ?? 0,
+      uniqueEarnings: (source['earnings'] as num?)?.toInt() ?? 0,
+      duplicatesRemoved:
+          (source['duplicate_earning_rows'] as num?)?.toInt() ?? 0,
+      linkedEarnings:
+          (reconciliation['linked_earning_rows'] as num?)?.toInt() ?? 0,
+      miscellaneousEarnings:
+          (reconciliation['miscellaneous_earning_rows'] as num?)?.toInt() ?? 0,
+    );
+
+    try {
+      await bootstrap();
+    } catch (error) {
+      throw MobileApiException(
+        'PostgreSQL was updated, but this device could not refresh its offline data: $error',
+      );
+    }
+    await database.setMetadata(
+      'last_catering_sync_at',
+      DateTime.now().toUtc().toIso8601String(),
+    );
+    return result;
+  }
 
   Future<void> bootstrap({
     Future<void> Function(int cached, int total)? onProgress,
@@ -67,34 +145,83 @@ class SyncService {
     }
   }
 
-  Future<void> synchronize() async {
+  Future<SyncRunResult> synchronize() async {
+    final startedAt = DateTime.now().toUtc().toIso8601String();
     final connectivity = await Connectivity().checkConnectivity();
     if (connectivity.every((item) => item == ConnectivityResult.none)) {
+      await database.recordSyncHistory(
+        startedAt: startedAt,
+        status: 'offline',
+        errorMessage: 'No network connection',
+      );
       throw const MobileApiException(
         'No network. Your work remains safely on this device.',
       );
     }
 
     final operations = await database.pendingOperations();
-    if (operations.isNotEmpty) {
-      final deviceId = await database.deviceId();
-      final result = await api.push(deviceId, operations);
-      final processed = (result['results'] as List? ?? const [])
-          .where((item) => item is Map && item['status'] == 'processed')
-          .map((item) => '${item['operation_id']}')
-          .toList();
-      await database.markOperationsProcessed(processed);
-    }
+    var pushed = 0;
+    var failed = 0;
+    var pulled = 0;
+    try {
+      if (operations.isNotEmpty) {
+        final deviceId = await database.deviceId();
+        final result = await api.push(deviceId, operations);
+        final results = result['results'] as List? ?? const [];
+        final processed = <String>[];
+        for (final raw in results) {
+          if (raw is! Map) continue;
+          final operationId = '${raw['operation_id'] ?? ''}';
+          if (operationId.isEmpty) continue;
+          if (raw['status'] == 'processed') {
+            processed.add(operationId);
+            pushed++;
+          } else {
+            failed++;
+            await database.markSyncError(
+              operationId,
+              '${raw['message'] ?? 'The server rejected this record'}',
+            );
+          }
+        }
+        await database.markOperationsProcessed(processed);
+      }
 
-    var cursor =
-        int.tryParse(await database.metadata('sync_cursor') ?? '0') ?? 0;
-    var hasMore = true;
-    while (hasMore) {
-      final result = await api.pull(cursor);
-      final changes = result['changes'] as List? ?? const [];
-      cursor = (result['cursor'] as num?)?.toInt() ?? cursor;
-      await database.applyChanges(changes, cursor);
-      hasMore = result['has_more'] == true;
+      var cursor =
+          int.tryParse(await database.metadata('sync_cursor') ?? '0') ?? 0;
+      var hasMore = true;
+      while (hasMore) {
+        final result = await api.pull(cursor);
+        final changes = result['changes'] as List? ?? const [];
+        pulled += changes.length;
+        cursor = (result['cursor'] as num?)?.toInt() ?? cursor;
+        await database.applyChanges(changes, cursor);
+        hasMore = result['has_more'] == true;
+      }
+      await database.recordSyncHistory(
+        startedAt: startedAt,
+        status: failed == 0 ? 'success' : 'partial',
+        pushed: pushed,
+        failed: failed,
+        pulled: pulled,
+      );
+      return SyncRunResult(pushed: pushed, failed: failed, pulled: pulled);
+    } catch (error) {
+      for (final operation in operations) {
+        await database.markSyncError(
+          '${operation['operation_id']}',
+          '$error',
+        );
+      }
+      await database.recordSyncHistory(
+        startedAt: startedAt,
+        status: 'failed',
+        pushed: pushed,
+        failed: operations.length,
+        pulled: pulled,
+        errorMessage: '$error',
+      );
+      rethrow;
     }
   }
 }
@@ -112,12 +239,16 @@ class SyncController extends AsyncNotifier<SyncSnapshot> {
   }) async {
     return SyncSnapshot(
       pending: await _database.pendingCount(),
+      failed: await _database.failedSyncCount(),
       offlineStationDetails: await _database.offlineStationDetailCount(),
       offlineStationTotal: int.tryParse(
             await _database.metadata('offline_station_details_total') ?? '0',
           ) ??
           0,
       lastSyncAt: await _database.metadata('last_sync_at'),
+      lastCateringSyncAt: await _database.metadata('last_catering_sync_at'),
+      queue: await _database.syncQueueItems(),
+      history: await _database.syncHistory(),
       message: message,
       busy: busy,
     );
@@ -144,12 +275,51 @@ class SyncController extends AsyncNotifier<SyncSnapshot> {
   /// the cached station details while preserving local inspection work.
   Future<void> refreshFromServer() => bootstrap();
 
+  Future<CateringSyncResult> refreshCateringFromGoogleSheet() async {
+    state = AsyncData(
+      await _snapshot(
+        message: 'Refreshing catering units and earnings...',
+        busy: true,
+      ),
+    );
+    try {
+      final result = await _sync.refreshCateringFromGoogleSheet();
+      state = AsyncData(
+        await _snapshot(
+          message:
+              '${result.units} units and ${result.uniqueEarnings} receipts refreshed',
+        ),
+      );
+      return result;
+    } catch (error) {
+      state = AsyncData(
+        await _snapshot(message: 'Catering refresh failed: $error'),
+      );
+      rethrow;
+    }
+  }
+
   Future<void> synchronize() async {
     state = const AsyncLoading();
-    state = await AsyncValue.guard(() async {
-      await _sync.synchronize();
-      return _snapshot(message: 'All changes synchronized');
-    });
+    try {
+      final result = await _sync.synchronize();
+      state = AsyncData(
+        await _snapshot(
+          message: result.failed == 0
+              ? '${result.pushed} uploaded, ${result.pulled} downloaded'
+              : '${result.pushed} uploaded, ${result.failed} need attention',
+        ),
+      );
+    } catch (error) {
+      state = AsyncData(
+        await _snapshot(message: 'Sync failed: $error'),
+      );
+    }
+  }
+
+  Future<void> retryFailed() async {
+    await _database.retryFailedOperations();
+    await synchronize();
   }
 
   Future<void> refreshPending() async {

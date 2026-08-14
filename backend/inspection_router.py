@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import ValidationError
+from sqlalchemy import func
 
 from api_utils import envelope
 from database import SessionLocal
@@ -28,6 +30,7 @@ from services import get_station_detail, row_to_dict
 
 
 router = APIRouter(prefix="/api/mobile/v1", tags=["Mobile inspections"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/templates")
@@ -55,7 +58,10 @@ def bootstrap(station_limit: int = Query(default=500, ge=1, le=2000)):
         session.commit()
         stations = (
             session.query(Station)
-            .filter(Station.is_active.is_(True))
+            .filter(
+                Station.is_active.is_(True),
+                func.lower(func.trim(Station.categorisation)).notin_(("", "test", "non-commercial")),
+            )
             .order_by(Station.station_name, Station.station_code)
             .limit(station_limit)
             .all()
@@ -87,7 +93,8 @@ def offline_station_details(
     session = SessionLocal()
     try:
         base_query = session.query(Station.station_code).filter(
-            Station.is_active.is_(True)
+            Station.is_active.is_(True),
+            func.lower(func.trim(Station.categorisation)).notin_(("", "test", "non-commercial")),
         )
         total = base_query.count()
         codes = [
@@ -242,18 +249,77 @@ def create_inspection(payload: InspectionCreate):
 def sync_push(payload: SyncPushRequest):
     session = SessionLocal()
     try:
-        try:
-            results = []
-            with session.begin():
-                for operation in payload.operations:
-                    results.append(process_operation(session, payload.device_id, operation))
-            cursor = session.query(MobileChange.sequence).order_by(MobileChange.sequence.desc()).limit(1).scalar() or 0
-            return envelope({"results": results, "cursor": cursor}, "sync accepted")
-        except ValidationError as exc:
-            raise HTTPException(
-                status_code=422,
-                detail={"message": "Invalid synchronized record", "errors": exc.errors()},
-            ) from exc
+        results = []
+        for operation in payload.operations:
+            try:
+                with session.begin():
+                    results.append(
+                        process_operation(session, payload.device_id, operation)
+                    )
+            except HTTPException as exc:
+                session.rollback()
+                detail = exc.detail
+                message = (
+                    detail
+                    if isinstance(detail, str)
+                    else detail.get("message", "Record validation failed")
+                    if isinstance(detail, dict)
+                    else "Record validation failed"
+                )
+                results.append(
+                    {
+                        "operation_id": operation.operation_id,
+                        "entity_type": operation.entity_type,
+                        "entity_id": operation.entity_id,
+                        "status": "rejected",
+                        "message": message,
+                    }
+                )
+            except ValidationError as exc:
+                session.rollback()
+                results.append(
+                    {
+                        "operation_id": operation.operation_id,
+                        "entity_type": operation.entity_type,
+                        "entity_id": operation.entity_id,
+                        "status": "rejected",
+                        "message": "Invalid synchronized record",
+                        "errors": exc.errors(),
+                    }
+                )
+            except Exception:
+                session.rollback()
+                logger.exception(
+                    "Mobile sync operation failed",
+                    extra={"operation_id": operation.operation_id},
+                )
+                results.append(
+                    {
+                        "operation_id": operation.operation_id,
+                        "entity_type": operation.entity_type,
+                        "entity_id": operation.entity_id,
+                        "status": "rejected",
+                        "message": "The server could not save this record",
+                    }
+                )
+        cursor = (
+            session.query(MobileChange.sequence)
+            .order_by(MobileChange.sequence.desc())
+            .limit(1)
+            .scalar()
+            or 0
+        )
+        processed = sum(1 for row in results if row["status"] == "processed")
+        rejected = len(results) - processed
+        return envelope(
+            {
+                "results": results,
+                "cursor": cursor,
+                "processed": processed,
+                "rejected": rejected,
+            },
+            "sync completed" if rejected == 0 else "sync completed with errors",
+        )
     finally:
         session.close()
 

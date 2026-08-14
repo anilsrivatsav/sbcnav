@@ -83,6 +83,40 @@ class SettingsSheet extends ConsumerWidget {
   final VoidCallback onFetchLatest;
   final VoidCallback onSync;
 
+  Future<void> _refreshCatering(
+    BuildContext context,
+    WidgetRef ref,
+  ) async {
+    final confirmed = await showAppConfirmation(
+      context,
+      title: 'Refresh catering data?',
+      subtitle:
+          'This imports the latest units and earnings from the configured Google Sheet into PostgreSQL, then replaces the offline station snapshot on this device.',
+      confirmLabel: 'Refresh',
+    );
+    if (!confirmed || !context.mounted) return;
+
+    try {
+      final result = await ref
+          .read(syncControllerProvider.notifier)
+          .refreshCateringFromGoogleSheet();
+      if (!context.mounted) return;
+      showAppNotice(
+        context,
+        kind: AppNoticeKind.success,
+        message:
+            '${result.units} units and ${result.uniqueEarnings} receipts refreshed. ${result.duplicatesRemoved} duplicate rows removed.',
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      showAppNotice(
+        context,
+        kind: AppNoticeKind.error,
+        message: '$error',
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(syncControllerProvider);
@@ -120,6 +154,23 @@ class SettingsSheet extends ConsumerWidget {
                     icon: Icons.cloud_download_rounded,
                     label: 'Fetch latest from PostgreSQL',
                   ),
+                  const SizedBox(height: AppSpacing.x1),
+                  AppButton(
+                    expand: true,
+                    kind: AppButtonKind.secondary,
+                    loading: busy,
+                    onPressed:
+                        busy ? null : () => _refreshCatering(context, ref),
+                    icon: Icons.restaurant_menu_rounded,
+                    label: 'Refresh catering from Google Sheet',
+                  ),
+                  if (state.asData?.value.lastCateringSyncAt != null) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      'Last catering refresh ${shortDate(state.asData!.value.lastCateringSyncAt)}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
                   const SizedBox(height: AppSpacing.x1),
                   AppButton(
                     expand: true,

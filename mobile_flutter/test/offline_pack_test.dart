@@ -16,6 +16,10 @@ void main() {
 
     expect(stations, isNotEmpty);
     expect(details.length, stations.length);
+    final totals = pack['portfolio_totals'] as Map;
+    expect(totals['stations'], 132);
+    expect(totals['works'], 152);
+    expect((pack['all_works'] as List).length, 152);
     expect(
       details.every((item) {
         final detail = (item as Map)['detail'] as Map;

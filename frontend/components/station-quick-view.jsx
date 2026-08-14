@@ -4,6 +4,8 @@ import { BarChart3, ChevronRight, CircleAlert, Database, TrainFront, Users, Wall
 import { Badge, Button } from "./ui";
 
 const valueText = (value) => value === null || value === undefined || value === "" ? "NA" : String(value);
+const isAvailableUnit = (unit = {}) => String(unit.unit_status || "").trim().toLowerCase() === "available"
+  || (!String(unit.licensee_name || "").trim() && !String(unit.contract_from || "").trim() && !String(unit.contract_to || "").trim());
 
 const platformTotal = (rows = [], fallback = 0) => {
   const numbers = rows.flatMap((row) => String(row.platform || row.pf_no || "")
@@ -103,10 +105,10 @@ export function StationQuickView({ record, loading, stationAlerts = [], onOpenDe
           meta={(row) => `${valueText(row.status)} | ${money(row.cost)}`}
         />
         <PreviewList
-          title="Active contracts"
+          title="Contracts and available units"
           rows={[...contracts, ...commercial]}
           empty="No linked contracts."
-          label={(row) => valueText(row.licensee_name || row.contract_name || row.unit_no)}
+          label={(row) => isAvailableUnit(row) ? `${valueText(row.unit_no)} · Available` : valueText(row.licensee_name || row.contract_name || row.unit_no)}
           meta={(row) => valueText(row.type_of_unit || row.policy || row.sub_category)}
         />
         <section className="soft-inset rounded-lg border border-line p-3">

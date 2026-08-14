@@ -7,6 +7,7 @@ import '../../shared/widgets.dart';
 import 'inspection_field_log.dart';
 import 'inspection_logic.dart';
 import 'inspection_review_sheet.dart';
+import '../reports/report_pdf_export.dart';
 
 class InspectionFormScreen extends ConsumerStatefulWidget {
   const InspectionFormScreen({required this.inspectionId, super.key});
@@ -92,6 +93,30 @@ class _InspectionFormScreenState extends ConsumerState<InspectionFormScreen> {
   }
 
   void _reload() => setState(() => _state = _load());
+
+  Future<void> _shareReport(
+    _InspectionFormState state,
+    Map<String, dynamic> definition,
+  ) async {
+    try {
+      await exportInspectionPdf(
+        inspection: state.inspection,
+        template: definition,
+        responses: state.responses.values.toList(),
+        findings: state.findings,
+        evidence: state.evidence,
+        notes: state.notes,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      showAppNotice(
+        context,
+        message:
+            'The inspection is saved, but the PDF could not be shared: $error',
+        kind: AppNoticeKind.error,
+      );
+    }
+  }
 
   Future<void> _addPhoto({
     required _InspectionFormState state,
@@ -246,6 +271,11 @@ class _InspectionFormScreenState extends ConsumerState<InspectionFormScreen> {
           remarks: result.remarks,
         );
     await ref.read(syncControllerProvider.notifier).refreshPending();
+    final submitted = await _load();
+    if (mounted) {
+      await _shareReport(
+          submitted, state.template['definition'] as Map<String, dynamic>);
+    }
     if (!mounted) return;
     Navigator.pop(context);
   }
@@ -363,6 +393,17 @@ class _InspectionFormScreenState extends ConsumerState<InspectionFormScreen> {
                                 onPressed: () => _addNote(
                                   sectionCode: '${section['title']}',
                                 ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                          ],
+                          if (isSubmitted) ...[
+                            Expanded(
+                              child: SoftActionButton(
+                                icon: Icons.picture_as_pdf_outlined,
+                                label: 'Share PDF',
+                                onPressed: () =>
+                                    _shareReport(state, definition),
                               ),
                             ),
                             const SizedBox(width: 8),

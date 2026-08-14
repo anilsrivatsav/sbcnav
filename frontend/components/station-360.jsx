@@ -4,6 +4,8 @@ import { BarChart3, CircleAlert, Database, TrainFront, Wallet, Wrench } from "lu
 import { Badge, Button, DataTable, Panel, Tabs } from "./ui";
 
 const boolText = (value) => (value ? "Yes" : "No");
+const isAvailableUnit = (unit = {}) => String(unit.unit_status || "").trim().toLowerCase() === "available"
+  || (!String(unit.licensee_name || "").trim() && !String(unit.contract_from || "").trim() && !String(unit.contract_to || "").trim());
 const dailyFootfall = (station) => {
   const annual = Number(station.passenger_footfall || 0);
   return annual > 0 ? Math.round(annual / 30).toLocaleString("en-IN") : "NA";
@@ -224,13 +226,13 @@ export function Station360({
         <DataTable
           columns={[
             ...columns.unitColumns,
-            { key: "earnings_total", label: "Paid", value: (row) => row.earnings_total || 0, render: (row) => <span className="font-semibold">{money(row.earnings_total)}</span> },
-            { key: "pending_receipts", label: "Pending" },
+            { key: "earnings_total", label: "Paid", value: (row) => isAvailableUnit(row) ? "" : row.earnings_total || 0, render: (row) => <span className="font-semibold">{isAvailableUnit(row) ? "Not applicable" : money(row.earnings_total)}</span> },
+            { key: "pending_receipts", label: "Pending", value: (row) => isAvailableUnit(row) ? "" : row.pending_receipts, render: (row) => isAvailableUnit(row) ? <span className="text-muted">Not applicable</span> : row.pending_receipts },
           ]}
           rows={record.contracts || record.units || []}
           getKey={(row, index) => `${row.unit_no}-${index}`}
           onRowClick={openUnit}
-          emptyTitle="No catering contracts found for this station."
+          emptyTitle="No catering contracts or available units found for this station."
           fileName={`${station.station_code}-contracts.csv`}
         />
       ) : null}

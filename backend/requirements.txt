@@ -1,6 +1,7 @@
 fastapi
 uvicorn
 requests
+openpyxl
 SQLAlchemy
 alembic
 psycopg2-binary

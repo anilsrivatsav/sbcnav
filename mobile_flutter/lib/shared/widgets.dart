@@ -127,6 +127,52 @@ class GlassPanel extends StatefulWidget {
   State<GlassPanel> createState() => _GlassPanelState();
 }
 
+class NeoPanel extends StatelessWidget {
+  const NeoPanel(
+      {required this.child,
+      this.padding = const EdgeInsets.all(16),
+      this.onTap,
+      super.key});
+
+  final Widget child;
+  final EdgeInsets padding;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final surface = Theme.of(context).colorScheme.surface;
+    final panel = AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      padding: padding,
+      decoration: BoxDecoration(
+        color: surface,
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        border: Border.all(color: dark ? Colors.white10 : Colors.white),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: dark ? 0.32 : 0.12),
+            blurRadius: 18,
+            offset: const Offset(8, 9),
+          ),
+          BoxShadow(
+            color: dark ? Colors.white.withValues(alpha: 0.025) : Colors.white,
+            blurRadius: 14,
+            offset: const Offset(-7, -7),
+          ),
+        ],
+      ),
+      child: child,
+    );
+    return onTap == null
+        ? panel
+        : InkWell(
+            borderRadius: BorderRadius.circular(AppRadius.card),
+            onTap: onTap,
+            child: panel);
+  }
+}
+
 class _GlassPanelState extends State<GlassPanel> {
   var _hovered = false;
   var _pressed = false;
@@ -135,8 +181,8 @@ class _GlassPanelState extends State<GlassPanel> {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final visual = Theme.of(context).extension<AppVisualTheme>()!;
     final interactive = widget.onTap != null;
+    final surface = colors.surface;
     return Semantics(
       button: interactive,
       label: widget.semanticLabel,
@@ -159,82 +205,36 @@ class _GlassPanelState extends State<GlassPanel> {
                     widget.onTap!();
                   },
             child: AnimatedScale(
-              scale: _pressed ? 0.982 : (_hovered ? 1.008 : 1),
+              scale: _pressed ? 0.985 : (_hovered ? 1.006 : 1),
               duration: const Duration(milliseconds: 160),
               curve: Curves.easeOutCubic,
               child: AnimatedContainer(
-                duration: const Duration(milliseconds: 220),
+                duration: const Duration(milliseconds: 180),
+                padding: widget.padding,
                 decoration: BoxDecoration(
+                  color: surface,
                   borderRadius: BorderRadius.circular(AppRadius.card),
+                  border: Border.all(
+                    color: dark ? Colors.white10 : Colors.white,
+                  ),
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black.withValues(
                         alpha: dark
-                            ? (_hovered ? 0.34 : 0.24)
-                            : (_hovered ? 0.16 : 0.1),
+                            ? (_hovered ? 0.3 : 0.22)
+                            : (_hovered ? 0.14 : 0.09),
                       ),
-                      blurRadius: _hovered ? 38 : 28,
-                      spreadRadius: _hovered ? -4 : -7,
-                      offset: Offset(0, _hovered ? 16 : 11),
+                      blurRadius: _hovered ? 20 : 16,
+                      offset: Offset(_hovered ? 6 : 8, _hovered ? 8 : 10),
                     ),
                     BoxShadow(
-                      color: visual.ambientAccent.withValues(
-                        alpha: _hovered ? 0.08 : 0.03,
-                      ),
-                      blurRadius: 32,
-                      offset: const Offset(-8, -4),
+                      color: dark ? Colors.white10 : Colors.white,
+                      blurRadius: 13,
+                      offset: const Offset(-7, -7),
                     ),
                   ],
                 ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(AppRadius.card),
-                  child: BackdropFilter(
-                    filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            visual.glassHighlight.withValues(
-                              alpha: dark ? 0.105 : 0.68,
-                            ),
-                            colors.surface.withValues(
-                              alpha: dark ? 0.48 : 0.43,
-                            ),
-                            visual.glassTint
-                                .withValues(alpha: dark ? 0.13 : 0.09),
-                          ],
-                        ),
-                        borderRadius: BorderRadius.circular(AppRadius.card),
-                        border: Border.all(
-                          color: visual.glassHighlight.withValues(
-                            alpha: dark ? 0.09 : 0.64,
-                          ),
-                        ),
-                      ),
-                      child: Stack(
-                        children: [
-                          Positioned(
-                            left: 20,
-                            right: 20,
-                            top: 0,
-                            child: Container(
-                              height: 1,
-                              color: visual.glassHighlight.withValues(
-                                alpha: dark ? 0.11 : 0.72,
-                              ),
-                            ),
-                          ),
-                          Padding(
-                            padding: widget.padding,
-                            child: widget.child,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
+                child: widget.child,
               ),
             ),
           ),
@@ -581,39 +581,17 @@ class AppSearchField extends StatelessWidget {
     return Semantics(
       textField: true,
       label: hint,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(22),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 28, sigmaY: 28),
-          child: Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  Colors.white.withValues(
-                    alpha: Theme.of(context).brightness == Brightness.dark
-                        ? 0.08
-                        : 0.58,
-                  ),
-                  Theme.of(context).colorScheme.surface.withValues(alpha: 0.34),
-                ],
-              ),
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(
-                color: Colors.white.withValues(
-                  alpha: Theme.of(context).brightness == Brightness.dark
-                      ? 0.09
-                      : 0.62,
-                ),
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.08),
-                  blurRadius: 24,
-                  offset: const Offset(0, 10),
-                ),
-              ],
-            ),
-            child: TextField(
+      child: Container(
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: .34)),
+          boxShadow: [
+            BoxShadow(color: Colors.black.withValues(alpha: .08), blurRadius: 14, offset: const Offset(5, 7)),
+            const BoxShadow(color: Colors.white, blurRadius: 10, offset: Offset(-5, -5)),
+          ],
+        ),
+        child: TextField(
               controller: controller,
               onChanged: onChanged,
               textInputAction: TextInputAction.search,
@@ -636,8 +614,6 @@ class AppSearchField extends StatelessWidget {
                     : null,
               ),
             ),
-          ),
-        ),
       ),
     );
   }

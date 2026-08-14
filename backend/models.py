@@ -79,7 +79,10 @@ class Unit(Base, AuditMixin):
     license_fee: Mapped[str | None] = mapped_column(Text)
     contract_from: Mapped[str | None] = mapped_column(Text)
     contract_to: Mapped[str | None] = mapped_column(Text)
+    paid_upto: Mapped[str | None] = mapped_column(Text, index=True)
     unit_status: Mapped[str | None] = mapped_column(Text, index=True)
+    remarks: Mapped[str | None] = mapped_column(Text)
+    source_row: Mapped[int | None] = mapped_column(Integer)
 
 
 class Work(Base, AuditMixin):
@@ -286,6 +289,11 @@ class StationPlatformExtensionStatus(Base, AuditMixin):
     source_rows: Mapped[str | None] = mapped_column(Text)
     status_text: Mapped[str | None] = mapped_column(Text)
     remarks: Mapped[str | None] = mapped_column(Text)
+    footfall_day: Mapped[int | None] = mapped_column(Integer, index=True)
+    lift_details: Mapped[str | None] = mapped_column(Text)
+    ramp_details: Mapped[str | None] = mapped_column(Text)
+    escalator_details: Mapped[str | None] = mapped_column(Text)
+    accessibility_source: Mapped[str | None] = mapped_column(Text)
 
 
 class Earning(Base, AuditMixin):
@@ -298,6 +306,8 @@ class Earning(Base, AuditMixin):
     earning_key: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     receipt_key: Mapped[str] = mapped_column(String(128), index=True)
     sl_no: Mapped[int | None] = mapped_column(Integer)
+    source_rows: Mapped[str | None] = mapped_column(Text)
+    duplicate_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     date_of_receipt: Mapped[str | None] = mapped_column(Text, index=True)
     unit_no: Mapped[str | None] = mapped_column(
     String(50),
@@ -305,6 +315,9 @@ class Earning(Base, AuditMixin):
     index=True,
 )
     station_code: Mapped[str | None] = mapped_column(String(64), ForeignKey("stations.station_code", ondelete="SET NULL"), index=True)
+    raw_unit_no: Mapped[str | None] = mapped_column(Text, index=True)
+    raw_station_code: Mapped[str | None] = mapped_column(Text, index=True)
+    earning_scope: Mapped[str | None] = mapped_column(String(32), index=True)
     pf_no: Mapped[str | None] = mapped_column(Text)
     licensee_name: Mapped[str | None] = mapped_column(Text, index=True)
     payment_head: Mapped[str | None] = mapped_column(Text, index=True)
@@ -400,6 +413,24 @@ class DataChangeLog(Base):
     source: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
     details: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class CateringSyncRun(Base):
+    __tablename__ = "catering_sync_runs"
+
+    sync_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_spreadsheet_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False, index=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    unit_rows: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    earning_source_rows: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    earning_rows: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    duplicate_rows: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    linked_earnings: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    unlinked_earnings: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    report_json: Mapped[str | None] = mapped_column(Text)
+    error_message: Mapped[str | None] = mapped_column(Text)
 
 
 class InspectionTemplate(Base, AuditMixin):
