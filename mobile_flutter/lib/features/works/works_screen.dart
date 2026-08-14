@@ -19,7 +19,6 @@ class _WorksScreenState extends ConsumerState<WorksScreen> {
   String _search = '';
   String _sectionFilter = 'All';
   String _categoryFilter = 'All';
-  String _filterMode = 'section';
   bool _exporting = false;
 
   @override
@@ -170,43 +169,56 @@ class _WorksScreenState extends ConsumerState<WorksScreen> {
                         'Sanctioned works grouped from the source register.',
                   ),
                   const SizedBox(height: AppSpacing.x2),
-                  AppSearchField(
-                    hint: 'Search PID, work name, section or remarks',
-                    onChanged: (value) => setState(() => _search = value),
-                  ),
+                  Row(children: [
+                    Expanded(
+                      child: AppSearchField(
+                        hint: 'Search PID, work name or remarks',
+                        onChanged: (value) => setState(() => _search = value),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    AppIconButton(
+                      tooltip: 'Open Section and Work Type filters',
+                      icon: Icons.tune_rounded,
+                      selected: _sectionFilter != 'All' || _categoryFilter != 'All',
+                      onPressed: () => showGlassBottomSheet<void>(
+                        context,
+                        builder: (_) => _WorksFilterSheet(
+                          sections: sections,
+                          categories: categories,
+                          selectedSection: _sectionFilter,
+                          selectedCategory: _categoryFilter,
+                          onSelected: (kind, value) {
+                            setState(() {
+                              if (kind == 'clear') {
+                                _sectionFilter = 'All';
+                                _categoryFilter = 'All';
+                              } else if (kind == 'section') {
+                                _sectionFilter = value;
+                              } else {
+                                _categoryFilter = value;
+                              }
+                            });
+                            Navigator.of(context).pop();
+                          },
+                        ),
+                      ),
+                    ),
+                  ]),
+                  if (_sectionFilter != 'All' || _categoryFilter != 'All') ...[
+                    const SizedBox(height: 10),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Wrap(spacing: 8, runSpacing: 6, children: [
+                        if (_sectionFilter != 'All')
+                          StatusBadge('Section: $_sectionFilter', tone: AppPalette.indigo),
+                        if (_categoryFilter != 'All')
+                          StatusBadge('Type: $_categoryFilter', tone: AppPalette.teal),
+                      ]),
+                    ),
+                  ],
                 ],
               ),
-            ),
-            const SizedBox(height: 12),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.page),
-              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                _WorksFilterRail(
-                  selected: _filterMode,
-                  onSelected: (value) => setState(() {
-                    _filterMode = value;
-                    if (value == 'section') {
-                      _sectionFilter = 'All';
-                    } else {
-                      _categoryFilter = 'All';
-                    }
-                  }),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: _WorksFilterTabs(
-                    values: _filterMode == 'section' ? sections : categories,
-                    selected: _filterMode == 'section' ? _sectionFilter : _categoryFilter,
-                    onSelected: (value) => setState(() {
-                      if (_filterMode == 'section') {
-                        _sectionFilter = value;
-                      } else {
-                        _categoryFilter = value;
-                      }
-                    }),
-                  ),
-                ),
-              ]),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(
@@ -818,6 +830,113 @@ class _WorksFilterRail extends StatelessWidget {
                     : null),
           ),
         ]),
+      );
+}
+
+class _WorksFilterSheet extends StatelessWidget {
+  const _WorksFilterSheet({
+    required this.sections,
+    required this.categories,
+    required this.selectedSection,
+    required this.selectedCategory,
+    required this.onSelected,
+  });
+
+  final List<String> sections;
+  final List<String> categories;
+  final String selectedSection;
+  final String selectedCategory;
+  final void Function(String kind, String value) onSelected;
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(AppSpacing.page, 8, AppSpacing.page, 24),
+          children: [
+            Row(children: [
+              const Expanded(
+                child: Text('Filter works', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+              ),
+              AppIconButton(
+                tooltip: 'Clear all filters',
+                icon: Icons.filter_alt_off_rounded,
+                onPressed: () => onSelected('clear', 'All'),
+              ),
+            ]),
+            const SizedBox(height: 4),
+            Text('Choose one filter under each heading. They work together.',
+                style: Theme.of(context).textTheme.bodySmall),
+            const SizedBox(height: 18),
+            _FilterHeading(
+              title: 'SECTION',
+              icon: Icons.account_tree_rounded,
+              children: sections
+                  .map((value) => _FilterChoice(
+                        label: value,
+                        selected: value == selectedSection,
+                        onTap: () => onSelected('section', value),
+                      ))
+                  .toList(),
+            ),
+            const SizedBox(height: 20),
+            _FilterHeading(
+              title: 'WORK TYPE',
+              icon: Icons.category_rounded,
+              children: categories
+                  .map((value) => _FilterChoice(
+                        label: value,
+                        selected: value == selectedCategory,
+                        onTap: () => onSelected('category', value),
+                      ))
+                  .toList(),
+            ),
+          ],
+        ),
+      );
+}
+
+class _FilterHeading extends StatelessWidget {
+  const _FilterHeading({required this.title, required this.icon, required this.children});
+  final String title;
+  final IconData icon;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(icon, size: 18, color: Theme.of(context).colorScheme.primary),
+            const SizedBox(width: 8),
+            Text(title, style: Theme.of(context).textTheme.labelMedium?.copyWith(letterSpacing: 1.4, fontWeight: FontWeight.w900)),
+          ]),
+          const SizedBox(height: 10),
+          Wrap(spacing: 8, runSpacing: 8, children: children),
+        ],
+      );
+}
+
+class _FilterChoice extends StatelessWidget {
+  const _FilterChoice({required this.label, required this.selected, required this.onTap});
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => ChoiceChip(
+        label: Text(label),
+        selected: selected,
+        onSelected: (_) => onTap(),
+        showCheckmark: false,
+        selectedColor: Theme.of(context).colorScheme.primary,
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        labelStyle: TextStyle(
+          fontWeight: FontWeight.w800,
+          color: selected ? Theme.of(context).colorScheme.onPrimary : null,
+        ),
+        side: BorderSide(color: selected ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.outlineVariant),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       );
 }
 
