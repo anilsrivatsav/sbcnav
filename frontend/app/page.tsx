@@ -19,6 +19,7 @@ import {
   RefreshCw,
   Search,
   Send,
+  Settings as SettingsIcon,
   Sun,
   Timer,
   TrainFront,
@@ -644,7 +645,7 @@ export default function Page() {
   } = useRailDashboardData();
   const [view, setView] = useState("dashboard");
   const [theme, setTheme] = useState("light");
-  const [search, setSearch] = useState({ dashboard: "", stations: "", contracts: "", commercial: "", units: "", earnings: "", works: "", amenities: "", reports: "", ai: "" });
+  const [search, setSearch] = useState({ dashboard: "", stations: "", contracts: "", commercial: "", units: "", earnings: "", works: "", amenities: "", reports: "", ai: "", settings: "" });
   const [visibleLimit, setVisibleLimit] = useState({ stations: 24, units: 24, earnings: 24, works: 24, reports: 24, commercial: 24 });
   const [amenityTab, setAmenityTab] = useState("summary");
   const [contractTab, setContractTab] = useState("units");
@@ -1633,6 +1634,13 @@ export default function Page() {
         filters: [],
       };
     }
+    if (view === "settings") {
+      return {
+        title: "Settings",
+        subtitle: "Manage validated fetch, sync, import, and database refresh operations for the dashboard.",
+        filters: [],
+      };
+    }
     return { title: "Dashboard", subtitle: "KPI cards and high-level trends across the dataset.", filters: [] };
   })();
 
@@ -2183,31 +2191,10 @@ export default function Page() {
             <NavButton active={view === "works"} icon={Wrench} label="Sanctioned Works" hint="PA sanctioned works and station links" onClick={() => setView("works")} />
             <NavButton active={view === "reports"} icon={FileText} label="Reports" hint="License fee and unit alerts" onClick={() => setView("reports")} />
             <NavButton active={view === "ai"} icon={Bot} label="Ask AI" hint="Talk to any table safely" onClick={() => setView("ai")} />
+            <NavButton active={view === "settings"} icon={SettingsIcon} label="Settings" hint="Fetch, sync, import, and database controls" onClick={() => setView("settings")} />
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:mt-5 lg:grid-cols-1">
             <ThemeToggle theme={theme} onToggle={toggleTheme} />
-            <Button onClick={loadData} disabled={loading} className="w-full">
-              <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
-              {loading ? "Refreshing..." : "Refresh data"}
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => view === "contracts" ? syncCateringData() : view === "commercial" ? importCommercialContractsWorkbook() : view === "works" ? importSanctionedWorks() : setImportModal({ open: true, resource: view === "dashboard" || view === "amenities" ? "stations" : view, csvText: "", url: "", result: null })}
-              className="w-full text-accent"
-              disabled={loading}
-            >
-              {view === "contracts" ? <RefreshCw size={16} className={loading ? "animate-spin" : ""} /> : <UploadCloud size={16} />}
-              {view === "contracts" ? "Sync Catering Sheet" : view === "commercial" ? "Import Contracts XLSX" : view === "works" ? "Fetch Sanctioned Works" : "Import CSV"}
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={importPassengerAmenities}
-              disabled={loading}
-              className="w-full text-accent"
-            >
-              <RefreshCw size={16} className={loading && view === "amenities" ? "animate-spin" : ""} />
-              Fetch PA Infra
-            </Button>
           </div>
           <div className="soft-inset mt-3 rounded-lg border border-line p-3 lg:mt-4">
             <div className="text-[11px] font-black uppercase tracking-[0.18em] text-muted">Activity</div>
@@ -2240,6 +2227,52 @@ export default function Page() {
             ) : null}
           </div>
 
+          {view === "settings" ? (
+            <div className="space-y-4">
+              <Panel
+                title="Data refresh and source sync"
+                subtitle="Run the validated source workflows here. Imports update PostgreSQL and then reload the dashboard data."
+                action={<div className="text-xs font-bold text-muted">{loading ? "Operation in progress" : activityStatus}</div>}
+              >
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  <Button onClick={loadData} disabled={loading} className="min-h-20 justify-start">
+                    <RefreshCw size={18} className={loading ? "animate-spin" : ""} />
+                    <span><span className="block font-black">Refresh database</span><span className="text-xs font-medium opacity-75">Reload current PostgreSQL records</span></span>
+                  </Button>
+                  <Button onClick={refreshAllSources} disabled={loading} className="min-h-20 justify-start">
+                    <RefreshCw size={18} className={loading ? "animate-spin" : ""} />
+                    <span><span className="block font-black">Refresh all sources</span><span className="text-xs font-medium opacity-75">Validated catering, amenities, and works</span></span>
+                  </Button>
+                  <Button variant="secondary" onClick={syncCateringData} disabled={loading} className="min-h-20 justify-start text-accent">
+                    <Wallet size={18} />
+                    <span><span className="block font-black">Sync catering sheet</span><span className="text-xs font-medium opacity-75">Units and payment/earnings data</span></span>
+                  </Button>
+                  <Button variant="secondary" onClick={importPassengerAmenities} disabled={loading} className="min-h-20 justify-start text-accent">
+                    <Database size={18} />
+                    <span><span className="block font-black">Fetch PA infra</span><span className="text-xs font-medium opacity-75">Station amenities and infrastructure</span></span>
+                  </Button>
+                  <Button variant="secondary" onClick={importSanctionedWorks} disabled={loading} className="min-h-20 justify-start text-accent">
+                    <Wrench size={18} />
+                    <span><span className="block font-black">Fetch sanctioned works</span><span className="text-xs font-medium opacity-75">Validated passenger amenity works</span></span>
+                  </Button>
+                </div>
+              </Panel>
+              <Panel title="Manual imports" subtitle="Use these for workbook or CSV-based source updates when required.">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <Button variant="secondary" onClick={importCommercialContractsWorkbook} disabled={loading} className="min-h-16 justify-start text-accent"><UploadCloud size={17} /><span><span className="block font-black">Import contracts XLSX</span><span className="text-xs font-medium opacity-75">Commercial contract registry</span></span></Button>
+                  <Button variant="secondary" onClick={importPfExtensionWorkbook} disabled={loading} className="min-h-16 justify-start text-accent"><UploadCloud size={17} /><span><span className="block font-black">Import PF extension</span><span className="text-xs font-medium opacity-75">Platform extension workbook</span></span></Button>
+                  <Button variant="secondary" onClick={() => setImportModal({ open: true, resource: "stations", csvText: "", url: "", result: null })} disabled={loading} className="min-h-16 justify-start text-accent"><UploadCloud size={17} /><span><span className="block font-black">Import CSV</span><span className="text-xs font-medium opacity-75">Select a supported data resource</span></span></Button>
+                </div>
+              </Panel>
+              <Panel title="Latest activity" subtitle="The last operation status is shown here and in the sidebar.">
+                <div className="soft-inset rounded-lg border border-line p-4">
+                  <div className="text-sm font-black text-ink">{activityStatus}</div>
+                  <div className="mt-1 text-xs text-muted">{lastRefreshAt || "No refresh yet"}</div>
+                </div>
+              </Panel>
+            </div>
+          ) : null}
+
           {view === "dashboard" ? (
             <>
               <Panel
@@ -2256,11 +2289,7 @@ export default function Page() {
                     >
                       {dataCentre?.status === "ready" ? "Ready" : "Needs attention"}
                     </span>
-                    <Button size="sm" onClick={refreshAllSources} disabled={loading}><RefreshCw size={14} /> Refresh all sources</Button>
-                    <Button size="sm" variant="secondary" onClick={loadData} disabled={loading}><RefreshCw size={14} /> Refresh DB</Button>
-                    <Button size="sm" variant="secondary" onClick={syncCateringData} disabled={loading}><Wallet size={14} /> Catering</Button>
-                    <Button size="sm" variant="secondary" onClick={importPassengerAmenities} disabled={loading}><Database size={14} /> Amenities</Button>
-                    <Button size="sm" variant="secondary" onClick={importSanctionedWorks} disabled={loading}><Wrench size={14} /> Works</Button>
+                    <Button size="sm" variant="secondary" onClick={() => setView("settings")}><SettingsIcon size={14} /> Open Settings</Button>
                   </div>
                 }
               >
@@ -2444,14 +2473,7 @@ export default function Page() {
                 subtitle="Data from PA Infra Master linked to station codes. Sanctioned works are kept under this head for station-wise amenity review."
                 action={
                   <div className="flex flex-wrap gap-2">
-                    <Button size="sm" onClick={importPassengerAmenities} disabled={loading}>
-                      <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
-                      Fetch PA Infra
-                    </Button>
-                    <Button variant="secondary" size="sm" onClick={importPfExtensionWorkbook} disabled={loading}>
-                      <UploadCloud size={15} />
-                      Import PF Extn
-                    </Button>
+                    <Button size="sm" variant="secondary" onClick={() => setView("settings")}><SettingsIcon size={15} /> Manage in Settings</Button>
                   </div>
                 }
               >
@@ -2487,10 +2509,7 @@ export default function Page() {
                 title="Contracts Workspace"
                 subtitle="Catering units are the contract records. Payments and earnings are reviewed inside the unit/contract context."
                 action={
-                  <Button size="sm" onClick={syncCateringData} disabled={loading}>
-                    <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
-                    Refresh catering data
-                  </Button>
+                  <Button size="sm" variant="secondary" onClick={() => setView("settings")}><SettingsIcon size={15} /> Manage in Settings</Button>
                 }
               >
                 {cateringSyncResult ? (
@@ -2544,10 +2563,7 @@ export default function Page() {
                       <Plus size={15} />
                       Add
                     </Button>
-                    <Button size="sm" onClick={importCommercialContractsWorkbook} disabled={loading}>
-                      <UploadCloud size={15} />
-                      Import XLSX
-                    </Button>
+                    <Button size="sm" variant="secondary" onClick={() => setView("settings")}><SettingsIcon size={15} /> Manage in Settings</Button>
                   </div>
                 }
               >
@@ -3114,7 +3130,7 @@ export default function Page() {
             </div>
           ) : null}
 
-          {view !== "dashboard" && view !== "reports" && view !== "amenities" && view !== "contracts" && view !== "commercial" && view !== "ai" ? (
+          {view !== "dashboard" && view !== "reports" && view !== "amenities" && view !== "contracts" && view !== "commercial" && view !== "ai" && view !== "settings" ? (
           <Panel
             title={viewConfig.title}
             subtitle={view === "stations" ? "Station master with filtering and search." : view === "units" ? "Catering units linked to stations." : view === "earnings" ? "Earnings linked to units and station codes." : view === "works" ? "Sanctioned works with scope and status." : view === "reports" ? "License fee pending and contract expiry alert list." : "Dashboard summary"}
