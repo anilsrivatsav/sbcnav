@@ -13,6 +13,7 @@ import {
   FileText,
   Home,
   Moon,
+  Megaphone,
   Pencil,
   Plus,
   RefreshCw,
@@ -2175,6 +2176,7 @@ export default function Page() {
             <NavButton active={view === "dashboard"} icon={BarChart3} label="Dashboard" hint="KPI cards and charts" onClick={() => setView("dashboard")} />
             <NavButton active={view === "stations"} icon={TrainFront} label="Stations" hint="Station master and search" onClick={() => setView("stations")} />
             <NavButton active={view === "contracts"} icon={Wallet} label="Contracts" hint="Catering units and payments" onClick={() => setView("contracts")} />
+            <NavButton active={false} icon={Megaphone} label="Publicity" hint="Station, train, audio, and e-auction contracts" onClick={() => { window.location.href = "/contracts"; }} />
             <NavButton active={view === "commercial"} icon={Database} label="Commercial" hint="OOH, parking, ATM, mobile assets" onClick={() => setView("commercial")} />
             <div className="hidden pt-2 text-[11px] font-black uppercase tracking-[0.2em] text-muted lg:block">Passenger Amenities</div>
             <NavButton active={view === "amenities"} icon={TrainFront} label="Amenity Infra" hint="Norms, platforms, wheel chairs, trolley paths" onClick={() => setView("amenities")} />

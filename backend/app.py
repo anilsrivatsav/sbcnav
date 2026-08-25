@@ -460,7 +460,13 @@ def _apply_import(resource: str, rows: list[dict]) -> int:
                 _log_change(session, resource, None, "import", "csv", f"{count} rows")
                 return count
             if resource == "earnings":
-                earning_rows = [{**row, **audit_fields(now), "source_hash": hash_row("earning", row)} for row in rows]
+                # Imports do not carry the derived duplicate counter. Keep the
+                # database invariant intact when an existing earning is
+                # re-imported as well as when it is inserted for the first time.
+                earning_rows = [
+                    {**row, "duplicate_count": 1, **audit_fields(now), "source_hash": hash_row("earning", row)}
+                    for row in rows
+                ]
                 count = upsert_many(session, Earning, earning_rows, [Earning.receipt_key], [c.name for c in Earning.__table__.columns if c.name not in {"earning_key", "receipt_key", "created_at", "first_seen_at"}])
                 for receipt_key in [row["receipt_key"] for row in rows if row.get("receipt_key")]:
                     earning = session.query(Earning).filter(Earning.receipt_key == receipt_key).one_or_none()
