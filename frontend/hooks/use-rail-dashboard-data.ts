@@ -5,12 +5,16 @@ import { loadRailDashboardData } from "../lib/api";
 
 export function useRailDashboardData() {
   const [stats, setStats] = useState(null);
+  const [dataCentre, setDataCentre] = useState(null);
+  const [actionCentre, setActionCentre] = useState(null);
   const [stations, setStations] = useState([]);
   const [units, setUnits] = useState([]);
   const [earnings, setEarnings] = useState([]);
   const [works, setWorks] = useState([]);
+  const [workMonitoring, setWorkMonitoring] = useState(null);
   const [commercialContracts, setCommercialContracts] = useState([]);
   const [commercialContractReports, setCommercialContractReports] = useState(null);
+  const [contractAlerts, setContractAlerts] = useState(null);
   const [paSummary, setPaSummary] = useState([]);
   const [paInfra, setPaInfra] = useState([]);
   const [paPlatforms, setPaPlatforms] = useState([]);
@@ -28,12 +32,16 @@ export function useRailDashboardData() {
   const loadFromDb = async () => {
     const data = await loadRailDashboardData();
     setStats(data.stats);
+    setDataCentre(data.dataCentre);
+    setActionCentre(data.actionCentre);
     setStations(data.stations);
     setUnits(data.units);
     setEarnings(data.earnings);
     setWorks(data.works);
+    setWorkMonitoring(data.workMonitoring);
     setCommercialContracts(data.commercialContracts);
     setCommercialContractReports(data.commercialContractReports);
+    setContractAlerts(data.contractAlerts);
     setReports(data.reports);
     setPaSummary(data.passengerAmenities.summary);
     setPaInfra(data.passengerAmenities.infra);
@@ -63,12 +71,16 @@ export function useRailDashboardData() {
 
   return {
     stats,
+    dataCentre,
+    actionCentre,
     stations,
     units,
     earnings,
     works,
+    workMonitoring,
     commercialContracts,
     commercialContractReports,
+    contractAlerts,
     paSummary,
     paInfra,
     paPlatforms,

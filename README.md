@@ -35,3 +35,20 @@ reconcile, and commit the source in one PostgreSQL transaction.
 - `POST /api/catering/sync?dry_run=true` validates without writing.
 - `POST /api/catering/sync` updates PostgreSQL.
 - `GET /api/catering/sync-history` returns recent sync outcomes.
+
+## Unified contract registry
+
+The contract registry combines the E-auction workbook with the existing
+commercial and catering contract tables. It stores contract identity,
+contractor, station/train/other asset scope, lifecycle history, payment
+schedules, and actual payments separately.
+
+- Web workspace: `http://localhost:3000/contracts`
+- `GET /api/contracts?status=running` lists one lifecycle view.
+- `GET /api/contracts/summary` returns status counts and contract value.
+- `GET /api/contracts/{contract_id}` returns the nested contract JSON used by
+  Next.js and Flutter.
+- `POST /api/contracts/import` accepts the E-auction workbook and also
+  backfills existing Rail Inspect contract records.
+
+The PostgreSQL migration is `0027_contract_registry`.

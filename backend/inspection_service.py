@@ -12,8 +12,10 @@ from sqlalchemy.orm import Session
 
 from inspection_schemas import (
     EvidenceUpsert,
+    FindingStatusUpdate,
     FindingUpsert,
     InspectionCreate,
+    InspectionStatusUpdate,
     InspectionNoteUpsert,
     InspectionResponseUpsert,
     SyncOperation,
@@ -268,6 +270,152 @@ def upsert_finding(session: Session, payload: dict[str, Any]) -> dict[str, Any]:
     session.flush()
     result = row_to_dict(record)
     _record_change(session, "finding", record.finding_id, "upsert", result)
+    return result
+
+
+def _serious_findings_without_evidence(session: Session, inspection_id: str) -> list[str]:
+    findings = (
+        session.query(InspectionFinding)
+        .filter(
+            InspectionFinding.inspection_id == inspection_id,
+            InspectionFinding.severity.in_(["high", "critical"]),
+        )
+        .all()
+    )
+    missing = []
+    for finding in findings:
+        evidence_query = session.query(InspectionEvidence).filter(
+            InspectionEvidence.inspection_id == inspection_id,
+        )
+        if finding.response_id:
+            evidence_query = evidence_query.filter(
+                InspectionEvidence.response_id == finding.response_id,
+            )
+        if evidence_query.count() == 0:
+            missing.append(finding.finding_id)
+    return missing
+
+
+def _finding_has_evidence(session: Session, finding: InspectionFinding) -> bool:
+    evidence_query = session.query(InspectionEvidence).filter(
+        InspectionEvidence.inspection_id == finding.inspection_id,
+    )
+    if finding.response_id:
+        evidence_query = evidence_query.filter(
+            InspectionEvidence.response_id == finding.response_id,
+        )
+    return evidence_query.count() > 0
+
+
+INSPECTION_TRANSITIONS: dict[str, set[str]] = {
+    "draft": {"draft", "in_progress", "submitted"},
+    "in_progress": {"in_progress", "submitted"},
+    "submitted": {"submitted", "assigned", "returned"},
+    "assigned": {"assigned", "action_taken", "returned"},
+    "action_taken": {"action_taken", "verification", "returned"},
+    "verification": {"verification", "closed", "returned"},
+    "returned": {"returned", "submitted"},
+    "closed": {"closed"},
+    # Kept for records created by the earlier mobile schema.
+    "reviewed": {"reviewed", "verification", "closed", "returned"},
+}
+
+
+FINDING_TRANSITIONS: dict[str, set[str]] = {
+    "open": {"open", "assigned", "returned"},
+    "assigned": {"assigned", "action_taken", "returned"},
+    "action_taken": {"action_taken", "verification_due", "returned"},
+    "verification_due": {"verification_due", "verified", "returned"},
+    "verified": {"verified", "closed"},
+    "returned": {"returned", "assigned"},
+    "closed": {"closed"},
+}
+
+
+def transition_inspection_status(
+    session: Session,
+    inspection_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    data = InspectionStatusUpdate.model_validate(payload)
+    record = session.get(Inspection, inspection_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Inspection not found")
+    _check_client_version(record, data.server_version)
+    current = record.status or "draft"
+    if data.status not in INSPECTION_TRANSITIONS.get(current, {current}):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Inspection cannot move from {current} to {data.status}",
+        )
+    if data.status in {"submitted", "verification", "closed"}:
+        missing = _serious_findings_without_evidence(session, inspection_id)
+        if missing:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": "Serious findings require photo evidence before this workflow step",
+                    "finding_ids": missing,
+                },
+            )
+    if data.status == "closed":
+        open_findings = (
+            session.query(InspectionFinding)
+            .filter(
+                InspectionFinding.inspection_id == inspection_id,
+                InspectionFinding.status.notin_(["verified", "closed"]),
+            )
+            .count()
+        )
+        if open_findings:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{open_findings} finding(s) must be verified or closed before inspection closure",
+            )
+        record.completed_at = utcnow()
+    record.status = data.status
+    if data.remarks is not None:
+        record.remarks = data.remarks
+    record.server_version += 1
+    record.updated_at = utcnow()
+    session.flush()
+    result = row_to_dict(record)
+    _record_change(session, "inspection", record.inspection_id, "status_transition", result)
+    return result
+
+
+def transition_finding_status(
+    session: Session,
+    finding_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    data = FindingStatusUpdate.model_validate(payload)
+    record = session.get(InspectionFinding, finding_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Finding not found")
+    _check_client_version(record, data.server_version)
+    current = record.status or "open"
+    if data.status not in FINDING_TRANSITIONS.get(current, {current}):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Finding cannot move from {current} to {data.status}",
+        )
+    if data.status in {"verification_due", "verified", "closed"}:
+        if record.severity in {"high", "critical"} and not _finding_has_evidence(session, record):
+            raise HTTPException(
+                status_code=422,
+                detail="High and critical findings require photo evidence before verification",
+            )
+    record.status = data.status
+    if data.responsible_party is not None:
+        record.responsible_party = data.responsible_party
+    if data.target_date is not None:
+        record.target_date = data.target_date
+    record.server_version += 1
+    record.updated_at = utcnow()
+    session.flush()
+    result = row_to_dict(record)
+    _record_change(session, "finding", record.finding_id, "status_transition", result)
     return result
 
 

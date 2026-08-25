@@ -10,7 +10,7 @@ export const API_URL = resolveApiUrl();
 
 const defaultPage = { items: [], pagination: { total: 0, page: 1, page_size: 0 } };
 
-export async function fetchJson(url, options) {
+export async function fetchJson(url: string, options?: RequestInit) {
   let response;
   try {
     response = await fetch(url, { cache: "no-store", ...(options || {}) });
@@ -45,12 +45,16 @@ async function fetchOrDefault(url, fallback) {
 export async function loadRailDashboardData() {
   const results = await Promise.all([
     fetchOrDefault(`${API_URL}/api/stats`, {}),
+    fetchOrDefault(`${API_URL}/api/data-centre`, {}),
+    fetchOrDefault(`${API_URL}/api/action-centre?limit=500`, {}),
     fetchOrDefault(`${API_URL}/api/stations?page=1&page_size=5000&sort_by=station_name`, defaultPage),
     fetchOrDefault(`${API_URL}/api/units?page=1&page_size=5000&sort_by=unit_no`, defaultPage),
     fetchOrDefault(`${API_URL}/api/earnings?page=1&page_size=5000&sort_by=date_of_receipt&sort_order=desc`, defaultPage),
     fetchOrDefault(`${API_URL}/api/works?page=1&page_size=5000&sort_by=project_id`, defaultPage),
+    fetchOrDefault(`${API_URL}/api/works/monitoring?page=1&page_size=5000`, {}),
     fetchOrDefault(`${API_URL}/api/commercial-contracts?page=1&page_size=5000&sort_by=contract_name`, defaultPage),
     fetchOrDefault(`${API_URL}/api/commercial-contracts/reports`, {}),
+    fetchOrDefault(`${API_URL}/api/contracts/alerts`, {}),
     fetchOrDefault(`${API_URL}/api/reports`, {}),
     fetchOrDefault(`${API_URL}/api/passenger-amenities?kind=summary&page=1&page_size=5000&sort_by=station_code`, defaultPage),
     fetchOrDefault(`${API_URL}/api/passenger-amenities?kind=infra&page=1&page_size=5000&sort_by=station_code`, defaultPage),
@@ -64,12 +68,16 @@ export async function loadRailDashboardData() {
   ]);
   const [
     statsData,
+    dataCentreData,
+    actionCentreData,
     stationsData,
     unitsData,
     earningsData,
     worksData,
+    workMonitoringData,
     commercialContractsData,
     commercialContractReportsData,
+    contractAlertsData,
     reportsData,
     paSummaryData,
     paInfraData,
@@ -85,12 +93,16 @@ export async function loadRailDashboardData() {
 
   return {
     stats: statsData,
+    dataCentre: dataCentreData,
+    actionCentre: actionCentreData,
     stations: stationsData.items || [],
     units: unitsData.items || [],
     earnings: earningsData.items || [],
     works: worksData.items || [],
+    workMonitoring: workMonitoringData,
     commercialContracts: commercialContractsData.items || [],
     commercialContractReports: commercialContractReportsData,
+    contractAlerts: contractAlertsData,
     reports: reportsData,
     passengerAmenities: {
       summary: paSummaryData.items || [],
@@ -107,12 +119,25 @@ export async function loadRailDashboardData() {
   };
 }
 
+export function contractAlertsUrl(stationCode?: string) {
+  const query = stationCode && stationCode !== "All" ? `?station_code=${encodeURIComponent(stationCode)}` : "";
+  return `${API_URL}/api/contracts/alerts${query}`;
+}
+
 export function stationDetailUrl(stationCode) {
   return `${API_URL}/api/stations/${encodeURIComponent(stationCode)}/detail`;
 }
 
+export function amenityFindingsUrl(stationCode) {
+  return `${API_URL}/api/mobile/v1/stations/${encodeURIComponent(stationCode)}/amenity-findings`;
+}
+
 export function importPassengerAmenitiesUrl() {
   return `${API_URL}/api/passenger-amenities/import`;
+}
+
+export function previewPassengerAmenitiesUrl() {
+  return `${API_URL}/api/passenger-amenities/preview`;
 }
 
 export function importPfExtensionUrl() {
@@ -123,8 +148,26 @@ export function commercialContractDetailUrl(contractKey) {
   return `${API_URL}/api/commercial-contracts/${encodeURIComponent(contractKey)}`;
 }
 
+export function commercialContractStatementUrl(contractKey) {
+  return `${API_URL}/api/commercial-contracts/${encodeURIComponent(contractKey)}/statement`;
+}
+
 export function importCommercialContractsUrl() {
   return `${API_URL}/api/commercial-contracts/import`;
+}
+
+export function contractsUrl({ status = "all", search = "", page = 1, pageSize = 100 } = {}) {
+  const params = new URLSearchParams({ status, page: String(page), page_size: String(pageSize) });
+  if (search.trim()) params.set("search", search.trim());
+  return `${API_URL}/api/contracts?${params.toString()}`;
+}
+
+export function contractSummaryUrl() {
+  return `${API_URL}/api/contracts/summary`;
+}
+
+export function contractRegistryDetailUrl(contractId) {
+  return `${API_URL}/api/contracts/${encodeURIComponent(contractId)}`;
 }
 
 export function cateringSyncUrl({ dryRun = false } = {}) {
@@ -139,6 +182,26 @@ export function importSanctionedWorksUrl() {
   return `${API_URL}/api/works/import-sanctioned`;
 }
 
+export function previewSanctionedWorksUrl() {
+  return `${API_URL}/api/works/import-sanctioned/preview`;
+}
+
+export function workProgressUrl(projectId) {
+  return `${API_URL}/api/works/${encodeURIComponent(projectId)}/progress`;
+}
+
+export function workExpenditureUrl(projectId) {
+  return `${API_URL}/api/works/${encodeURIComponent(projectId)}/expenditure`;
+}
+
 export function aiQueryUrl() {
   return `${API_URL}/api/ai/query`;
+}
+
+export function reportPresetsUrl() {
+  return `${API_URL}/api/report-presets`;
+}
+
+export function reportPresetRunUrl(presetId) {
+  return `${API_URL}/api/report-presets/${encodeURIComponent(presetId)}/run`;
 }

@@ -41,11 +41,18 @@ class MobileApi {
   Future<Map<String, dynamic>> offlineStationDetails({
     required int offset,
     int limit = 10,
+    String? section,
+    List<String>? stationCodes,
   }) =>
       _request(
         () => _dio.get(
           '/api/mobile/v1/offline/station-details',
-          queryParameters: {'offset': offset, 'limit': limit},
+          queryParameters: {
+            'offset': offset,
+            'limit': limit,
+            if (section != null && section.trim().isNotEmpty) 'section': section.trim(),
+            if (stationCodes != null && stationCodes.isNotEmpty) 'station_codes': stationCodes.join(','),
+          },
           options: Options(receiveTimeout: const Duration(seconds: 90)),
         ),
       );
@@ -68,6 +75,17 @@ class MobileApi {
         ),
       );
 
+  Future<Map<String, dynamic>> updateDeviceState(
+    String deviceId,
+    Map<String, dynamic> state,
+  ) =>
+      _request(
+        () => _dio.post(
+          '/api/mobile/v1/devices/${Uri.encodeComponent(deviceId)}/state',
+          data: state,
+        ),
+      );
+
   Future<Map<String, dynamic>> askAi(String question) => _request(
         () => _dio.post(
           '/api/ai/query',
@@ -83,6 +101,33 @@ class MobileApi {
             sendTimeout: const Duration(seconds: 30),
           ),
         ),
+      );
+
+  Future<Map<String, dynamic>> syncSanctionedWorksFromGoogleSheet() => _request(
+        () => _dio.post(
+          '/api/works/import-sanctioned',
+          options: Options(
+            receiveTimeout: const Duration(seconds: 180),
+            sendTimeout: const Duration(seconds: 30),
+          ),
+        ),
+      );
+
+  Future<Map<String, dynamic>> contractSummary() => _request(
+        () => _dio.get('/api/contracts/summary'),
+      );
+
+  Future<Map<String, dynamic>> contracts({String status = 'all', String? search}) => _request(
+        () => _dio.get('/api/contracts', queryParameters: {
+          'status': status,
+          'page': 1,
+          'page_size': 100,
+          if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
+        }),
+      );
+
+  Future<Map<String, dynamic>> contractDetail(int contractId) => _request(
+        () => _dio.get('/api/contracts/$contractId'),
       );
 
   Future<Map<String, dynamic>> _request(

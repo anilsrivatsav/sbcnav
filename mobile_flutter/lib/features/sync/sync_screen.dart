@@ -4,11 +4,51 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/sync/sync_service.dart';
 import '../../shared/widgets.dart';
 
-class SyncScreen extends ConsumerWidget {
+class SyncScreen extends ConsumerStatefulWidget {
   const SyncScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SyncScreen> createState() => _SyncScreenState();
+}
+
+class _SyncScreenState extends ConsumerState<SyncScreen> {
+  static const _sections = <String>[
+    'All',
+    'BNC WFD Section',
+    'BWT Section',
+    'HUP Section',
+    'MYS Section',
+    'NMGA-HAS',
+    'SA Section',
+    'SBC',
+    'TK Section',
+    'YNK-KQZ',
+  ];
+
+  String _section = 'All';
+  final _stationCodesController = TextEditingController();
+
+  @override
+  void dispose() {
+    _stationCodesController.dispose();
+    super.dispose();
+  }
+
+  void _downloadSelection() {
+    final codes = _stationCodesController.text
+        .split(RegExp(r'[,\s]+'))
+        .map((code) => code.trim().toUpperCase())
+        .where((code) => code.isNotEmpty)
+        .toSet()
+        .toList();
+    ref.read(syncControllerProvider.notifier).bootstrap(
+          section: _section == 'All' ? null : _section,
+          stationCodes: codes.isEmpty ? null : codes,
+        );
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final state = ref.watch(syncControllerProvider);
     return ListView(
       padding: const EdgeInsets.fromLTRB(
@@ -81,6 +121,13 @@ class SyncScreen extends ConsumerWidget {
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
+                    if (value.dataVersion != null) ...[
+                      const SizedBox(height: 5),
+                      Text(
+                        'Data version ${shortDate(value.dataVersion)}',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
                     if (value.failed > 0) ...[
                       const SizedBox(height: AppSpacing.x1),
                       StatusBadge(
@@ -89,6 +136,53 @@ class SyncScreen extends ConsumerWidget {
                       ),
                     ],
                     const SizedBox(height: AppSpacing.x3),
+                    Text(
+                      'Selective offline download',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w800,
+                          ),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Choose a section or enter station codes. Existing cached data is preserved.',
+                    ),
+                    const SizedBox(height: AppSpacing.x2),
+                    DropdownButtonFormField<String>(
+                      value: _section,
+                      decoration: const InputDecoration(
+                        labelText: 'Section',
+                        prefixIcon: Icon(Icons.account_tree_outlined),
+                      ),
+                      items: _sections
+                          .map(
+                            (section) => DropdownMenuItem<String>(
+                              value: section,
+                              child: Text(section),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) => setState(() => _section = value ?? 'All'),
+                    ),
+                    const SizedBox(height: AppSpacing.x1),
+                    TextField(
+                      controller: _stationCodesController,
+                      textCapitalization: TextCapitalization.characters,
+                      decoration: const InputDecoration(
+                        labelText: 'Station codes (optional)',
+                        hintText: 'SBC, KJM, YPR',
+                        prefixIcon: Icon(Icons.location_on_outlined),
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.x2),
+                    AppButton(
+                      expand: true,
+                      kind: AppButtonKind.secondary,
+                      loading: value.busy,
+                      onPressed: value.busy ? null : _downloadSelection,
+                      icon: Icons.download_for_offline_rounded,
+                      label: 'Download selected data',
+                    ),
+                    const SizedBox(height: AppSpacing.x2),
                     AppButton(
                       expand: true,
                       onPressed: () => ref
@@ -159,6 +253,18 @@ class SyncScreen extends ConsumerWidget {
                         const Icon(Icons.offline_pin_outlined),
                       ],
                     ),
+                    const SizedBox(height: AppSpacing.x1),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '${value.offlineWorks} sanctioned works cached',
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                        const Icon(Icons.engineering_outlined),
+                      ],
+                    ),
                     if (value.offlineProgress != null) ...[
                       const SizedBox(height: AppSpacing.x1),
                       GlassProgressBar(value: value.offlineProgress!),
@@ -211,42 +317,62 @@ class _SyncQueuePanel extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           for (final row in rows.take(5)) ...[
-            Row(
-              children: [
-                Icon(
-                  row['last_error'] == null
-                      ? Icons.schedule_rounded
-                      : Icons.error_outline_rounded,
-                  size: 18,
-                  color: row['last_error'] == null
-                      ? Theme.of(context).colorScheme.primary
-                      : const Color(0xFFB91C1C),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${row['entity_type']} · ${_shortId(row['entity_id'])}',
-                        style: const TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                      if (row['last_error'] != null)
-                        Text(
-                          '${row['last_error']}',
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style:
-                              Theme.of(context).textTheme.bodySmall?.copyWith(
-                                    color: const Color(0xFFB91C1C),
+            InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: row['conflict_json'] == null
+                  ? null
+                  : () => _showConflict(context, row),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  children: [
+                    Icon(
+                      row['last_error'] == null
+                          ? Icons.schedule_rounded
+                          : Icons.error_outline_rounded,
+                      size: 18,
+                      color: row['last_error'] == null
+                          ? Theme.of(context).colorScheme.primary
+                          : const Color(0xFFB91C1C),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${row['entity_type']} · ${_shortId(row['entity_id'])}',
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                          if (row['last_error'] != null)
+                            Text(
+                              '${row['last_error']}',
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(color: const Color(0xFFB91C1C)),
+                            ),
+                          if (row['conflict_json'] != null)
+                            Text(
+                              'Server version available for review',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(
+                                    color: const Color(0xFF9A3412),
+                                    fontWeight: FontWeight.w700,
                                   ),
-                        ),
-                    ],
-                  ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    if ((row['attempts'] as num?)?.toInt() != 0)
+                      StatusBadge('${row['attempts']} tries'),
+                  ],
                 ),
-                if ((row['attempts'] as num?)?.toInt() != 0)
-                  StatusBadge('${row['attempts']} tries'),
-              ],
+              ),
             ),
             const Divider(height: 18),
           ],
@@ -255,6 +381,27 @@ class _SyncQueuePanel extends StatelessWidget {
               '+ ${rows.length - 5} more queued records',
               style: Theme.of(context).textTheme.bodySmall,
             ),
+        ],
+      ),
+    );
+  }
+
+  void _showConflict(BuildContext context, Map<String, dynamic> row) {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Server conflict'),
+        content: SingleChildScrollView(
+          child: SelectableText(
+            'The server has a newer version of this ${row['entity_type']} record.\n\n'
+            '${row['conflict_json']}',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
         ],
       ),
     );

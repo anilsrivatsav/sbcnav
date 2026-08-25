@@ -3,12 +3,17 @@ from __future__ import annotations
 import logging
 import os
 import re
-from datetime import datetime, timezone
+import csv
+import io
+import json
+import asyncio
+from uuid import uuid4
+from datetime import datetime, timedelta, timezone
 
 import requests
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy import Integer
 from ai_service import query_ai
@@ -21,6 +26,8 @@ from models import (
     CommercialContractPayment,
     CommercialContractStationLink,
     DataChangeLog,
+    ReportPreset,
+    ReportRun,
     Earning,
     EarningLink,
     PassengerAmenityWork,
@@ -33,6 +40,9 @@ from models import (
     Unit,
     WheelChairAvailability,
     Work,
+    WorkProgressUpdate,
+    WorkProgressPhoto,
+    WorkExpenditureUpdate,
     WorkLink,
 )
 from import_catering_workbook import (
@@ -50,9 +60,13 @@ from services import (
     get_reports,
     get_commercial_contract_detail,
     get_commercial_contract_reports,
+    get_contract_alerts,
+    get_action_centre,
+    get_data_centre_status,
     get_passenger_amenity_reports,
     get_station_detail,
     get_stats,
+    get_work_monitoring,
     hash_row,
     is_available_unit,
     list_earnings,
@@ -83,6 +97,13 @@ from services import (
     unit_sort_map,
     upsert_many,
     work_sort_map,
+)
+from contract_registry import (
+    backfill_legacy_contracts,
+    get_registry_contract,
+    import_eauction_workbook,
+    list_registry_contracts,
+    registry_summary,
 )
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rail_dashboard.api")
@@ -154,11 +175,23 @@ async def validation_exception_handler(_: Request, exc: RequestValidationError):
 @app.on_event("startup")
 def startup() -> None:
     Base.metadata.create_all(bind=engine)
+    app.state.report_worker = asyncio.create_task(_scheduled_report_worker())
 
     if is_sqlite_fallback():
         logger.info("SQLite fallback detected; local cache available.")
     else:
         logger.info("API startup complete.")
+
+
+@app.on_event("shutdown")
+async def shutdown() -> None:
+    worker = getattr(app.state, "report_worker", None)
+    if worker:
+        worker.cancel()
+        try:
+            await worker
+        except asyncio.CancelledError:
+            pass
 
 
 @app.get("/api/health")
@@ -320,6 +353,88 @@ def _validate_import(resource: str, rows: list[dict], key: str) -> dict:
     return {"resource": resource, "rows": len(rows), "valid": not errors, "errors": errors[:100]}
 
 
+def _import_preview(resource: str, rows: list[dict], key: str) -> dict:
+    """Return a non-mutating reconciliation preview for CSV imports."""
+    models = {
+        "stations": Station,
+        "units": Unit,
+        "earnings": Earning,
+        "works": Work,
+    }
+    model = models[resource]
+    hash_names = {
+        "stations": "station",
+        "units": "unit",
+        "earnings": "earning",
+        "works": "work",
+    }
+    source = {}
+    duplicate_keys = []
+    for row in rows:
+        value = str(row.get(key) or "").strip()
+        if not value:
+            continue
+        if value in source:
+            duplicate_keys.append(value)
+            continue
+        source[value] = row
+
+    session = SessionLocal()
+    try:
+        existing_rows = session.query(model).all()
+        existing = {
+            str(getattr(row, key)): row
+            for row in existing_rows
+            if getattr(row, key, None)
+        }
+        added = sorted(set(source) - set(existing))
+        removed = sorted(set(existing) - set(source))
+        changed = sorted(
+            value
+            for value, row in source.items()
+            if value in existing
+            and getattr(existing[value], "source_hash", None) != hash_row(hash_names[resource], row)
+        )
+        unmatched = []
+        if resource == "units":
+            station_codes = {row[0] for row in session.query(Station.station_code).all()}
+            unmatched = [
+                {"row": index + 2, "key": row.get(key), "reason": "station not found"}
+                for index, row in enumerate(rows)
+                if row.get("station_code") and row.get("station_code") not in station_codes
+            ]
+        elif resource == "earnings":
+            unit_codes = {row[0] for row in session.query(Unit.unit_no).all()}
+            station_codes = {row[0] for row in session.query(Station.station_code).all()}
+            unmatched = [
+                {"row": index + 2, "key": row.get(key), "reason": reason}
+                for index, row in enumerate(rows)
+                for reason in (
+                    "unit not found" if row.get("unit_no") and row.get("unit_no") not in unit_codes else None,
+                    "station not found" if row.get("station_code") and row.get("station_code") not in station_codes else None,
+                )
+                if reason
+            ]
+        elif resource == "works":
+            unmatched = [
+                {"row": index + 2, "key": row.get(key), "reason": "no station or recognized scope"}
+                for index, row in enumerate(rows)
+                if not row.get("station_code") and not row.get("block_section_station") and not row.get("section")
+            ]
+        return {
+            "source_count": len(rows),
+            "postgres_count": len(existing),
+            "removal_policy": "Existing PostgreSQL rows are preserved; removed keys are preview-only.",
+            "added": {"count": len(added), "keys": added[:100]},
+            "changed": {"count": len(changed), "keys": changed[:100]},
+            "removed": {"count": len(removed), "keys": removed[:100]},
+            "duplicates": {"count": len(duplicate_keys), "keys": sorted(set(duplicate_keys))[:100]},
+            "unmatched": {"count": len(unmatched), "rows": unmatched[:100]},
+        }
+    finally:
+        session.close()
+
+
 def _apply_import(resource: str, rows: list[dict]) -> int:
     now = datetime.now(timezone.utc)
     session = SessionLocal()
@@ -360,18 +475,107 @@ def _apply_import(resource: str, rows: list[dict]) -> int:
 
 def _replace_all_works(rows: list[dict]) -> int:
     now = datetime.now(timezone.utc)
-    work_rows = [{**row, **audit_fields(now), "source_hash": hash_row("work", row)} for row in rows]
     session = SessionLocal()
     try:
         with session.begin():
+            existing_tdc = {
+                row.project_id: row.tdc
+                for row in session.query(Work).all()
+                if row.project_id and row.tdc
+            }
+            work_rows = [
+                {
+                    **row,
+                    "tdc": row.get("tdc") or existing_tdc.get(row.get("project_id")),
+                    **audit_fields(now),
+                    "source_hash": hash_row("work", row),
+                }
+                for row in rows
+            ]
+            progress_history = [
+                {
+                    "project_id": row.project_id,
+                    "update_date": row.update_date,
+                    "progress_percent": row.progress_percent,
+                    "status": row.status,
+                    "physical_progress": row.physical_progress,
+                    "financial_progress": row.financial_progress,
+                    "expenditure_upto_date": row.expenditure_upto_date,
+                    "tdc": row.tdc,
+                    "remarks": row.remarks,
+                    "source": row.source,
+                    "created_at": row.created_at,
+                    "updated_at": row.updated_at,
+                }
+                for row in session.query(WorkProgressUpdate).all()
+            ]
             session.query(WorkLink).delete(synchronize_session=False)
             session.query(Work).delete(synchronize_session=False)
             session.add_all(Work(**row) for row in work_rows)
+            session.flush()
+            valid_projects = {row["project_id"] for row in work_rows}
+            session.add_all(
+                WorkProgressUpdate(**row)
+                for row in progress_history
+                if row["project_id"] in valid_projects
+            )
             session.flush()
             for work in session.query(Work).all():
                 _replace_work_links(session, work)
             _log_change(session, "works", None, "replace_import", "google_sheet", f"{len(work_rows)} rows")
         return len(work_rows)
+    finally:
+        session.close()
+
+
+def _works_import_diff(rows: list[dict]) -> dict:
+    """Compare a parsed source register with PostgreSQL without changing data."""
+    source_by_project: dict[str, dict] = {}
+    duplicate_project_ids: list[str] = []
+    missing_project_rows: list[int] = []
+    for index, row in enumerate(rows, start=1):
+        project_id = str(row.get("project_id") or "").strip()
+        if not project_id:
+            missing_project_rows.append(index)
+            continue
+        if project_id in source_by_project:
+            duplicate_project_ids.append(project_id)
+            continue
+        source_by_project[project_id] = row
+
+    session = SessionLocal()
+    try:
+        existing = {
+            str(row.project_id): row
+            for row in session.query(Work).all()
+            if row.project_id
+        }
+        added = sorted(set(source_by_project) - set(existing))
+        removed = sorted(set(existing) - set(source_by_project))
+        changed = sorted(
+            project_id
+            for project_id, row in source_by_project.items()
+            if project_id in existing
+            and existing[project_id].source_hash != hash_row("work", row)
+        )
+        validation_errors = []
+        if missing_project_rows:
+            validation_errors.append(f"Missing Project ID in source rows: {missing_project_rows[:20]}")
+        if duplicate_project_ids:
+            validation_errors.append(f"Duplicate Project IDs: {sorted(set(duplicate_project_ids))[:20]}")
+        return {
+            "source_count": len(rows),
+            "unique_source_count": len(source_by_project),
+            "postgres_count": len(existing),
+            "added": {"count": len(added), "project_ids": added[:100]},
+            "changed": {"count": len(changed), "project_ids": changed[:100]},
+            "removed": {"count": len(removed), "project_ids": removed[:100]},
+            "validation": {
+                "valid": not validation_errors and bool(source_by_project),
+                "errors": validation_errors,
+            },
+        }
+
     finally:
         session.close()
 
@@ -484,6 +688,56 @@ def _import_passenger_amenity_tabs(tab: str = "all") -> dict:
                 results[tab_key] = {"rows": len(rows), "upserted": count}
             _log_change(session, "passenger_amenities", None, "import", "google_sheet", str(results))
         return results
+    finally:
+        session.close()
+
+
+def _preview_passenger_amenity_tabs(tab: str = "all") -> dict:
+    """Fetch PA source tabs and report a non-mutating reconciliation preview."""
+    def key_value(value) -> str:
+        return str(value or "").strip().casefold()
+
+    selected = list(PA_INFRA_TABS.keys()) if tab == "all" else [tab]
+    unknown = [item for item in selected if item not in PA_INFRA_TABS]
+    if unknown:
+        raise HTTPException(status_code=404, detail=f"Unknown passenger amenity tab: {unknown[0]}")
+
+    session = SessionLocal()
+    try:
+        previews = {}
+        for tab_key in selected:
+            config = PA_INFRA_TABS[tab_key]
+            response = requests.get(_pa_export_url(config["gid"]), timeout=90)
+            response.raise_for_status()
+            rows = config["parser"](response.text)
+            model = config["model"]
+            conflict_names = config["conflict"]
+
+            existing_rows = session.query(model).filter(model.is_active.is_(True)).all()
+            existing = {
+                tuple(key_value(getattr(item, name, None)) for name in conflict_names): item
+                for item in existing_rows
+            }
+            source = {
+                tuple(key_value(row.get(name)) for name in conflict_names): row
+                for row in rows
+            }
+            added_keys = [key for key in source if key not in existing]
+            removed_keys = [key for key in existing if key not in source]
+            changed_keys = [
+                key for key, row in source.items()
+                if key in existing and hash_row(f"pa_{tab_key}", row) != getattr(existing[key], "source_hash", None)
+            ]
+            previews[tab_key] = {
+                "source_count": len(rows),
+                "postgres_count": len(existing_rows),
+                "added": {"count": len(added_keys), "sample": [list(key) for key in added_keys[:10]]},
+                "changed": {"count": len(changed_keys), "sample": [list(key) for key in changed_keys[:10]]},
+                "removed": {"count": len(removed_keys), "sample": [list(key) for key in removed_keys[:10]]},
+                "unmatched": {"count": 0, "sample": []},
+                "validation": {"valid": True, "errors": []},
+            }
+        return {"tabs": previews, "source": "google_sheet", "mode": "preview"}
     finally:
         session.close()
 
@@ -644,7 +898,9 @@ def _create_row(model, payload: dict, required_key: str):
 def validate_import(resource: str, payload: dict):
     try:
         rows, key = _parse_import(resource, _csv_from_payload(payload))
-        return envelope(_validate_import(resource, rows, key), "validated")
+        validation = _validate_import(resource, rows, key)
+        preview = _import_preview(resource, rows, key)
+        return envelope({**validation, "preview": preview}, "validated")
     except requests.RequestException as exc:
         raise HTTPException(status_code=400, detail=f"Unable to fetch import URL: {exc}") from exc
     except ValueError as exc:
@@ -716,9 +972,195 @@ def stats():
     return envelope(get_stats(), "ok")
 
 
+@app.get("/api/data-centre")
+def data_centre():
+    return envelope(get_data_centre_status(), "data centre status ready")
+
+
+@app.get("/api/action-centre")
+def action_centre(station_code: str | None = None, limit: int = 200):
+    return envelope(get_action_centre(station_code=station_code, limit=limit), "action centre ready")
+
+
 @app.get("/api/reports")
 def reports():
     return envelope(get_reports(), "ok")
+
+
+def _report_preset_dict(row: ReportPreset) -> dict:
+    try:
+        filters = json.loads(row.filters_json or "{}")
+    except json.JSONDecodeError:
+        filters = {}
+    return {
+        "preset_id": row.preset_id,
+        "name": row.name,
+        "report_tab": row.report_tab,
+        "filters": filters,
+        "schedule": row.schedule,
+        "is_active": row.is_active,
+        "created_by": row.created_by,
+        "next_run_at": row.next_run_at.isoformat() if row.next_run_at else None,
+        "last_run_at": row.last_run_at.isoformat() if row.last_run_at else None,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+def _report_run_dict(row: ReportRun) -> dict:
+    return {
+        "run_id": row.run_id,
+        "preset_id": row.preset_id,
+        "status": row.status,
+        "generated_at": row.generated_at.isoformat() if row.generated_at else None,
+        "row_count": row.row_count,
+        "error_message": row.error_message,
+    }
+
+
+def _next_report_run(schedule: str | None, now: datetime) -> datetime | None:
+    if schedule == "weekly":
+        return now + timedelta(days=7)
+    if schedule == "monthly":
+        return now + timedelta(days=30)
+    return None
+
+
+def _execute_report_preset(preset_id: str) -> dict | None:
+    session = SessionLocal()
+    try:
+        preset = session.get(ReportPreset, preset_id)
+        if not preset or not preset.is_active:
+            return None
+        run = ReportRun(run_id=str(uuid4()), preset_id=preset_id, status="running", generated_at=datetime.now(timezone.utc))
+        session.add(run)
+        session.commit()
+        run_id = run.run_id
+    finally:
+        session.close()
+
+    try:
+        report = get_reports()
+        payload = json.dumps(report, default=str)
+        session = SessionLocal()
+        try:
+            with session.begin():
+                run = session.get(ReportRun, run_id)
+                preset = session.get(ReportPreset, preset_id)
+                if run:
+                    run.status = "completed"
+                    run.report_json = payload
+                    run.row_count = len(report.get("license_fee_alerts", {}).get("rows", []))
+                if preset:
+                    preset.last_run_at = datetime.now(timezone.utc)
+                    preset.next_run_at = _next_report_run(preset.schedule, preset.last_run_at)
+            return _report_run_dict(run)
+        finally:
+            session.close()
+    except Exception as exc:
+        logger.exception("Scheduled report failed for preset %s", preset_id)
+        session = SessionLocal()
+        try:
+            with session.begin():
+                run = session.get(ReportRun, run_id)
+                if run:
+                    run.status = "failed"
+                    run.error_message = str(exc)
+            return _report_run_dict(run) if run else None
+        finally:
+            session.close()
+
+
+async def _scheduled_report_worker() -> None:
+    while True:
+        await asyncio.sleep(60)
+        session = SessionLocal()
+        try:
+            now = datetime.now(timezone.utc)
+            preset_ids = [row.preset_id for row in session.query(ReportPreset).filter(
+                ReportPreset.is_active.is_(True),
+                ReportPreset.schedule.isnot(None),
+                ReportPreset.next_run_at.isnot(None),
+                ReportPreset.next_run_at <= now,
+            ).limit(5).all()]
+        finally:
+            session.close()
+        for preset_id in preset_ids:
+            await asyncio.to_thread(_execute_report_preset, preset_id)
+
+
+@app.get("/api/report-presets")
+def report_presets():
+    session = SessionLocal()
+    try:
+        rows = session.query(ReportPreset).filter(ReportPreset.is_active.is_(True)).order_by(ReportPreset.updated_at.desc()).all()
+        return envelope([_report_preset_dict(row) for row in rows], "ok")
+    finally:
+        session.close()
+
+
+@app.post("/api/report-presets", status_code=201)
+def save_report_preset(payload: dict):
+    name = str(payload.get("name") or "").strip()
+    report_tab = str(payload.get("report_tab") or "overview").strip()
+    filters = payload.get("filters") or {}
+    schedule = payload.get("schedule")
+    if not name or len(name) > 128:
+        raise HTTPException(status_code=422, detail="Preset name is required and must be 128 characters or fewer")
+    if not isinstance(filters, dict):
+        raise HTTPException(status_code=422, detail="filters must be an object")
+    if schedule not in {None, "", "weekly", "monthly"}:
+        raise HTTPException(status_code=422, detail="schedule must be weekly, monthly, or empty")
+    session = SessionLocal()
+    try:
+        with session.begin():
+            row = session.query(ReportPreset).filter(ReportPreset.name == name).one_or_none()
+            if not row:
+                row = ReportPreset(preset_id=str(uuid4()), name=name, report_tab=report_tab, filters_json=json.dumps(filters), schedule=schedule or None)
+                session.add(row)
+            else:
+                row.report_tab = report_tab
+                row.filters_json = json.dumps(filters)
+                row.schedule = schedule or None
+                row.is_active = True
+            row.next_run_at = _next_report_run(row.schedule, datetime.now(timezone.utc)) if row.schedule else None
+        return envelope(_report_preset_dict(row), "report preset saved")
+    finally:
+        session.close()
+
+
+@app.delete("/api/report-presets/{preset_id}")
+def delete_report_preset(preset_id: str):
+    session = SessionLocal()
+    try:
+        with session.begin():
+            row = session.get(ReportPreset, preset_id)
+            if not row:
+                raise HTTPException(status_code=404, detail="Report preset not found")
+            row.is_active = False
+        return envelope({"preset_id": preset_id}, "report preset deleted")
+    finally:
+        session.close()
+
+
+@app.get("/api/report-presets/{preset_id}/runs")
+def report_preset_runs(preset_id: str, limit: int = 20):
+    session = SessionLocal()
+    try:
+        if not session.get(ReportPreset, preset_id):
+            raise HTTPException(status_code=404, detail="Report preset not found")
+        rows = session.query(ReportRun).filter(ReportRun.preset_id == preset_id).order_by(ReportRun.generated_at.desc()).limit(min(max(limit, 1), 100)).all()
+        return envelope([_report_run_dict(row) for row in rows], "ok")
+    finally:
+        session.close()
+
+
+@app.post("/api/report-presets/{preset_id}/run")
+def run_report_preset(preset_id: str):
+    result = _execute_report_preset(preset_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Active report preset not found")
+    return envelope(result, "report generated")
 
 
 @app.get("/api/commercial-contracts")
@@ -729,9 +1171,48 @@ def commercial_contracts(q: str | None = None, station_code: str | None = None, 
     return envelope({"items": page_data.items, "pagination": {"total": page_data.total, "page": page_data.page, "page_size": page_data.page_size}}, "ok")
 
 
+@app.get("/api/contracts")
+def registry_contracts(status: str = "all", search: str | None = None, asset_type: str | None = None, page: int = 1, page_size: int = 50):
+    rows = list_registry_contracts(status=status, search=search, asset_type=asset_type)
+    page_data = paginate(rows, page, page_size)
+    return envelope({"items": page_data.items, "pagination": {"total": page_data.total, "page": page_data.page, "page_size": page_data.page_size}}, "ok")
+
+
+@app.get("/api/contracts/summary")
+def registry_contract_summary():
+    return envelope(registry_summary(), "ok")
+
+
+@app.post("/api/contracts/import")
+async def registry_contract_import(path: str | None = None, file: UploadFile | None = File(default=None)):
+    if file:
+        content = await file.read()
+        result = import_eauction_workbook(content, file.filename)
+        result.update(backfill_legacy_contracts())
+        return envelope(result, "contracts imported")
+    if path:
+        result = import_eauction_workbook(path, path)
+        result.update(backfill_legacy_contracts())
+        return envelope(result, "contracts imported")
+    raise HTTPException(status_code=422, detail="Excel file upload or path is required")
+
+
 @app.get("/api/commercial-contracts/reports")
 def commercial_contract_reports():
     return envelope(get_commercial_contract_reports(), "ok")
+
+
+@app.get("/api/contracts/alerts")
+def contract_alerts(station_code: str | None = None):
+    return envelope(get_contract_alerts(station_code=station_code), "ok")
+
+
+@app.get("/api/contracts/{contract_id}")
+def registry_contract_detail(contract_id: int):
+    row = get_registry_contract(contract_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Contract not found")
+    return envelope(row, "ok")
 
 
 @app.get("/api/commercial-contracts/{contract_key}")
@@ -740,6 +1221,46 @@ def commercial_contract_detail(contract_key: int):
     if not detail:
         raise HTTPException(status_code=404, detail="Commercial contract not found")
     return envelope(detail, "ok")
+
+
+@app.get("/api/commercial-contracts/{contract_key}/statement")
+def commercial_contract_statement(contract_key: int):
+    """Download a complete contract payment statement as CSV."""
+    detail = get_commercial_contract_detail(contract_key)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Commercial contract not found")
+    contract = detail["contract"]
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Contract Name", "Policy", "Sub Category", "Licensee", "Station",
+        "Payment Month", "Source Column", "Amount Due", "Amount Paid",
+        "Outstanding", "Payment Status",
+    ])
+    links = detail.get("station_links") or [{}]
+    payments = detail.get("payments") or [{}]
+    for link in links:
+        for payment in payments:
+            due = int(payment.get("amount_due") or 0)
+            paid = int(payment.get("amount_paid") or 0)
+            writer.writerow([
+                contract.get("contract_name"),
+                contract.get("policy"),
+                contract.get("sub_category"),
+                contract.get("licensee_name"),
+                link.get("station_code") or contract.get("raw_station_value"),
+                payment.get("payment_month"),
+                payment.get("source_column"),
+                due,
+                paid,
+                max(0, due - paid),
+                payment.get("payment_status"),
+            ])
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="contract-{contract_key}-statement.csv"'},
+    )
 
 
 @app.post("/api/commercial-contracts/import")
@@ -817,6 +1338,16 @@ def passenger_amenities(kind: str = "summary", q: str | None = None, station_cod
 @app.get("/api/passenger-amenities/reports")
 def passenger_amenity_reports():
     return envelope(get_passenger_amenity_reports(), "ok")
+
+
+@app.post("/api/passenger-amenities/preview")
+def preview_passenger_amenities(payload: dict | None = None):
+    try:
+        return envelope(_preview_passenger_amenity_tabs((payload or {}).get("tab", "all")), "passenger amenity preview ready")
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Unable to fetch PA Infra Google Sheet: {exc}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.post("/api/passenger-amenities/import")
@@ -932,14 +1463,276 @@ def works(q: str | None = None, scope_type: str | None = None, station_code: str
     return envelope({"items": page_data.items, "pagination": {"total": page_data.total, "page": page_data.page, "page_size": page_data.page_size}}, "ok")
 
 
-@app.post("/api/works/import-sanctioned")
-def import_sanctioned_works():
+@app.get("/api/works/monitoring")
+def work_monitoring(q: str | None = None, section: str | None = None, allocation: str | None = None, year: str | None = None, work_type: str | None = None, page: int = 1, page_size: int = 50):
+    report = get_work_monitoring(q=q, section=section, allocation=allocation, year=year, work_type=work_type)
+    page_data = paginate(report["items"], page, page_size)
+    return envelope({**report, "items": page_data.items, "pagination": {"total": page_data.total, "page": page_data.page, "page_size": page_data.page_size}}, "ok")
+
+
+def _progress_payload(payload: dict, project_id: str) -> dict:
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=422, detail="Progress update must be an object")
+    update_date = str(payload.get("update_date") or "").strip()
+    if not update_date:
+        raise HTTPException(status_code=422, detail="update_date is required for a progress update")
+    progress = payload.get("progress_percent")
+    if progress not in (None, ""):
+        try:
+            progress = int(float(progress))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="progress_percent must be a number") from exc
+        if progress < 0 or progress > 100:
+            raise HTTPException(status_code=422, detail="progress_percent must be between 0 and 100")
+    expenditure = payload.get("expenditure_upto_date")
+    if expenditure not in (None, ""):
+        try:
+            expenditure = int(float(expenditure))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="expenditure_upto_date must be a number") from exc
+        if expenditure < 0:
+            raise HTTPException(status_code=422, detail="expenditure_upto_date cannot be negative")
+    return {
+        "project_id": project_id,
+        "update_date": update_date,
+        "progress_percent": progress,
+        "status": str(payload.get("status") or "").strip() or None,
+        "physical_progress": payload.get("physical_progress"),
+        "financial_progress": payload.get("financial_progress"),
+        "expenditure_upto_date": expenditure,
+        "tdc": payload.get("tdc"),
+        "remarks": payload.get("remarks"),
+        "source": str(payload.get("source") or "manual").strip(),
+    }
+
+
+def _expenditure_payload(payload: dict, project_id: str) -> dict:
+    update_date = str(payload.get("update_date") or "").strip()
+    if not update_date:
+        raise HTTPException(status_code=422, detail="update_date is required for an expenditure update")
+    values = {}
+    for key in ("period_expenditure", "cumulative_expenditure"):
+        raw = payload.get(key)
+        if raw in (None, ""):
+            values[key] = None
+            continue
+        try:
+            parsed = int(float(raw))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=f"{key} must be a number") from exc
+        if parsed < 0:
+            raise HTTPException(status_code=422, detail=f"{key} cannot be negative")
+        values[key] = parsed
+    if values["period_expenditure"] is None and values["cumulative_expenditure"] is None:
+        raise HTTPException(status_code=422, detail="period_expenditure or cumulative_expenditure is required")
+    return {
+        "project_id": project_id,
+        "update_date": update_date,
+        **values,
+        "source": str(payload.get("source") or "manual").strip(),
+        "reference": str(payload.get("reference") or "").strip() or None,
+        "remarks": str(payload.get("remarks") or "").strip() or None,
+    }
+
+
+@app.get("/api/works/{project_id}/progress")
+def work_progress(project_id: str):
+    session = SessionLocal()
+    try:
+        work = session.query(Work).filter(Work.project_id == project_id).one_or_none()
+        if not work:
+            raise HTTPException(status_code=404, detail="Work not found")
+        rows = (
+            session.query(WorkProgressUpdate)
+            .filter(WorkProgressUpdate.project_id == project_id)
+            .order_by(WorkProgressUpdate.update_date.desc(), WorkProgressUpdate.progress_id.desc())
+            .all()
+        )
+        photo_rows = session.query(WorkProgressPhoto).filter(WorkProgressPhoto.project_id == project_id).order_by(WorkProgressPhoto.created_at.desc()).all()
+        photos_by_progress: dict[int, list[dict]] = {}
+        for photo in photo_rows:
+            photos_by_progress.setdefault(photo.progress_id or 0, []).append({
+                "photo_id": photo.photo_id,
+                "project_id": photo.project_id,
+                "progress_id": photo.progress_id,
+                "mime_type": photo.mime_type,
+                "caption": photo.caption,
+                "captured_at": photo.captured_at.isoformat() if photo.captured_at else None,
+                "created_at": photo.created_at.isoformat() if photo.created_at else None,
+                "download_url": f"/api/works/{project_id}/progress/photos/{photo.photo_id}",
+            })
+        items = []
+        for row in rows:
+            item = row_to_dict(row)
+            item["photos"] = photos_by_progress.get(row.progress_id, [])
+            items.append(item)
+        return envelope({"project_id": project_id, "items": items, "photos": [photo for values in photos_by_progress.values() for photo in values]}, "ok")
+    finally:
+        session.close()
+
+
+@app.get("/api/works/{project_id}/expenditure")
+def work_expenditure(project_id: str):
+    session = SessionLocal()
+    try:
+        if not session.query(Work).filter(Work.project_id == project_id).one_or_none():
+            raise HTTPException(status_code=404, detail="Work not found")
+        rows = session.query(WorkExpenditureUpdate).filter(WorkExpenditureUpdate.project_id == project_id).order_by(WorkExpenditureUpdate.update_date.desc(), WorkExpenditureUpdate.expenditure_id.desc()).all()
+        return envelope({"project_id": project_id, "items": [row_to_dict(row) for row in rows]}, "ok")
+    finally:
+        session.close()
+
+
+@app.post("/api/works/{project_id}/expenditure")
+def add_work_expenditure(project_id: str, payload: dict):
+    session = SessionLocal()
+    try:
+        with session.begin():
+            work = session.query(Work).filter(Work.project_id == project_id).one_or_none()
+            if not work:
+                raise HTTPException(status_code=404, detail="Work not found")
+            values = _expenditure_payload(payload, project_id)
+            row = session.query(WorkExpenditureUpdate).filter(
+                WorkExpenditureUpdate.project_id == project_id,
+                WorkExpenditureUpdate.update_date == values["update_date"],
+            ).one_or_none()
+            if row:
+                for key, value in values.items():
+                    if key != "project_id":
+                        setattr(row, key, value)
+                row.updated_at = datetime.now(timezone.utc)
+            else:
+                row = WorkExpenditureUpdate(**values)
+                session.add(row)
+            if values["cumulative_expenditure"] is not None:
+                work.expenditure_upto_date = values["cumulative_expenditure"]
+            work.updated_at = datetime.now(timezone.utc)
+            session.flush()
+            _log_change(session, "works", project_id, "expenditure_update", values["update_date"])
+        return envelope(row_to_dict(row), "work expenditure saved")
+    finally:
+        session.close()
+
+
+@app.post("/api/works/{project_id}/progress")
+def add_work_progress(project_id: str, payload: dict):
+    session = SessionLocal()
+    try:
+        with session.begin():
+            work = session.query(Work).filter(Work.project_id == project_id).one_or_none()
+            if not work:
+                raise HTTPException(status_code=404, detail="Work not found")
+            values = _progress_payload(payload, project_id)
+            row = (
+                session.query(WorkProgressUpdate)
+                .filter(
+                    WorkProgressUpdate.project_id == project_id,
+                    WorkProgressUpdate.update_date == values["update_date"],
+                )
+                .one_or_none()
+            )
+            if row:
+                for key, value in values.items():
+                    if key != "project_id":
+                        setattr(row, key, value)
+                row.updated_at = datetime.now(timezone.utc)
+            else:
+                row = WorkProgressUpdate(**values)
+                session.add(row)
+            if values["status"]:
+                work.status = values["status"]
+            if values["progress_percent"] is not None:
+                work.physical_progress = f"{values['progress_percent']}%"
+            if values["expenditure_upto_date"] is not None:
+                work.expenditure_upto_date = values["expenditure_upto_date"]
+            work.updated_at = datetime.now(timezone.utc)
+            session.flush()
+            _log_change(session, "works", project_id, "progress_update", f"{values['update_date']} / {values['progress_percent']}")
+        return envelope(row_to_dict(row), "work progress saved")
+    finally:
+        session.close()
+
+
+@app.post("/api/works/{project_id}/progress/{progress_id}/photos", status_code=201)
+async def upload_work_progress_photo(project_id: str, progress_id: int, file: UploadFile = File(...), caption: str | None = None):
+    if file.content_type not in {"image/jpeg", "image/png", "image/webp"}:
+        raise HTTPException(status_code=422, detail="Only JPEG, PNG, or WebP progress photos are supported")
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=422, detail="Progress photo is empty")
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=422, detail="Progress photo must be 10 MB or smaller")
+    session = SessionLocal()
+    try:
+        progress = session.query(WorkProgressUpdate).filter(
+            WorkProgressUpdate.progress_id == progress_id,
+            WorkProgressUpdate.project_id == project_id,
+        ).one_or_none()
+        if not progress:
+            raise HTTPException(status_code=404, detail="Progress update not found")
+        photo = WorkProgressPhoto(
+            photo_id=str(uuid4()),
+            project_id=project_id,
+            progress_id=progress_id,
+            mime_type=file.content_type,
+            content=content,
+            caption=(caption or "").strip() or None,
+            captured_at=datetime.now(timezone.utc),
+        )
+        session.add(photo)
+        session.commit()
+        return envelope({
+            "photo_id": photo.photo_id,
+            "project_id": project_id,
+            "progress_id": progress_id,
+            "caption": photo.caption,
+            "mime_type": photo.mime_type,
+            "download_url": f"/api/works/{project_id}/progress/photos/{photo.photo_id}",
+        }, "progress photo saved")
+    finally:
+        session.close()
+
+
+@app.get("/api/works/{project_id}/progress/photos/{photo_id}")
+def download_work_progress_photo(project_id: str, photo_id: str):
+    session = SessionLocal()
+    try:
+        photo = session.query(WorkProgressPhoto).filter(
+            WorkProgressPhoto.photo_id == photo_id,
+            WorkProgressPhoto.project_id == project_id,
+        ).one_or_none()
+        if not photo:
+            raise HTTPException(status_code=404, detail="Progress photo not found")
+        return Response(content=photo.content, media_type=photo.mime_type, headers={"Content-Disposition": f'inline; filename="{photo.photo_id}"'})
+    finally:
+        session.close()
+
+
+@app.post("/api/works/import-sanctioned/preview")
+def preview_sanctioned_works():
     try:
         response = requests.get(_sanctioned_works_export_url(), timeout=90)
         response.raise_for_status()
         rows = parse_works_xlsx(response.content)
+        diff = _works_import_diff(rows)
+        return envelope(diff, "sanctioned works preview ready")
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Unable to fetch sanctioned works sheet: {exc}") from exc
+
+
+@app.post("/api/works/import-sanctioned")
+def import_sanctioned_works(dry_run: bool = False):
+    try:
+        response = requests.get(_sanctioned_works_export_url(), timeout=90)
+        response.raise_for_status()
+        rows = parse_works_xlsx(response.content)
+        diff = _works_import_diff(rows)
+        if not diff["validation"]["valid"]:
+            raise HTTPException(status_code=422, detail=diff)
+        if dry_run:
+            return envelope({**diff, "mode": "dry-run"}, "sanctioned works validated")
         count = _replace_all_works(rows)
-        return envelope({"rows": len(rows), "upserted": count}, "sanctioned works imported")
+        return envelope({**diff, "rows": len(rows), "upserted": count, "mode": "apply"}, "sanctioned works imported")
     except requests.RequestException as exc:
         raise HTTPException(status_code=502, detail=f"Unable to fetch sanctioned works sheet: {exc}") from exc
 

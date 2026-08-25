@@ -20,10 +20,13 @@ class SyncSnapshot {
     required this.failed,
     required this.offlineStationDetails,
     required this.offlineStationTotal,
+    required this.offlineWorks,
     this.queue = const [],
     this.history = const [],
     this.lastSyncAt,
     this.lastCateringSyncAt,
+    this.lastWorksSyncAt,
+    this.dataVersion,
     this.message = 'Ready',
     this.busy = false,
   });
@@ -32,10 +35,13 @@ class SyncSnapshot {
   final int failed;
   final int offlineStationDetails;
   final int offlineStationTotal;
+  final int offlineWorks;
   final List<Map<String, dynamic>> queue;
   final List<Map<String, dynamic>> history;
   final String? lastSyncAt;
   final String? lastCateringSyncAt;
+  final String? lastWorksSyncAt;
+  final String? dataVersion;
   final String message;
   final bool busy;
 
@@ -74,11 +80,40 @@ class CateringSyncResult {
   final int miscellaneousEarnings;
 }
 
+class WorksSyncResult {
+  const WorksSyncResult({required this.rows, required this.upserted});
+
+  final int rows;
+  final int upserted;
+}
+
 class SyncService {
   const SyncService({required this.database, required this.api});
 
   final AppDatabase database;
   final MobileApi api;
+
+  Future<void> _reportDeviceState() async {
+    try {
+      await api.updateDeviceState(
+        await database.deviceId(),
+        {
+          'cached_stations': await database.cachedStationCount(),
+          'cached_station_details': await database.offlineStationDetailCount(),
+          'cached_works': (await database.portfolioWorks()).length,
+          'cached_units': 0,
+          'cached_earnings': 0,
+          'pending_operations': await database.pendingCount(),
+          'failed_operations': await database.failedSyncCount(),
+          'data_version': await database.metadata('data_version'),
+          'cache_updated_at': await database.metadata('offline_station_details_at'),
+          'last_sync_at': await database.metadata('last_sync_at'),
+        },
+      );
+    } catch (_) {
+      // Cache reporting must never make offline work or sync fail.
+    }
+  }
 
   Future<CateringSyncResult> refreshCateringFromGoogleSheet() async {
     final connectivity = await Connectivity().checkConnectivity();
@@ -113,36 +148,97 @@ class SyncService {
         'PostgreSQL was updated, but this device could not refresh its offline data: $error',
       );
     }
-    await database.setMetadata(
-      'last_catering_sync_at',
-      DateTime.now().toUtc().toIso8601String(),
+      await database.setMetadata(
+        'last_catering_sync_at',
+        DateTime.now().toUtc().toIso8601String(),
+      );
+      await _reportDeviceState();
+      return result;
+  }
+
+  Future<WorksSyncResult> refreshSanctionedWorksFromGoogleSheet() async {
+    final connectivity = await Connectivity().checkConnectivity();
+    if (connectivity.every((item) => item == ConnectivityResult.none)) {
+      throw const MobileApiException(
+        'An internet connection is required to refresh sanctioned works.',
+      );
+    }
+
+    final data = await api.syncSanctionedWorksFromGoogleSheet();
+    final result = WorksSyncResult(
+      rows: (data['rows'] as num?)?.toInt() ?? 0,
+      upserted: (data['upserted'] as num?)?.toInt() ?? 0,
     );
-    return result;
+    if (result.rows == 0 || result.upserted != result.rows) {
+      throw MobileApiException(
+        'The server returned an incomplete works import '
+        '(${result.upserted} of ${result.rows}).',
+      );
+    }
+
+    try {
+      await bootstrap();
+    } catch (error) {
+      throw MobileApiException(
+        'PostgreSQL was updated, but this device could not refresh its '
+        'offline works: $error',
+      );
+    }
+      await database.setMetadata(
+        'last_works_sync_at',
+        DateTime.now().toUtc().toIso8601String(),
+      );
+      await _reportDeviceState();
+      return result;
   }
 
   Future<void> bootstrap({
     Future<void> Function(int cached, int total)? onProgress,
+    String? section,
+    List<String>? stationCodes,
   }) async {
     final data = await api.bootstrap();
     await database.cacheBootstrap(data);
-    var offset = 0;
-    var hasMore = true;
-    while (hasMore) {
-      final page = await api.offlineStationDetails(offset: offset);
-      final items = page['items'] as List? ?? const [];
-      final total = (page['total'] as num?)?.toInt() ?? 0;
-      await database.cacheStationDetails(items, total: total);
-      final cached = await database.offlineStationDetailCount();
-      if (onProgress != null) await onProgress(cached, total);
-      final nextOffset = (page['next_offset'] as num?)?.toInt() ?? offset;
-      hasMore = page['has_more'] == true;
-      if (hasMore && nextOffset <= offset) {
-        throw const MobileApiException(
-          'Offline download stopped because the server returned an invalid page.',
+    final selectionKey = [
+      section?.trim() ?? '',
+      ...(stationCodes ?? const <String>[]).map((code) => code.trim().toUpperCase()),
+    ].join('|');
+    final previousSelection = await database.metadata('offline_download_selection');
+    var offset = previousSelection == selectionKey
+        ? int.tryParse(await database.metadata('offline_download_offset') ?? '0') ?? 0
+        : 0;
+    await database.setMetadata('offline_download_selection', selectionKey);
+    await database.setMetadata('offline_download_offset', '$offset');
+    try {
+      var hasMore = true;
+      while (hasMore) {
+        final page = await api.offlineStationDetails(
+          offset: offset,
+          section: section,
+          stationCodes: stationCodes,
         );
+        final items = page['items'] as List? ?? const [];
+        final total = (page['total'] as num?)?.toInt() ?? 0;
+        await database.cacheStationDetails(items, total: total);
+        final cached = await database.offlineStationDetailCount();
+        if (onProgress != null) await onProgress(cached, total);
+        final nextOffset = (page['next_offset'] as num?)?.toInt() ?? offset;
+        hasMore = page['has_more'] == true;
+        if (hasMore && nextOffset <= offset) {
+          throw const MobileApiException(
+            'Offline download stopped because the server returned an invalid page.',
+          );
+        }
+        offset = nextOffset;
+        await database.setMetadata('offline_download_offset', '$offset');
       }
-      offset = nextOffset;
+      await database.setMetadata('offline_download_offset', '0');
+    } catch (_) {
+      // Keep the last successful offset so the next download can resume.
+      await database.setMetadata('offline_download_offset', '$offset');
+      rethrow;
     }
+    await _reportDeviceState();
   }
 
   Future<SyncRunResult> synchronize() async {
@@ -182,6 +278,13 @@ class SyncService {
               operationId,
               '${raw['message'] ?? 'The server rejected this record'}',
             );
+            final conflict = raw['conflict'];
+            if (conflict is Map) {
+              await database.markSyncConflict(
+                operationId,
+                Map<String, dynamic>.from(conflict),
+              );
+            }
           }
         }
         await database.markOperationsProcessed(processed);
@@ -205,6 +308,11 @@ class SyncService {
         failed: failed,
         pulled: pulled,
       );
+      await database.setMetadata(
+        'last_sync_at',
+        DateTime.now().toUtc().toIso8601String(),
+      );
+      await _reportDeviceState();
       return SyncRunResult(pushed: pushed, failed: failed, pulled: pulled);
     } catch (error) {
       for (final operation in operations) {
@@ -247,6 +355,9 @@ class SyncController extends AsyncNotifier<SyncSnapshot> {
           0,
       lastSyncAt: await _database.metadata('last_sync_at'),
       lastCateringSyncAt: await _database.metadata('last_catering_sync_at'),
+      lastWorksSyncAt: await _database.metadata('last_works_sync_at'),
+      dataVersion: await _database.metadata('data_version'),
+      offlineWorks: (await _database.portfolioWorks()).length,
       queue: await _database.syncQueueItems(),
       history: await _database.syncHistory(),
       message: message,
@@ -254,10 +365,12 @@ class SyncController extends AsyncNotifier<SyncSnapshot> {
     );
   }
 
-  Future<void> bootstrap() async {
+  Future<void> bootstrap({String? section, List<String>? stationCodes}) async {
     state = const AsyncLoading();
     state = await AsyncValue.guard(() async {
       await _sync.bootstrap(
+        section: section,
+        stationCodes: stationCodes,
         onProgress: (cached, total) async {
           state = AsyncData(
             await _snapshot(
@@ -294,6 +407,27 @@ class SyncController extends AsyncNotifier<SyncSnapshot> {
     } catch (error) {
       state = AsyncData(
         await _snapshot(message: 'Catering refresh failed: $error'),
+      );
+      rethrow;
+    }
+  }
+
+  Future<WorksSyncResult> refreshSanctionedWorksFromGoogleSheet() async {
+    state = AsyncData(
+      await _snapshot(
+        message: 'Refreshing sanctioned works...',
+        busy: true,
+      ),
+    );
+    try {
+      final result = await _sync.refreshSanctionedWorksFromGoogleSheet();
+      state = AsyncData(
+        await _snapshot(message: '${result.rows} sanctioned works refreshed'),
+      );
+      return result;
+    } catch (error) {
+      state = AsyncData(
+        await _snapshot(message: 'Works refresh failed: $error'),
       );
       rethrow;
     }

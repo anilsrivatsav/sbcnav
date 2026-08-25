@@ -12,7 +12,7 @@ const buttonClasses = {
   danger: "soft-control border-red-400/70 text-red-600 hover:bg-red-500/10 active:shadow-pressed",
 };
 
-export function Button({ children, variant = "primary", size = "md", className = "", ...props }) {
+export function Button({ children, variant = "primary", size = "md", className = "", ...props }: any) {
   return (
     <button
       type="button"
@@ -29,7 +29,7 @@ export function Button({ children, variant = "primary", size = "md", className =
   );
 }
 
-export function Badge({ children, tone = "neutral" }) {
+export function Badge({ children, tone = "neutral" }: any) {
   const tones = {
     neutral: "border-line bg-surfaceStrong text-muted",
     accent: "border-accent/30 bg-accentSoft text-accentStrong",
@@ -42,11 +42,11 @@ export function Badge({ children, tone = "neutral" }) {
   );
 }
 
-export function Surface({ children, className = "" }) {
+export function Surface({ children, className = "" }: any) {
   return <section className={cx("soft-surface rounded-lg border p-5", className)}>{children}</section>;
 }
 
-export function KpiCard({ icon: Icon, label, value, subtext }) {
+export function KpiCard({ icon: Icon, label, value, subtext }: any) {
   return (
     <div className="soft-surface rounded-lg border p-5 transition hover:-translate-y-0.5">
       <div className="flex items-center justify-between gap-3">
@@ -63,7 +63,7 @@ export function KpiCard({ icon: Icon, label, value, subtext }) {
   );
 }
 
-export function Panel({ title, subtitle, action, children, className = "" }) {
+export function Panel({ title, subtitle, action, children, className = "" }: any) {
   return (
     <section className={cx("soft-surface rounded-lg border p-5", className)}>
       <div className="flex items-start justify-between gap-4">
@@ -78,7 +78,7 @@ export function Panel({ title, subtitle, action, children, className = "" }) {
   );
 }
 
-export function Tabs({ tabs, value, onChange }) {
+export function Tabs({ tabs, value, onChange }: any) {
   return (
     <div className="soft-inset soft-scroll flex gap-2 overflow-x-auto rounded-lg border border-line p-1.5">
       {tabs.map((tab) => {
@@ -103,7 +103,7 @@ export function Tabs({ tabs, value, onChange }) {
   );
 }
 
-export function SearchInput({ value, onChange, placeholder = "Search current view" }) {
+export function SearchInput({ value, onChange, placeholder = "Search current view" }: any) {
   return (
     <label className="relative block w-full">
       <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={16} />
@@ -117,7 +117,7 @@ export function SearchInput({ value, onChange, placeholder = "Search current vie
   );
 }
 
-export function FormField({ label, children }) {
+export function FormField({ label, children }: any) {
   return (
     <label className="grid gap-1">
       <span className="text-[11px] font-black uppercase tracking-[0.16em] text-muted">{label}</span>
@@ -126,7 +126,7 @@ export function FormField({ label, children }) {
   );
 }
 
-export function FilterSelect({ label, value, onChange, options }) {
+export function FilterSelect({ label, value, onChange, options }: any) {
   return (
     <FormField label={label}>
       <select value={value} onChange={(e) => onChange(e.target.value)} className="soft-inset h-11 rounded-lg border border-line px-3 text-sm outline-none focus:border-accent">
@@ -138,7 +138,7 @@ export function FilterSelect({ label, value, onChange, options }) {
   );
 }
 
-export function FilterBar({ filters }) {
+export function FilterBar({ filters }: any) {
   if (!filters.length) return null;
   return (
     <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -149,11 +149,11 @@ export function FilterBar({ filters }) {
   );
 }
 
-export function ListShell({ children }) {
+export function ListShell({ children }: any) {
   return <div className="soft-scroll max-h-[62vh] overflow-auto pr-1">{children}</div>;
 }
 
-export function ListFooter({ shown, total, onMore, onLess }) {
+export function ListFooter({ shown, total, onMore, onLess }: any) {
   if (total <= shown && shown <= 24) return null;
   return (
     <div className="soft-inset mt-4 flex flex-col items-center justify-between gap-3 rounded-lg border border-line px-4 py-3 text-sm text-muted sm:flex-row">
@@ -175,7 +175,7 @@ export function ListFooter({ shown, total, onMore, onLess }) {
   );
 }
 
-export function EmptyState({ title = "No records found", message = "Try changing search or filters." }) {
+export function EmptyState({ title = "No records found", message = "Try changing search or filters." }: any) {
   return (
     <div className="soft-inset rounded-lg border border-dashed border-line p-6 text-center">
       <div className="text-sm font-black text-ink">{title}</div>
@@ -196,7 +196,7 @@ const csvEscape = (value) => {
   return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 };
 
-export function DataTable({ columns, rows, getKey, onRowClick, emptyTitle = "No records found", fileName = "export.csv", pageSizeOptions = [10, 25, 50, 100] }) {
+export function DataTable({ columns, rows, getKey, onRowClick, emptyTitle = "No records found", fileName = "export.csv", pageSizeOptions = [10, 25, 50, 100] }: any) {
   const [sort, setSort] = useState({ key: columns[0]?.key, direction: "asc" });
   const [filters, setFilters] = useState({});
   const [page, setPage] = useState(1);
@@ -327,7 +327,7 @@ export function DataTable({ columns, rows, getKey, onRowClick, emptyTitle = "No 
   );
 }
 
-export function KeyValueGrid({ rows }) {
+export function KeyValueGrid({ rows }: any) {
   return (
     <dl className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
       {rows.map(([label, value]) => (
@@ -340,7 +340,7 @@ export function KeyValueGrid({ rows }) {
   );
 }
 
-export function Modal({ open, title, subtitle, onClose, children }) {
+export function Modal({ open, title, subtitle, onClose, children }: any) {
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (event) => event.key === "Escape" && onClose();
@@ -373,7 +373,7 @@ export function Modal({ open, title, subtitle, onClose, children }) {
   );
 }
 
-export function BottomSheet({ open, title, subtitle, onClose, children }) {
+export function BottomSheet({ open, title, subtitle, onClose, children }: any) {
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (event) => event.key === "Escape" && onClose();

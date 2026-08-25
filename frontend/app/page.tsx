@@ -1,4 +1,6 @@
+// @ts-nocheck
 "use client";
+// The main screen is being decomposed into typed feature modules incrementally.
 
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -7,6 +9,7 @@ import {
   CircleAlert,
   ChevronRight,
   Database,
+  Download,
   FileText,
   Home,
   Moon,
@@ -30,7 +33,7 @@ import { BottomSheet, DataTable } from "../components/ui";
 import { Station360 } from "../components/station-360";
 import { StationQuickView } from "../components/station-quick-view";
 import { ReportTemplatesPanel } from "../components/reports/report-templates-panel";
-import { API_URL, aiQueryUrl, cateringSyncUrl, commercialContractDetailUrl, fetchJson, importCommercialContractsUrl, importPassengerAmenitiesUrl, importPfExtensionUrl, importSanctionedWorksUrl, stationDetailUrl } from "../lib/api";
+import { API_URL, aiQueryUrl, amenityFindingsUrl, cateringSyncUrl, commercialContractDetailUrl, commercialContractStatementUrl, fetchJson, importCommercialContractsUrl, importPassengerAmenitiesUrl, importPfExtensionUrl, importSanctionedWorksUrl, previewPassengerAmenitiesUrl, previewSanctionedWorksUrl, reportPresetRunUrl, reportPresetsUrl, stationDetailUrl, workExpenditureUrl, workProgressUrl } from "../lib/api";
 import { reportTemplates, templateFilterState, templatePreset } from "../lib/report-templates";
 import { useRailDashboardData } from "../hooks/use-rail-dashboard-data";
 
@@ -238,6 +241,16 @@ function Panel({ title, subtitle, action, children }) {
       </div>
       <div className="mt-4">{children}</div>
     </section>
+  );
+}
+
+function EmptyState({ title, description }) {
+  return (
+    <div className="soft-inset rounded-lg border border-line px-5 py-8 text-center">
+      <CircleAlert size={22} className="mx-auto text-muted" />
+      <div className="mt-2 text-sm font-black text-ink">{title}</div>
+      {description ? <div className="mt-1 text-xs text-muted">{description}</div> : null}
+    </div>
   );
 }
 
@@ -571,6 +584,7 @@ export default function Page() {
       { name: "physical_progress", label: "Physical Progress" },
       { name: "financial_progress", label: "Financial Progress" },
       { name: "anticipated_expenditure", label: "Anticipated Expenditure", type: "number" },
+      { name: "tdc", label: "Target Completion (TDC)" },
       { name: "remarks", label: "Remarks" },
       { name: "engg_remarks", label: "Engineering Remarks" },
     ],
@@ -599,12 +613,16 @@ export default function Page() {
 
   const {
     stats,
+    dataCentre,
+    actionCentre,
     stations,
     units,
     earnings,
     works,
+    workMonitoring,
     commercialContracts,
     commercialContractReports,
+    contractAlerts,
     paSummary,
     paInfra,
     paPlatforms,
@@ -644,6 +662,7 @@ export default function Page() {
   });
   const [reportPresets, setReportPresets] = useState([]);
   const [reportPresetName, setReportPresetName] = useState("");
+  const [reportPresetSchedule, setReportPresetSchedule] = useState("");
   const [reportWorkSection, setReportWorkSection] = useState("All");
   const [reportWorkType, setReportWorkType] = useState("All");
   const [drillDown, setDrillDown] = useState({ open: false, title: "", rows: [], columns: [], type: null });
@@ -671,6 +690,7 @@ export default function Page() {
   const [formError, setFormError] = useState("");
   const [importModal, setImportModal] = useState({ open: false, resource: "stations", csvText: "", url: "", result: null });
   const [saving, setSaving] = useState(false);
+  const [progressDraft, setProgressDraft] = useState({ update_date: new Date().toISOString().slice(0, 10), progress_percent: "", expenditure_upto_date: "", status: "", remarks: "" });
   const [aiQuestion, setAiQuestion] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [aiResult, setAiResult] = useState(null);
@@ -684,6 +704,11 @@ export default function Page() {
     "Which stations need ramp or lift attention?",
     "Show units with missing license fee",
     "Give station coverage summary",
+    "Show inconsistent work statuses",
+    "Show duplicate receipts",
+    "Show duplicate contracts",
+    "Show missing station links",
+    "Draft an action letter for SBC",
   ];
 
   const importPassengerAmenities = async () => {
@@ -772,13 +797,77 @@ export default function Page() {
 
   const importSanctionedWorks = async () => {
     setLoading(true);
-    setActivityStatus("Fetching sanctioned works from Google Sheet...");
+    setActivityStatus("Comparing sanctioned works source with PostgreSQL...");
     try {
+      const preview = await fetchJson(previewSanctionedWorksUrl(), { method: "POST" });
+      const summary = `Source ${preview.source_count}, database ${preview.postgres_count}; +${preview.added?.count || 0} added, ${preview.changed?.count || 0} changed, ${preview.removed?.count || 0} removed`;
+      if (!window.confirm(`${summary}. Apply this validated source to PostgreSQL?`)) {
+        setActivityStatus("Works refresh cancelled; PostgreSQL was not changed.");
+        return;
+      }
+      setActivityStatus("Applying validated sanctioned works transaction...");
       const result = await fetchJson(importSanctionedWorksUrl(), { method: "POST" });
       await loadFromDb();
       setActivityStatus(`Sanctioned works imported: ${result?.rows || 0} rows`);
     } catch (error) {
       setActivityStatus(error?.message || "Sanctioned works import failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const refreshAllSources = async () => {
+    setLoading(true);
+    setCateringSyncResult(null);
+    const outcomes = [];
+    setActivityStatus("Refreshing all validated sources...");
+    try {
+      try {
+        const result = await fetchJson(cateringSyncUrl(), { method: "POST" });
+        setCateringSyncResult(result);
+        outcomes.push(`catering ${result?.source?.units || 0} units`);
+      } catch (error) {
+        outcomes.push(`catering failed: ${error?.message || "error"}`);
+      }
+
+      try {
+        const preview = await fetchJson(previewPassengerAmenitiesUrl(), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tab: "all" }),
+        });
+        const tabs = Object.values(preview?.tabs || {});
+        const summary = tabs.reduce((total, item) => total + Number(item?.added?.count || 0) + Number(item?.changed?.count || 0), 0);
+        if (window.confirm(`Passenger amenities: ${summary} added or changed rows across ${tabs.length} tabs. Apply the validated transaction?`)) {
+          const result = await fetchJson(importPassengerAmenitiesUrl(), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tab: "all" }),
+          });
+          const total = Object.values(result || {}).reduce((sum, item) => sum + (item?.upserted || 0), 0);
+          outcomes.push(`amenities ${total} rows`);
+        } else {
+          outcomes.push("amenities skipped by user");
+        }
+      } catch (error) {
+        outcomes.push(`amenities failed: ${error?.message || "error"}`);
+      }
+
+      try {
+        const preview = await fetchJson(previewSanctionedWorksUrl(), { method: "POST" });
+        const summary = `Works source ${preview.source_count}, database ${preview.postgres_count}; +${preview.added?.count || 0} added, ${preview.changed?.count || 0} changed, ${preview.removed?.count || 0} removed, ${preview.unmatched?.count || 0} unmatched.`;
+        if (window.confirm(`${summary}\n\nApply the validated works transaction?`)) {
+          const result = await fetchJson(importSanctionedWorksUrl(), { method: "POST" });
+          outcomes.push(`works ${result?.rows || 0} rows`);
+        } else {
+          outcomes.push("works skipped by user");
+        }
+      } catch (error) {
+        outcomes.push(`works failed: ${error?.message || "error"}`);
+      }
+
+      await loadFromDb();
+      setActivityStatus(`Refresh finished: ${outcomes.join(" · ")}`);
     } finally {
       setLoading(false);
     }
@@ -825,6 +914,21 @@ export default function Page() {
     } catch {
       setReportPresets([]);
     }
+    fetchJson(reportPresetsUrl())
+      .then((rows) => {
+        if (Array.isArray(rows) && rows.length) {
+          setReportPresets(rows.map((row) => ({
+            id: row.preset_id,
+            name: row.name,
+            reportTab: row.report_tab,
+            reportFilters: row.filters || {},
+            schedule: row.schedule || "",
+          })));
+        }
+      })
+      .catch(() => {
+        // Local presets remain available when the API is offline.
+      });
   }, []);
 
   useEffect(() => {
@@ -1068,7 +1172,7 @@ export default function Page() {
     const unique = new Map();
     const add = (row) => {
       const days = contractDaysRemaining(row.valid_to);
-      if (days === null || days < 0) return;
+      if (days === null) return;
       if (!matchesReportScope(row)) return;
       if (!matchesQuery(row, ["contract_name", "licensee_name", "station_code", "station_name", "contract_type", "valid_to"], search.reports)) return;
       const existing = unique.get(row.key);
@@ -1098,10 +1202,10 @@ export default function Page() {
   }, [units, commercialContracts, search.reports, reportFilters, stationByCode]);
 
   const visibleContractExpiryRows = useMemo(
-    () => contractExpiryRows.filter((row) => contractExpiryWindow === 51 ? row.days_remaining > 50 : row.days_remaining <= contractExpiryWindow),
+    () => contractExpiryRows.filter((row) => contractExpiryWindow === 51 ? row.days_remaining > 50 : contractExpiryWindow === 0 ? row.days_remaining === 0 : row.days_remaining <= contractExpiryWindow),
     [contractExpiryRows, contractExpiryWindow],
   );
-  const contractExpiryCount = (days) => contractExpiryRows.filter((row) => days === 51 ? row.days_remaining > 50 : row.days_remaining <= days).length;
+  const contractExpiryCount = (days) => contractExpiryRows.filter((row) => days === 51 ? row.days_remaining > 50 : days === 0 ? row.days_remaining === 0 : row.days_remaining <= days).length;
 
   const reportAlerts = reports?.license_fee_alerts?.rows || [];
   const filteredReportAlerts = useMemo(() => {
@@ -1110,15 +1214,31 @@ export default function Page() {
   }, [reportAlerts, search.reports, reportFilters, stationByCode]);
 
   const reportActionRows = useMemo(() => {
+    const serverActionRows = (actionCentre?.items || []).map((row) => {
+      const source = row.source_module;
+      const module = source === "catering" ? "units" : source === "amenities" ? "stations" : source;
+      return {
+        ...row,
+        module,
+        action_type: row.type,
+        action_key: source === "commercial" ? row.title : row.record_id,
+        problem: row.message,
+      };
+    });
+    if (serverActionRows.length) return serverActionRows;
     const rows = [
       ...filteredReportAlerts.map((row) => ({ ...row, action_type: "License Fee Alert", module: "units", action_key: row.unit_no, problem: pretty(row.alert_bucket).replaceAll("_", " ") })),
       ...filteredReportUnits.filter((row) => !row.station_code || !row.license_fee).map((row) => ({ ...row, action_type: "Unit Data Issue", module: "units", action_key: row.unit_no, problem: !row.station_code ? "Missing station code" : "Missing license fee" })),
       ...filteredReportEarnings.filter((row) => /pending/i.test(pretty(row.receipt_type))).map((row) => ({ ...row, action_type: "Pending Receipt", module: "earnings", action_key: row.receipt_key || row.earning_key, problem: "Receipt pending" })),
       ...filteredReportWorks.filter((row) => !/complete|done/i.test(pretty(row.status))).map((row) => ({ ...row, action_type: "Open Work", module: "works", action_key: row.project_id, problem: pretty(row.status) })),
       ...filteredReportCommercial.filter((row) => /unmatched|asset/i.test(pretty(row.station_match_status))).map((row) => ({ ...row, action_type: "Commercial Link Review", module: "commercial", action_key: row.contract_name, problem: pretty(row.station_match_status) })),
+      ...(contractAlerts?.rows || []).map((row) => ({ ...row, action_type: row.pending_amount ? "Contract Payment Risk" : "Contract Expiry", module: row.source_module || "contracts", action_key: row.contract_key || row.unit_no, problem: row.days_to_expiry == null ? "Validity date missing" : row.days_to_expiry < 0 ? "Expired" : `${row.days_to_expiry} days remaining` })),
+      ...(reports?.inspections?.overdue_findings || []).map((row) => ({ ...row, action_type: "Overdue Inspection Finding", module: "inspections", action_key: row.finding_id, problem: `${row.days_overdue} days overdue` })),
+      ...(dataCentre?.failures || []).map((row, index) => ({ ...row, action_type: "Sync Failure", module: "data-centre", action_key: `${row.resource}-${index}`, problem: row.message || "Source synchronization failed" })),
+      ...(dataCentre?.recent_sync || []).filter((row) => /import|replace|sync/i.test(String(row.action || ""))).slice(0, 5).map((row, index) => ({ ...row, action_type: "Source Refresh", module: "data-centre", action_key: `${row.resource}-${row.at || index}`, problem: `${row.resource} refreshed from ${row.source || "source"}` })),
     ];
     return rows;
-  }, [filteredReportAlerts, filteredReportUnits, filteredReportEarnings, filteredReportWorks, filteredReportCommercial]);
+  }, [actionCentre, filteredReportAlerts, filteredReportUnits, filteredReportEarnings, filteredReportWorks, filteredReportCommercial, reports, commercialContractReports, contractAlerts, dataCentre]);
 
   const reportCards = [
     { icon: TrainFront, label: "Stations Covered", value: reports?.stations?.total ?? 0, subtext: `${reports?.stations?.with_units ?? 0} with units, ${reports?.stations?.with_works ?? 0} with works` },
@@ -1126,7 +1246,7 @@ export default function Page() {
     { icon: Wallet, label: "License Fee Collected", value: money(reports?.earnings?.license_fee_collected ?? 0), subtext: "All license fee receipts captured" },
     { icon: Database, label: "Commercial Annual Fee", value: money(commercialContractReports?.annual_license_fee ?? reports?.commercial_contracts?.annual_license_fee ?? 0), subtext: "Non-catering contract annual value" },
     { icon: Wrench, label: "Open Works", value: reports?.works?.pending ?? 0, subtext: "Works not marked complete/done" },
-    { icon: CircleAlert, label: "Critical Alerts", value: reports?.overview?.critical_alerts ?? 0, subtext: "Overdue or needs-review license fee cases" },
+    { icon: CircleAlert, label: "Critical Alerts", value: (contractAlerts?.critical ?? 0) + (reports?.overview?.critical_alerts ?? 0), subtext: "Contract, payment, sync, and inspection risks" },
     { icon: TrendingUp, label: "Overdue Estimate", value: money(reports?.license_fee_alerts?.estimated_overdue_amount ?? 0), subtext: "Estimated from license fee and pending months" },
   ];
 
@@ -1138,6 +1258,7 @@ export default function Page() {
     { value: "earnings", label: "Earnings", icon: Wallet },
     { value: "commercial", label: "Commercial", icon: Database },
     { value: "works", label: "Works", icon: Wrench },
+    { value: "inspections", label: "Inspections", icon: CircleAlert },
     { value: "actions", label: "Needs Action", icon: CircleAlert },
     { value: "quality", label: "Quality", icon: CircleAlert },
     { value: "alerts", label: "Alerts", icon: Timer },
@@ -1151,6 +1272,8 @@ export default function Page() {
     { key: "earningsTotal", icon: Wallet, label: "Contract Revenue", subtext: "Payments captured inside catering units", money: true },
     { key: "completedWorks", icon: BarChart3, label: "Completed Works", subtext: "Works with complete/done status" },
     { key: "pendingWorks", icon: CircleAlert, label: "Pending Works", subtext: "Open or unfinished work items" },
+    { key: "openFindings", icon: CircleAlert, label: "Open Findings", subtext: "Inspection deficiencies needing action" },
+    { key: "overdueFindings", icon: Timer, label: "Overdue Findings", subtext: "Inspection actions past target date" },
   ];
 
   const amenityCount = filteredAmenities[amenityTab]?.length || 0;
@@ -1576,6 +1699,28 @@ export default function Page() {
     }
   };
 
+  const createStationAmenityFindings = async (record) => {
+    const station = record?.station;
+    const inspections = record?.action_centre?.inspections || [];
+    const inspection = inspections.find((row) => ["draft", "in_progress", "returned"].includes(row.status)) || inspections[0];
+    if (!station?.station_code || !inspection?.inspection_id) {
+      setActivityStatus("Create or open an inspection for this station before creating amenity findings.");
+      return;
+    }
+    try {
+      const result = await fetchJson(amenityFindingsUrl(station.station_code), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ inspection_id: inspection.inspection_id }),
+      });
+      setActivityStatus(`${result.total_created || 0} amenity findings created; ${result.skipped?.length || 0} already open`);
+      const refreshed = await fetchJson(stationDetailUrl(station.station_code));
+      setModal((current) => current.open && current.type === "station" ? { ...current, record: refreshed } : current);
+    } catch (error) {
+      setActivityStatus(error?.message || "Unable to create amenity findings");
+    }
+  };
+
   const openStationSheet = async (station) => {
     const fallback = buildLocalStationDetail(station);
     setStationSheet({ open: true, record: fallback, loading: true });
@@ -1619,8 +1764,77 @@ export default function Page() {
     setModal({ open: true, type: "earning", record: { earning } });
   };
 
-  const openWork = (work) => {
-    setModal({ open: true, type: "work", record: { work } });
+  const openWork = async (work) => {
+    setProgressDraft({ update_date: new Date().toISOString().slice(0, 10), progress_percent: "", expenditure_upto_date: "", status: "", remarks: "" });
+    setModal({ open: true, type: "work", record: { work, progress_updates: [], expenditure_updates: [] } });
+    try {
+      const [progress, expenditure] = await Promise.all([
+        fetchJson(workProgressUrl(work.project_id)),
+        fetchJson(workExpenditureUrl(work.project_id)),
+      ]);
+      setModal((current) => current.open && current.type === "work" ? { ...current, record: { ...current.record, progress_updates: progress.items || [], expenditure_updates: expenditure.items || [] } } : current);
+    } catch (error) {
+      setActivityStatus(error?.message || "Progress history unavailable");
+    }
+  };
+
+  const saveWorkProgress = async () => {
+    const work = modal.record?.work;
+    if (!work?.project_id || !progressDraft.update_date) return;
+    setSaving(true);
+    try {
+      await fetchJson(workProgressUrl(work.project_id), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...progressDraft,
+          progress_percent: progressDraft.progress_percent === "" ? null : Number(progressDraft.progress_percent),
+          expenditure_upto_date: progressDraft.expenditure_upto_date === "" ? null : Number(progressDraft.expenditure_upto_date),
+        }),
+      });
+      if (progressDraft.expenditure_upto_date !== "") {
+        await fetchJson(workExpenditureUrl(work.project_id), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            update_date: progressDraft.update_date,
+            cumulative_expenditure: Number(progressDraft.expenditure_upto_date),
+            source: "progress_entry",
+          }),
+        });
+      }
+      const [progress, expenditure] = await Promise.all([
+        fetchJson(workProgressUrl(work.project_id)),
+        fetchJson(workExpenditureUrl(work.project_id)),
+      ]);
+      setModal((current) => ({ ...current, record: { ...current.record, progress_updates: progress.items || [], expenditure_updates: expenditure.items || [] } }));
+      setProgressDraft((current) => ({ ...current, progress_percent: "", expenditure_upto_date: "", status: "", remarks: "" }));
+      await loadData();
+      setActivityStatus("Work progress history saved");
+    } catch (error) {
+      setActivityStatus(error?.message || "Unable to save work progress");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const uploadWorkProgressPhoto = async (update, file) => {
+    const work = modal.record?.work;
+    if (!work?.project_id || !update?.progress_id || !file) return;
+    setSaving(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("caption", file.name);
+      await fetchJson(`${workProgressUrl(work.project_id)}/${update.progress_id}/photos`, { method: "POST", body: form });
+      const progress = await fetchJson(workProgressUrl(work.project_id));
+      setModal((current) => ({ ...current, record: { ...current.record, progress_updates: progress.items || [] } }));
+      setActivityStatus("Progress photo saved");
+    } catch (error) {
+      setActivityStatus(error?.message || "Unable to save progress photo");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const openCommercialContract = async (contract) => {
@@ -1663,23 +1877,38 @@ export default function Page() {
     if (reportTab === "earnings") return openEarning(row);
     if (reportTab === "commercial") return openCommercialContract(row);
     if (reportTab === "works") return openWork(row);
-    if (reportTab === "actions") {
-      if (row.module === "units") {
-        const unit = units.find((item) => pretty(item.unit_no) === pretty(row.unit_no || row.action_key));
-        if (unit) return openUnit(unit);
-      }
-      if (row.module === "earnings") {
-        const earning = earnings.find((item) => pretty(item.receipt_key || item.earning_key) === pretty(row.action_key));
-        if (earning) return openEarning(earning);
-      }
-      if (row.module === "works") {
-        const work = works.find((item) => pretty(item.project_id) === pretty(row.action_key));
-        if (work) return openWork(work);
-      }
-      if (row.module === "commercial") {
-        const contract = commercialContracts.find((item) => pretty(item.contract_name) === pretty(row.action_key));
-        if (contract) return openCommercialContract(contract);
-      }
+    if (reportTab === "actions") return openActionRecord(row);
+    return null;
+  };
+
+  const openActionRecord = (row) => {
+    if (row.module === "units") {
+      const unit = units.find((item) => pretty(item.unit_no) === pretty(row.unit_no || row.action_key));
+      if (unit) return openUnit(unit);
+    }
+    if (row.module === "earnings") {
+      const earning = earnings.find((item) => pretty(item.receipt_key || item.earning_key) === pretty(row.action_key));
+      if (earning) return openEarning(earning);
+    }
+    if (row.module === "works") {
+      const work = works.find((item) => pretty(item.project_id) === pretty(row.action_key));
+      if (work) return openWork(work);
+    }
+    if (row.module === "commercial") {
+      const contract = commercialContracts.find((item) => pretty(item.contract_name) === pretty(row.action_key));
+      if (contract) return openCommercialContract(contract);
+    }
+    if (row.module === "inspections") {
+      const station = stations.find((item) => pretty(item.station_code) === pretty(row.station_code));
+      if (station) return openStation(station, "alerts");
+    }
+    if (row.module === "stations") {
+      const station = stations.find((item) => pretty(item.station_code) === pretty(row.station_code || row.action_key));
+      if (station) return openStation(station, "alerts");
+    }
+    if (row.module === "data-centre") {
+      setView("dashboard");
+      setActivityStatus(row.problem || "Review Data Centre");
     }
     return null;
   };
@@ -1732,16 +1961,41 @@ export default function Page() {
     doc.print();
   };
 
-  const saveReportPreset = () => {
+  const saveReportPreset = async () => {
     const name = reportPresetName.trim() || `${reportTabs.find((tab) => tab.value === reportTab)?.label || "Report"} preset`;
-    const preset = { id: `${Date.now()}`, name, reportTab, reportFilters };
-    setReportPresets((current) => [preset, ...current.filter((item) => item.name !== name)].slice(0, 8));
+    const preset = { id: `${Date.now()}`, name, reportTab, reportFilters, schedule: reportPresetSchedule };
+    try {
+      const saved = await fetchJson(reportPresetsUrl(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, report_tab: reportTab, filters: reportFilters, schedule: reportPresetSchedule || null }),
+      });
+      setReportPresets((current) => [{ id: saved.preset_id, name: saved.name, reportTab: saved.report_tab, reportFilters: saved.filters || {}, schedule: saved.schedule || "" }, ...current.filter((item) => item.name !== name)].slice(0, 8));
+      setActivityStatus("Report preset saved to PostgreSQL");
+    } catch {
+      setReportPresets((current) => [preset, ...current.filter((item) => item.name !== name)].slice(0, 8));
+      setActivityStatus("Report preset saved locally; PostgreSQL is unavailable");
+    }
     setReportPresetName("");
+    setReportPresetSchedule("");
   };
 
   const applyReportPreset = (preset) => {
     setReportTab(preset.reportTab || "overview");
     setReportFilters({ ...reportFilters, ...(preset.reportFilters || {}) });
+  };
+
+  const runSavedReport = async (preset) => {
+    if (!preset?.id || !/^[0-9a-f-]{20,}$/i.test(String(preset.id))) {
+      setActivityStatus("This preset is local-only and cannot be run by the server yet.");
+      return;
+    }
+    try {
+      const run = await fetchJson(reportPresetRunUrl(preset.id), { method: "POST" });
+      setActivityStatus(`Report generated: ${run.row_count || 0} alert rows`);
+    } catch (error) {
+      setActivityStatus(error?.message || "Scheduled report failed");
+    }
   };
 
   const applyReportTemplate = (template) => {
@@ -1986,13 +2240,172 @@ export default function Page() {
 
           {view === "dashboard" ? (
             <>
+              <Panel
+                title="Data Centre"
+                subtitle="Freshness and quality of the records currently powering this dashboard."
+                action={
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <span className={cx(
+                      "rounded-full border px-3 py-1 text-xs font-black",
+                      dataCentre?.status === "ready"
+                        ? "border-emerald-300 bg-emerald-500/10 text-emerald-700"
+                        : "border-amber-300 bg-amber-500/10 text-amber-700",
+                    )}
+                    >
+                      {dataCentre?.status === "ready" ? "Ready" : "Needs attention"}
+                    </span>
+                    <Button size="sm" onClick={refreshAllSources} disabled={loading}><RefreshCw size={14} /> Refresh all sources</Button>
+                    <Button size="sm" variant="secondary" onClick={loadData} disabled={loading}><RefreshCw size={14} /> Refresh DB</Button>
+                    <Button size="sm" variant="secondary" onClick={syncCateringData} disabled={loading}><Wallet size={14} /> Catering</Button>
+                    <Button size="sm" variant="secondary" onClick={importPassengerAmenities} disabled={loading}><Database size={14} /> Amenities</Button>
+                    <Button size="sm" variant="secondary" onClick={importSanctionedWorks} disabled={loading}><Wrench size={14} /> Works</Button>
+                  </div>
+                }
+              >
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                  {Object.entries(dataCentre?.modules || {}).map(([key, module]) => (
+                    <div key={key} className="soft-raised rounded-lg border border-line p-3">
+                      {(() => {
+                        const source = dataCentre?.source_snapshots?.[key] || {};
+                        return (
+                          <>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-black uppercase tracking-[0.14em] text-muted">{key}</span>
+                        <Database size={15} className="text-accent" />
+                      </div>
+                      <div className="mt-2 text-xl font-black text-ink">{module.count ?? 0}</div>
+                      <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted">PostgreSQL records</div>
+                      <div className="mt-1 text-[11px] text-muted">
+                        {module.last_updated_at ? `Updated ${compactDate(module.last_updated_at)}` : "No update recorded"}
+                      </div>
+                      <div className="mt-1 text-[11px] font-semibold text-muted">
+                        Source {source.source_count ?? "NA"} · {source.source || "PostgreSQL"}
+                      </div>
+                      <div className="mt-1 text-[11px] font-semibold text-muted">
+                        Mobile {dataCentre?.mobile_cache?.counts?.[key] ?? "NA"}
+                      </div>
+                      {source.reconciliation ? (
+                        <div className="mt-2 flex flex-wrap gap-1 text-[10px] font-bold">
+                          {Object.entries(source.reconciliation).map(([label, count]) => (
+                            <span key={label} className={cx(
+                              "rounded-full border px-2 py-0.5",
+                              label === "unmatched" && Number(count) > 0
+                                ? "border-red-300 bg-red-500/10 text-red-700"
+                                : label === "changed" && Number(count) > 0
+                                  ? "border-blue-300 bg-blue-500/10 text-blue-700"
+                                  : "border-line bg-surfaceStrong text-muted",
+                            )}
+                            >
+                              {pretty(label)} {count}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                          </>
+                        );
+                      })()}
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-3 flex flex-col gap-2 rounded-lg border border-line bg-surfaceStrong p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+                  <span className="text-muted">
+                    {dataCentre?.quality?.total ? `${dataCentre.quality.total} data-quality exceptions require review.` : "No data-quality exceptions reported."}
+                  </span>
+                  <span className="font-semibold text-ink">
+                    Last activity: {dataCentre?.last_sync_at ? compactDate(dataCentre.last_sync_at) : "Not available"}
+                  </span>
+                </div>
+                <div className="mt-3 grid gap-2 rounded-lg border border-line bg-surfaceStrong p-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                  <div>
+                    <div className="text-[10px] font-black uppercase tracking-[0.14em] text-muted">Mobile cache</div>
+                    <div className="mt-1 font-black text-ink">
+                      {dataCentre?.mobile_cache?.device_count ?? 0} devices · {dataCentre?.mobile_cache?.active_device_count ?? 0} active
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-black uppercase tracking-[0.14em] text-muted">Cached records</div>
+                    <div className="mt-1 font-semibold text-ink">
+                      {dataCentre?.mobile_cache?.counts?.stations ?? 0} stations · {dataCentre?.mobile_cache?.counts?.works ?? 0} works
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-black uppercase tracking-[0.14em] text-muted">Device queue</div>
+                    <div className="mt-1 font-semibold text-ink">
+                      {dataCentre?.mobile_cache?.pending_operations ?? 0} pending · {dataCentre?.mobile_cache?.failed_operations ?? 0} failed
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-black uppercase tracking-[0.14em] text-muted">Cache version</div>
+                    <div className="mt-1 font-semibold text-ink">
+                      {dataCentre?.mobile_cache?.data_version || "No device reported yet"}
+                      {dataCentre?.mobile_cache?.last_seen_at ? ` · ${compactDate(dataCentre.mobile_cache.last_seen_at)}` : ""}
+                    </div>
+                  </div>
+                </div>
+                {dataCentre?.quality?.exceptions?.length ? (
+                  <div className="mt-3 rounded-lg border border-amber-300/70 bg-amber-500/5 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <div className="text-[10px] font-black uppercase tracking-[0.14em] text-amber-700">Link exceptions</div>
+                        <div className="mt-1 text-sm font-semibold text-ink">Review these records before trusting a cross-module report.</div>
+                      </div>
+                      <Badge tone="danger">{dataCentre.quality.total} total</Badge>
+                    </div>
+                    <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                      {dataCentre.quality.exceptions.slice(0, 9).map((exception, index) => (
+                        <div key={`${exception.module}-${exception.record_key}-${index}`} className="rounded-md border border-line bg-surface p-2 text-xs">
+                          <div className="flex items-center justify-between gap-2 font-black text-ink">
+                            <span>{pretty(exception.module)}</span>
+                            <span className="text-muted">{pretty(exception.record_key)}</span>
+                          </div>
+                          <div className="mt-1 text-muted">{exception.problem}</div>
+                          {exception.station_code ? <div className="mt-1 font-semibold text-accent">Station {pretty(exception.station_code)}</div> : null}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </Panel>
+              <Panel
+                title="Action Centre"
+                subtitle="The next records that need attention across contracts, receipts, works, and station links."
+                action={
+                  <Button variant="secondary" size="sm" onClick={() => { setView("reports"); setReportTab("actions"); }}>
+                    View all <ChevronRight size={14} />
+                  </Button>
+                }
+              >
+                {reportActionRows.length ? (
+                  <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                    {reportActionRows.slice(0, 8).map((row, index) => (
+                      <button
+                        key={`${row.action_type}-${row.action_key}-${index}`}
+                        type="button"
+                        onClick={() => openActionRecord(row)}
+                        className="soft-raised rounded-lg border border-line p-3 text-left transition hover:-translate-y-0.5 hover:border-accent/50 focus-ring"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="rounded-full border border-amber-300 bg-amber-500/10 px-2 py-1 text-[10px] font-black uppercase tracking-[0.1em] text-amber-700">
+                            {pretty(row.action_type)}
+                          </span>
+                          <CircleAlert size={16} className="shrink-0 text-amber-600" />
+                        </div>
+                        <div className="mt-3 truncate text-sm font-black text-ink">{pretty(row.action_key)}</div>
+                        <div className="mt-1 truncate text-xs text-muted">{pretty(row.problem)}</div>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <EmptyState title="No immediate actions" description="Contracts, receipts, works, and data links currently have no flagged items." />
+                )}
+              </Panel>
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {dashboardCards.map((card) => (
                   <Card
                     key={card.key}
                     icon={card.icon}
                     label={card.label}
-                    value={card.money ? money(stats?.[card.key] ?? 0) : card.key === "completedWorks" ? completedWorks : card.key === "pendingWorks" ? pendingWorks : stats?.[card.key] ?? 0}
+                    value={card.money ? money(stats?.[card.key] ?? 0) : card.key === "completedWorks" ? completedWorks : card.key === "pendingWorks" ? pendingWorks : card.key === "openFindings" ? reports?.inspections?.findings_open ?? 0 : card.key === "overdueFindings" ? reports?.inspections?.findings_overdue ?? 0 : stats?.[card.key] ?? 0}
                     subtext={card.subtext}
                   />
                 ))}
@@ -2203,13 +2616,25 @@ export default function Page() {
                 <div className="soft-inset mt-3 flex flex-col gap-3 rounded-lg border border-line p-3 xl:flex-row xl:items-center xl:justify-between">
                   <div className="flex flex-wrap gap-2">
                     {reportPresets.length ? reportPresets.map((preset) => (
-                      <button key={preset.id} type="button" onClick={() => applyReportPreset(preset)} className="rounded-full border border-line bg-surface px-3 py-1.5 text-xs font-black text-ink transition hover:border-accent">
-                        {preset.name}
-                      </button>
+                      <span key={preset.id} className="inline-flex items-center overflow-hidden rounded-full border border-line bg-surface text-xs font-black text-ink">
+                        <button type="button" onClick={() => applyReportPreset(preset)} className="px-3 py-1.5 transition hover:bg-accent/10">
+                          {preset.name}{preset.schedule ? ` · ${preset.schedule}` : ""}
+                        </button>
+                        {preset.schedule ? (
+                          <button type="button" title="Run report now" onClick={() => runSavedReport(preset)} className="border-l border-line px-2 py-1.5 text-accent transition hover:bg-accent/10">
+                            <RefreshCw size={13} />
+                          </button>
+                        ) : null}
+                      </span>
                     )) : <span className="text-sm text-muted">No saved report presets yet.</span>}
                   </div>
                   <div className="flex flex-col gap-2 sm:flex-row">
                     <input value={reportPresetName} onChange={(event) => setReportPresetName(event.target.value)} placeholder="Preset name" className="soft-inset h-10 rounded-lg border border-line px-3 text-sm outline-none focus:border-accent" />
+                    <select value={reportPresetSchedule} onChange={(event) => setReportPresetSchedule(event.target.value)} className="soft-inset h-10 rounded-lg border border-line px-3 text-sm outline-none focus:border-accent">
+                      <option value="">No schedule</option>
+                      <option value="weekly">Weekly schedule</option>
+                      <option value="monthly">Monthly schedule</option>
+                    </select>
                     <Button size="sm" onClick={saveReportPreset}>Save preset</Button>
                     <Button variant="ghost" size="sm" onClick={() => setReportFilters({ month: "", dateFrom: "", dateTo: "", station: "All", division: "All", section: "All", needsActionOnly: false })}>Reset</Button>
                   </div>
@@ -2271,7 +2696,7 @@ export default function Page() {
                   subtitle="Contracts approaching their validity end date, ordered by urgency."
                   action={
                     <div className="flex flex-wrap gap-2">
-                      {[30, 10, 5, 51].map((days) => (
+                      {[90, 50, 30, 10, 5, 0, 51].map((days) => (
                         <button
                           key={days}
                           type="button"
@@ -2281,7 +2706,7 @@ export default function Page() {
                             contractExpiryWindow === days
                               ? days === 51
                                 ? "border-emerald-600 bg-emerald-600 text-white shadow-raised"
-                                : days <= 10
+                              : days <= 10
                                 ? "border-red-600 bg-red-600 text-white shadow-raised"
                                 : "border-amber-500 bg-amber-500 text-white shadow-raised"
                               : days === 51
@@ -2291,7 +2716,7 @@ export default function Page() {
                                 : "border-amber-300 bg-amber-500/10 text-amber-700 hover:border-amber-500",
                           )}
                         >
-                          {days === 51 ? "50+" : `${days} days`} ({contractExpiryCount(days)})
+                          {days === 51 ? "50+ days" : days === 0 ? "Today" : `${days} days`} ({contractExpiryCount(days)})
                         </button>
                       ))}
                     </div>
@@ -2323,8 +2748,8 @@ export default function Page() {
                               {pretty(row.station_code)}{pretty(row.station_name) !== "NA" ? ` - ${pretty(row.station_name)}` : ""} · Valid till {pretty(row.valid_to)}
                             </div>
                           </div>
-                          <Badge tone={row.days_remaining <= 10 ? "danger" : row.days_remaining <= 30 ? "warning" : "success"}>
-                            {row.days_remaining === 0 ? "Today" : `${row.days_remaining}d`}
+                          <Badge tone={row.days_remaining < 0 || row.days_remaining <= 10 ? "danger" : row.days_remaining <= 30 ? "warning" : "success"}>
+                            {row.days_remaining < 0 ? `Expired ${Math.abs(row.days_remaining)}d` : row.days_remaining === 0 ? "Today" : `${row.days_remaining}d`}
                           </Badge>
                           <div className="flex items-center text-muted">
                             <ChevronRight size={18} className="transition group-hover:translate-x-0.5" />
@@ -2415,6 +2840,8 @@ export default function Page() {
                       ["Total Works", reports?.works?.total ?? 0],
                       ["Completed", reports?.works?.completed ?? 0],
                       ["Pending/Open", reports?.works?.pending ?? 0],
+                      ["TDC Delayed", reports?.works?.delayed ?? 0],
+                      ["Contradictions", reports?.works?.contradictions ?? 0],
                     ]}
                   />
                   <div className="mt-4 grid gap-4 lg:grid-cols-2">
@@ -2449,7 +2876,7 @@ export default function Page() {
                       fileName="works-report-visible.xls"
                     />
                   </div>
-                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                     <ReportList
                       rows={(reports?.works?.by_status || []).slice(0, 7)}
                       onSelect={(row) => openDrillDown(`Works: ${row.label}`, filteredReportWorks.filter((work) => pretty(work.status) === pretty(row.label)), reportWorkColumns, "works")}
@@ -2457,6 +2884,69 @@ export default function Page() {
                     <ReportList
                       rows={(reports?.works?.by_scope || []).slice(0, 7)}
                       onSelect={(row) => openDrillDown(`Works by scope: ${row.label}`, filteredReportWorks.filter((work) => pretty(work.scope_type || work.block_section_station) === pretty(row.label)), reportWorkColumns, "works")}
+                    />
+                    <ReportList
+                      rows={(reports?.works?.by_sr_den || []).slice(0, 7)}
+                      onSelect={(row) => openDrillDown(`Works by Sr.DEN: ${row.label}`, filteredReportWorks.filter((work) => pretty(work.sr_den) === pretty(row.label)), reportWorkColumns, "works")}
+                    />
+                    <ReportList
+                      rows={(reports?.works?.by_cmi || []).slice(0, 7)}
+                      onSelect={(row) => openDrillDown(`Works by CMI: ${row.label}`, filteredReportWorks.filter((work) => pretty(work.cmi) === pretty(row.label)), reportWorkColumns, "works")}
+                    />
+                    <ReportList
+                      rows={(reports?.works?.by_allocation || []).slice(0, 7)}
+                      onSelect={(row) => openDrillDown(`Works by allocation: ${row.label}`, filteredReportWorks.filter((work) => pretty(work.allocation) === pretty(row.label)), reportWorkColumns, "works")}
+                    />
+                    <ReportList
+                      rows={(reports?.works?.by_year || []).slice(0, 7)}
+                      onSelect={(row) => openDrillDown(`Works by sanction year: ${row.label}`, filteredReportWorks.filter((work) => pretty(work.year_of_sanction) === pretty(row.label)), reportWorkColumns, "works")}
+                    />
+                  </div>
+                  {(reports?.works?.delay_alerts?.length || reports?.works?.contradiction_rows?.length) ? (
+                    <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                      <Panel title="TDC Delays" subtitle="Open works whose target completion date has passed.">
+                        <ReportList
+                          rows={(reports?.works?.delay_alerts || []).slice(0, 8).map((row) => ({ label: `${row.project_id} · ${row.days_overdue}d overdue`, value: row.progress_percent == null ? "NA" : `${row.progress_percent}%` }))}
+                          onSelect={(row) => openDrillDown(`Delayed work: ${row.label}`, (reports?.works?.delay_alerts || []).filter((item) => item.project_id === row.label), reportWorkColumns, "works")}
+                        />
+                      </Panel>
+                      <Panel title="Status Contradictions" subtitle="Records requiring review before management reporting.">
+                        <ReportList
+                          rows={(reports?.works?.contradiction_rows || []).slice(0, 8).map((row) => ({ label: `${row.project_id} · ${row.problem}`, value: row.progress_percent == null ? "NA" : `${row.progress_percent}%` }))}
+                          onSelect={(row) => openDrillDown(`Work contradiction: ${row.label}`, (reports?.works?.contradiction_rows || []).filter((item) => item.project_id === row.label), reportWorkColumns, "works")}
+                        />
+                      </Panel>
+                    </div>
+                  ) : null}
+                </Panel>
+              ) : null}
+
+              {reportTab === "inspections" ? (
+                <Panel title="Inspection Management" subtitle="Open deficiencies, overdue actions, severity, and responsible departments across all stations.">
+                  <KeyValueGrid
+                    rows={[
+                      ["Total Inspections", reports?.inspections?.total ?? 0],
+                      ["Open Findings", reports?.inspections?.findings_open ?? 0],
+                      ["Overdue Findings", reports?.inspections?.findings_overdue ?? 0],
+                    ]}
+                  />
+                  <div className="mt-4 grid gap-3 lg:grid-cols-3">
+                    <ReportList rows={(reports?.inspections?.by_severity || []).slice(0, 8)} />
+                    <ReportList rows={(reports?.inspections?.by_department || []).slice(0, 8)} />
+                    <ReportList rows={(reports?.inspections?.by_status_findings || []).slice(0, 8)} />
+                  </div>
+                  <div className="mt-4">
+                    <div className="mb-2 text-[11px] font-black uppercase tracking-[0.16em] text-muted">Overdue actions</div>
+                    <ReportList
+                      rows={(reports?.inspections?.overdue_findings || []).slice(0, 12).map((row) => ({
+                        ...row,
+                        label: `${row.station_code || "NA"} · ${row.title || "Finding"}`,
+                        value: `${row.days_overdue}d overdue`,
+                      }))}
+                      onSelect={(row) => {
+                        const station = stations.find((item) => pretty(item.station_code) === pretty(row.station_code));
+                        if (station) openStation(station, "alerts");
+                      }}
                     />
                   </div>
                 </Panel>
@@ -2572,6 +3062,9 @@ export default function Page() {
                       {(aiResult.sources || []).map((source) => (
                         <Badge key={source} tone="accent">{source}</Badge>
                       ))}
+                      {Object.entries(aiResult.applied_filters || {}).map(([key, value]) => (
+                        <Badge key={`${key}-${value}`}>{key.replaceAll("_", " ")}: {pretty(value)}</Badge>
+                      ))}
                     </div>
                     {aiResult.planner_error || aiResult.answer_error ? (
                       <div className="mt-4 rounded-lg border border-amber-300/70 bg-amber-400/10 px-3 py-2 text-xs font-semibold text-amber-700 dark:text-amber-200">
@@ -2642,6 +3135,22 @@ export default function Page() {
                   <Card icon={Timer} label="This Month" value={reports?.license_fee_alerts?.due_this_month ?? 0} subtext="Fee or contract attention this month" />
                   <Card icon={Timer} label="Next 30 Days" value={reports?.license_fee_alerts?.due_next_30_days ?? 0} subtext="Contract ending within 30 days" />
                   <Card icon={FileText} label="Next 90 Days" value={reports?.license_fee_alerts?.due_next_90_days ?? 0} subtext="Three-month forward alert" />
+                </div>
+                <div className="soft-inset flex flex-wrap items-center gap-2 rounded-lg border border-line p-3 text-xs">
+                  <span className="font-black uppercase tracking-[0.12em] text-muted">Contract expiry</span>
+                  {[
+                    ["Expired", "contract_expired"],
+                    ["0 days", "contract_due_today"],
+                    ["5 days", "contract_due_5_days"],
+                    ["10 days", "contract_due_10_days"],
+                    ["30 days", "contract_due_30_days"],
+                    ["50 days", "contract_due_50_days"],
+                    ["90 days", "contract_due_90_days"],
+                  ].map(([label, key]) => (
+                    <span key={key} className="rounded-full border border-line bg-surface px-3 py-1.5 font-bold text-ink">
+                      {label}: {reports?.license_fee_alerts?.[key] ?? 0}
+                    </span>
+                  ))}
                 </div>
                 <ListShell>
                 <div className="grid gap-3">
@@ -2725,6 +3234,12 @@ export default function Page() {
               </div>
             ) : view === "works" ? (
               <div className="space-y-4">
+                <div className="grid gap-3 sm:grid-cols-4">
+                  <Card icon={Wrench} label="Works" value={workMonitoring?.total ?? works.length} subtext="Unique sanctioned works" />
+                  <Card icon={CircleAlert} label="Exceptions" value={workMonitoring?.exceptions ?? 0} subtext="Contradictions or TDC attention" />
+                  <Card icon={Timer} label="TDC overdue" value={workMonitoring?.tdc_overdue ?? 0} subtext="Open works past target date" />
+                  <Card icon={TrendingUp} label="Expenditure updates" value={(workMonitoring?.items || []).reduce((sum, row) => sum + Number(row.expenditure_update_count || 0), 0)} subtext="Historical ledger entries" />
+                </div>
                 <Tabs
                   tabs={[
                     { value: "station", label: `All Stations (${filteredWorks.station.length})`, icon: TrainFront },
@@ -2813,6 +3328,7 @@ export default function Page() {
             openCommercialContract={openCommercialContract}
             openUnit={openUnit}
             openWork={openWork}
+            onCreateAmenityFindings={createStationAmenityFindings}
             money={money}
           />
         ) : modal.type === "unit" ? (
@@ -2918,6 +3434,56 @@ export default function Page() {
                 ["Remarks", modal.record.work.remarks],
               ]}
             />
+            <Panel title="Progress history" subtitle="Periodic progress, expenditure, TDC and field remarks are retained instead of overwriting the work record.">
+              <div className="grid gap-2 md:grid-cols-5">
+                <input className="soft-inset h-10 rounded-lg border border-line px-3 text-sm outline-none focus:border-accent" type="date" value={progressDraft.update_date} onChange={(event) => setProgressDraft((current) => ({ ...current, update_date: event.target.value }))} />
+                <input className="soft-inset h-10 rounded-lg border border-line px-3 text-sm outline-none focus:border-accent" type="number" min="0" max="100" placeholder="Progress %" value={progressDraft.progress_percent} onChange={(event) => setProgressDraft((current) => ({ ...current, progress_percent: event.target.value }))} />
+                <input className="soft-inset h-10 rounded-lg border border-line px-3 text-sm outline-none focus:border-accent" type="number" min="0" placeholder="Expenditure" value={progressDraft.expenditure_upto_date} onChange={(event) => setProgressDraft((current) => ({ ...current, expenditure_upto_date: event.target.value }))} />
+                <input className="soft-inset h-10 rounded-lg border border-line px-3 text-sm outline-none focus:border-accent" placeholder="Status" value={progressDraft.status} onChange={(event) => setProgressDraft((current) => ({ ...current, status: event.target.value }))} />
+                <Button size="sm" onClick={saveWorkProgress} disabled={saving || !progressDraft.update_date}><Plus size={14} /> Save update</Button>
+              </div>
+              <textarea className="soft-inset mt-2 min-h-20 w-full rounded-lg border border-line px-3 py-2 text-sm outline-none focus:border-accent" placeholder="Progress remarks" value={progressDraft.remarks} onChange={(event) => setProgressDraft((current) => ({ ...current, remarks: event.target.value }))} />
+              {modal.record.progress_updates?.length ? (
+                <div className="mt-3 space-y-2">
+                  {modal.record.progress_updates.map((update) => (
+                    <div key={update.progress_id || `${update.project_id}-${update.update_date}`} className="soft-raised rounded-lg border border-line p-3 text-sm">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-black text-ink">{pretty(update.update_date)}</span>
+                        <span className="font-semibold text-accent">{update.progress_percent == null ? "Progress NA" : `${update.progress_percent}%`}</span>
+                      </div>
+                      <div className="mt-1 text-xs text-muted">{pretty(update.status)} · Expenditure {money(update.expenditure_upto_date)}</div>
+                      {update.remarks ? <div className="mt-2 text-sm text-muted">{update.remarks}</div> : null}
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        {(update.photos || []).map((photo) => (
+                          <a key={photo.photo_id} href={`${API_URL}${photo.download_url}`} target="_blank" rel="noreferrer" className="text-xs font-semibold text-accent hover:underline">Photo</a>
+                        ))}
+                        <label className="cursor-pointer rounded-full border border-line px-2 py-1 text-xs font-semibold text-muted hover:border-accent hover:text-accent">
+                          Add photo
+                          <input className="hidden" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => uploadWorkProgressPhoto(update, event.target.files?.[0])} />
+                        </label>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : <div className="mt-3 text-sm text-muted">No periodic progress updates recorded yet.</div>}
+            </Panel>
+            <Panel title="Expenditure history" subtitle="Cumulative values are retained by date and can be reconciled against the work master record.">
+              {modal.record.expenditure_updates?.length ? (
+                <DataTable
+                  columns={[
+                    { key: "update_date", label: "Date" },
+                    { key: "period_expenditure", label: "Period", value: (row) => money(row.period_expenditure) },
+                    { key: "cumulative_expenditure", label: "Cumulative", value: (row) => money(row.cumulative_expenditure) },
+                    { key: "source", label: "Source" },
+                    { key: "remarks", label: "Remarks" },
+                  ]}
+                  rows={modal.record.expenditure_updates || []}
+                  getKey={(row, index) => `${pretty(row.expenditure_id || row.update_date)}-${index}`}
+                  emptyTitle="No expenditure history recorded."
+                  fileName="work-expenditure-history.csv"
+                />
+              ) : <div className="text-sm text-muted">No separate expenditure ledger entries recorded yet.</div>}
+            </Panel>
           </div>
         ) : modal.type === "commercial" ? (
           <div className="space-y-4">
@@ -2943,9 +3509,22 @@ export default function Page() {
                 ["Space Sq Ft", modal.record.contract.space_sq_ft],
                 ["Annual License Fee", money(modal.record.contract.annual_license_fee)],
                 ["Quarterly License Fee", money(modal.record.contract.quarterly_license_fee)],
+                ["Security Deposit", money(modal.record.contract.security_deposit)],
+                ["Renewal Status", modal.record.contract.renewal_status],
+                ["Termination Status", modal.record.contract.termination_status],
+                ["Tender Status", modal.record.contract.tender_status],
                 ["Recorded Payment Total", money(modal.record.payment_total)],
               ]}
             />
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => window.open(commercialContractStatementUrl(modal.record.contract.contract_key), "_blank", "noopener,noreferrer")}
+              >
+                <Download size={14} /> Download payment statement
+              </Button>
+            </div>
             <Panel title="Linked Stations" subtitle="Station links generated from Stn or inferred from contract name.">
               <DataTable
                 columns={[
@@ -3091,10 +3670,36 @@ export default function Page() {
           {importModal.result ? (
             <div className="soft-inset rounded-lg border border-line p-3 text-sm">
               <div className="font-bold text-ink">{importModal.result.rows} rows checked - {importModal.result.valid ? "valid" : "errors found"}</div>
+              {importModal.result.preview ? (
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-5">
+                  {[
+                    ["Added", importModal.result.preview.added?.count || 0, "text-emerald-700"],
+                    ["Changed", importModal.result.preview.changed?.count || 0, "text-blue-700"],
+                    ["Removed", importModal.result.preview.removed?.count || 0, "text-amber-700"],
+                    ["Duplicates", importModal.result.preview.duplicates?.count || 0, "text-red-700"],
+                    ["Unmatched", importModal.result.preview.unmatched?.count || 0, "text-red-700"],
+                  ].map(([label, count, tone]) => (
+                    <div key={label} className="rounded-md border border-line bg-surface px-2 py-2">
+                      <div className="text-[10px] font-black uppercase tracking-[0.12em] text-muted">{label}</div>
+                      <div className={`mt-1 text-base font-black ${tone}`}>{count}</div>
+                    </div>
+                  ))}
+                {importModal.result.preview.removal_policy ? (
+                  <div className="mt-2 text-[11px] text-muted">{importModal.result.preview.removal_policy}</div>
+                ) : null}
+                </div>
+              ) : null}
               {importModal.result.errors?.length ? (
                 <div className="mt-2 max-h-32 overflow-auto text-xs text-red-700">
                   {importModal.result.errors.map((error, index) => (
                     <div key={`${error.row}-${error.field}-${index}`}>Row {error.row}: {error.field} - {error.message}</div>
+                  ))}
+                </div>
+              ) : null}
+              {importModal.result.preview?.unmatched?.rows?.length ? (
+                <div className="mt-2 max-h-24 overflow-auto text-xs text-amber-800">
+                  {importModal.result.preview.unmatched.rows.slice(0, 8).map((row, index) => (
+                    <div key={`${row.row}-${row.key}-${index}`}>Row {row.row}: {row.key || "record"} - {row.reason}</div>
                   ))}
                 </div>
               ) : null}

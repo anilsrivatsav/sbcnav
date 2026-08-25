@@ -990,11 +990,15 @@ class _StationActionData {
     required this.findings,
     required this.inspections,
     required this.contractAlerts,
+    required this.openWorks,
+    required this.amenityGaps,
   });
 
   final List<Map<String, dynamic>> findings;
   final List<Map<String, dynamic>> inspections;
   final List<Map<String, dynamic>> contractAlerts;
+  final int openWorks;
+  final int amenityGaps;
 }
 
 class _StationActionCenter extends ConsumerStatefulWidget {
@@ -1018,15 +1022,44 @@ class _StationActionCenterState extends ConsumerState<_StationActionCenter> {
 
   Future<_StationActionData> _load() async {
     final database = ref.read(databaseProvider);
-    final rows = await Future.wait([
+    final rows = await Future.wait<dynamic>([
       database.findingsForStation(widget.stationCode, openOnly: true),
       database.inspectionsForStation(widget.stationCode),
       database.contractNotificationsForStation(widget.stationCode),
+      database.stationDetail(widget.stationCode),
     ]);
+    final detail = rows[3] is Map
+        ? Map<String, dynamic>.from(rows[3] as Map)
+        : <String, dynamic>{};
+    final works = detail['works'] is List ? detail['works'] as List : const [];
+    final amenities = detail['amenities'] is Map
+        ? Map<String, dynamic>.from(detail['amenities'] as Map)
+        : <String, dynamic>{};
+    final summary = detail['amenity_summary'] is Map
+        ? Map<String, dynamic>.from(detail['amenity_summary'] as Map)
+        : <String, dynamic>{};
+    final action = detail['action_centre'] is Map
+        ? Map<String, dynamic>.from(detail['action_centre'] as Map)
+        : <String, dynamic>{};
+    final calculatedOpenWorks = works.where((raw) {
+      if (raw is! Map) return false;
+      final status = '${raw['status'] ?? ''}'.toLowerCase();
+      return !status.contains('complete') && !status.contains('done');
+    }).length;
+    final paWorksOpen = (summary['open_pa_works'] as num?)?.toInt() ?? 0;
+    final calculatedAmenityGaps = paWorksOpen +
+        (amenities['infra'] == null ? 1 : 0) +
+        ((amenities['platforms'] as List?)?.isEmpty ?? true ? 1 : 0);
+    final openWorks =
+        (action['open_works'] as List?)?.length ?? calculatedOpenWorks;
+    final amenityGaps =
+        (action['amenity_flags'] as List?)?.length ?? calculatedAmenityGaps;
     return _StationActionData(
       findings: rows[0],
       inspections: rows[1],
       contractAlerts: rows[2],
+      openWorks: openWorks,
+      amenityGaps: amenityGaps,
     );
   }
 
@@ -1116,6 +1149,20 @@ class _StationActionCenterState extends ConsumerState<_StationActionCenter> {
                               context,
                               data.contractAlerts,
                             ),
+                  ),
+                  _ActionMetric(
+                    icon: Icons.construction_outlined,
+                    label: 'Open works',
+                    value: '${data?.openWorks ?? 0}',
+                    tone: const Color(0xFF7C3AED),
+                    onTap: null,
+                  ),
+                  _ActionMetric(
+                    icon: Icons.accessibility_new_rounded,
+                    label: 'Amenity gaps',
+                    value: '${data?.amenityGaps ?? 0}',
+                    tone: const Color(0xFF0891B2),
+                    onTap: null,
                   ),
                   _ActionMetric(
                     icon: sync?.failed == 0

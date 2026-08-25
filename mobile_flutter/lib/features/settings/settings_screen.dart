@@ -117,6 +117,40 @@ class SettingsSheet extends ConsumerWidget {
     }
   }
 
+  Future<void> _refreshSanctionedWorks(
+    BuildContext context,
+    WidgetRef ref,
+  ) async {
+    final confirmed = await showAppConfirmation(
+      context,
+      title: 'Refresh sanctioned works?',
+      subtitle: 'This imports the latest All Sanctioned Works sheet into '
+          'PostgreSQL and then replaces the offline works snapshot on this '
+          'device.',
+      confirmLabel: 'Refresh',
+    );
+    if (!confirmed || !context.mounted) return;
+
+    try {
+      final result = await ref
+          .read(syncControllerProvider.notifier)
+          .refreshSanctionedWorksFromGoogleSheet();
+      if (!context.mounted) return;
+      showAppNotice(
+        context,
+        kind: AppNoticeKind.success,
+        message: '${result.rows} sanctioned works refreshed.',
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      showAppNotice(
+        context,
+        kind: AppNoticeKind.error,
+        message: '$error',
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(syncControllerProvider);
@@ -168,6 +202,25 @@ class SettingsSheet extends ConsumerWidget {
                     const SizedBox(height: 6),
                     Text(
                       'Last catering refresh ${shortDate(state.asData!.value.lastCateringSyncAt)}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                  const SizedBox(height: AppSpacing.x1),
+                  AppButton(
+                    expand: true,
+                    kind: AppButtonKind.secondary,
+                    loading: busy,
+                    onPressed: busy
+                        ? null
+                        : () => _refreshSanctionedWorks(context, ref),
+                    icon: Icons.engineering_rounded,
+                    label: 'Refresh sanctioned works',
+                  ),
+                  if (state.asData?.value.lastWorksSyncAt != null) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      'Last works refresh '
+                      '${shortDate(state.asData!.value.lastWorksSyncAt)}',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ],

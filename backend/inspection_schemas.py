@@ -8,6 +8,25 @@ from pydantic import BaseModel, Field, field_validator
 
 EntityType = Literal["inspection", "response", "finding", "evidence", "note"]
 SyncAction = Literal["upsert", "delete"]
+InspectionStatus = Literal[
+    "draft",
+    "in_progress",
+    "submitted",
+    "assigned",
+    "action_taken",
+    "verification",
+    "closed",
+    "returned",
+]
+FindingStatus = Literal[
+    "open",
+    "assigned",
+    "action_taken",
+    "verification_due",
+    "returned",
+    "verified",
+    "closed",
+]
 
 
 class InspectionCreate(BaseModel):
@@ -16,7 +35,7 @@ class InspectionCreate(BaseModel):
     template_id: str = Field(min_length=36, max_length=36)
     inspector_name: str = Field(min_length=1, max_length=255)
     inspection_type: Literal["scheduled", "surprise", "follow_up"] = "scheduled"
-    status: Literal["draft", "in_progress", "submitted", "reviewed", "closed"] = "draft"
+    status: InspectionStatus = "draft"
     score: int | None = Field(default=None, ge=0, le=100)
     remarks: str | None = Field(default=None, max_length=5000)
     device_id: str | None = Field(default=None, max_length=128)
@@ -77,6 +96,21 @@ class FindingUpsert(BaseModel):
         return value.strip().upper()
 
 
+class InspectionStatusUpdate(BaseModel):
+    status: InspectionStatus
+    remarks: str | None = Field(default=None, max_length=5000)
+    client_updated_at: datetime | None = None
+    server_version: int = Field(default=0, ge=0)
+
+
+class FindingStatusUpdate(BaseModel):
+    status: FindingStatus
+    responsible_party: str | None = Field(default=None, max_length=255)
+    target_date: str | None = Field(default=None, max_length=32)
+    client_updated_at: datetime | None = None
+    server_version: int = Field(default=0, ge=0)
+
+
 class EvidenceUpsert(BaseModel):
     evidence_id: str = Field(min_length=36, max_length=36)
     inspection_id: str = Field(min_length=36, max_length=36)
@@ -115,3 +149,23 @@ class SyncOperation(BaseModel):
 class SyncPushRequest(BaseModel):
     device_id: str = Field(min_length=1, max_length=128)
     operations: list[SyncOperation] = Field(max_length=500)
+
+
+class MobileDeviceStateUpdate(BaseModel):
+    cached_stations: int = Field(default=0, ge=0)
+    cached_station_details: int = Field(default=0, ge=0)
+    cached_works: int = Field(default=0, ge=0)
+    cached_units: int = Field(default=0, ge=0)
+    cached_earnings: int = Field(default=0, ge=0)
+    pending_operations: int = Field(default=0, ge=0)
+    failed_operations: int = Field(default=0, ge=0)
+    data_version: str | None = Field(default=None, max_length=128)
+    cache_updated_at: datetime | None = None
+    last_sync_at: datetime | None = None
+
+
+class AmenityFindingRequest(BaseModel):
+    inspection_id: str = Field(min_length=36, max_length=36)
+    norm_keys: list[int] | None = Field(default=None, max_length=200)
+    responsible_party: str | None = Field(default=None, max_length=255)
+    target_date: str | None = Field(default=None, max_length=32)

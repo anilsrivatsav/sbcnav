@@ -26,7 +26,7 @@ class AppDatabase {
     final root = await getDatabasesPath();
     _db = await openDatabase(
       join(root, 'rail_inspect.db'),
-      version: 5,
+      version: 6,
       onConfigure: (database) => database.execute('PRAGMA foreign_keys = ON'),
       onUpgrade: (database, oldVersion, _) async {
         if (oldVersion < 2) {
@@ -63,6 +63,20 @@ class AppDatabase {
             database,
             'notifications',
             'contract_code',
+            'TEXT',
+          );
+        }
+        if (oldVersion < 6) {
+          await _addColumnIfMissing(
+            database,
+            'sync_queue',
+            'conflict_json',
+            'TEXT',
+          );
+          await _addColumnIfMissing(
+            database,
+            'sync_queue',
+            'conflict_at',
             'TEXT',
           );
         }
@@ -174,6 +188,8 @@ class AppDatabase {
             payload_json TEXT NOT NULL,
             attempts INTEGER NOT NULL DEFAULT 0,
             last_error TEXT,
+            conflict_json TEXT,
+            conflict_at TEXT,
             created_at TEXT NOT NULL
           )
         ''');
@@ -350,6 +366,15 @@ class AppDatabase {
             'value': '${data['cursor'] ?? 0}',
           },
           conflictAlgorithm: ConflictAlgorithm.replace);
+      if (data['data_version'] != null) {
+        await txn.insert(
+            'metadata',
+            {
+              'key': 'data_version',
+              'value': '${data['data_version']}',
+            },
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
       if (data['all_works'] is List) {
         await txn.insert(
             'metadata',
@@ -454,6 +479,7 @@ class AppDatabase {
         },
         conflictAlgorithm: ConflictAlgorithm.replace);
     await _createContractNotifications(db, stationCode, detail);
+    await _createActionNotifications(db, stationCode, detail);
   }
 
   Future<void> cacheStationDetails(
@@ -477,6 +503,7 @@ class AppDatabase {
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
         await _createContractNotifications(txn, code, detail);
+        await _createActionNotifications(txn, code, detail);
       }
       final count = Sqflite.firstIntValue(
             await txn.rawQuery('SELECT COUNT(*) FROM station_details'),
@@ -503,6 +530,13 @@ class AppDatabase {
   Future<int> offlineStationDetailCount() async {
     return Sqflite.firstIntValue(
           await db.rawQuery('SELECT COUNT(*) FROM station_details'),
+        ) ??
+        0;
+  }
+
+  Future<int> cachedStationCount() async {
+    return Sqflite.firstIntValue(
+          await db.rawQuery('SELECT COUNT(*) FROM stations'),
         ) ??
         0;
   }
@@ -624,18 +658,20 @@ class AppDatabase {
       if (end == null) continue;
       final days =
           end.difference(DateTime(now.year, now.month, now.day)).inDays;
-      if (days > 50) continue;
+      if (days > 90) continue;
       final bucket = days < 0
           ? 'expired'
-          : days <= 1
-              ? '1d'
+          : days == 0
+              ? 'today'
               : days <= 5
                   ? '5d'
                   : days <= 10
                       ? '10d'
                       : days <= 30
                           ? '30d'
-                          : '50d';
+                          : days <= 50
+                              ? '50d'
+                              : '90d';
       final key =
           '${row['unit_no'] ?? row['contract_key'] ?? row['contract_name'] ?? 'contract'}';
       final id = 'contract-expiry-$stationCode-$key-$bucket';
@@ -698,6 +734,96 @@ class AppDatabase {
       if (!activeIds.contains(id)) {
         await db.delete('notifications',
             where: 'notification_id = ?', whereArgs: [id]);
+      }
+    }
+  }
+
+  static Future<void> _createActionNotifications(
+    DatabaseExecutor db,
+    String stationCode,
+    Object? rawDetail,
+  ) async {
+    if (rawDetail is! Map) return;
+    final detail = Map<String, dynamic>.from(rawDetail);
+    final actionCentre = detail['action_centre'] is Map
+        ? Map<String, dynamic>.from(detail['action_centre'] as Map)
+        : const <String, dynamic>{};
+    final now = DateTime.now();
+    final activeIds = <String>{};
+    final findings = actionCentre['open_findings'] is List
+        ? actionCentre['open_findings'] as List
+        : const [];
+    for (final raw in findings) {
+      if (raw is! Map) continue;
+      final row = Map<String, dynamic>.from(raw);
+      final target = _notificationDate(row['target_date']);
+      if (target == null) continue;
+      final days = target.difference(DateTime(now.year, now.month, now.day)).inDays;
+      if (days > 30) continue;
+      final key = '${row['finding_id'] ?? row['title'] ?? 'finding'}';
+      final id = 'finding-action-$stationCode-$key';
+      activeIds.add(id);
+      final overdue = days < 0;
+      await db.insert(
+        'notifications',
+        {
+          'notification_id': id,
+          'type': 'inspection_action',
+          'title': overdue ? 'Inspection action overdue' : 'Inspection action due',
+          'body': '${row['title'] ?? 'Finding'} at $stationCode ${overdue ? 'is overdue by ${-days} days' : 'is due in $days days'}.',
+          'related_type': 'finding',
+          'related_id': key,
+          'station_code': stationCode,
+          'severity': row['severity'] == 'critical' || overdue ? 'critical' : row['severity'] == 'high' ? 'high' : 'medium',
+          'is_read': 0,
+          'due_at': target.toIso8601String(),
+          'created_at': DateTime.now().toUtc().toIso8601String(),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+    final works = detail['works'] is List ? detail['works'] as List : const [];
+    for (final raw in works) {
+      if (raw is! Map) continue;
+      final row = Map<String, dynamic>.from(raw);
+      if ('${row['status'] ?? ''}'.toLowerCase().contains('complete') ||
+          '${row['status'] ?? ''}'.toLowerCase().contains('done')) continue;
+      final tdc = _notificationDate(row['tdc']);
+      if (tdc == null) continue;
+      final days = tdc.difference(DateTime(now.year, now.month, now.day)).inDays;
+      if (days > 30) continue;
+      final key = '${row['project_id'] ?? row['source_project_id'] ?? 'work'}';
+      final id = 'work-tdc-$stationCode-$key';
+      activeIds.add(id);
+      final overdue = days < 0;
+      await db.insert(
+        'notifications',
+        {
+          'notification_id': id,
+          'type': 'work_tdc',
+          'title': overdue ? 'Work TDC overdue' : 'Work TDC approaching',
+          'body': '${row['short_name_of_work'] ?? key} at $stationCode ${overdue ? 'is overdue by ${-days} days' : 'is due in $days days'}.',
+          'related_type': 'work',
+          'related_id': key,
+          'station_code': stationCode,
+          'severity': overdue ? 'critical' : days <= 10 ? 'high' : 'medium',
+          'is_read': 0,
+          'due_at': tdc.toIso8601String(),
+          'created_at': DateTime.now().toUtc().toIso8601String(),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+    final existing = await db.query(
+      'notifications',
+      columns: ['notification_id'],
+      where: 'station_code = ? AND type IN (?, ?)',
+      whereArgs: [stationCode, 'inspection_action', 'work_tdc'],
+    );
+    for (final row in existing) {
+      final id = '${row['notification_id']}';
+      if (!activeIds.contains(id)) {
+        await db.delete('notifications', where: 'notification_id = ?', whereArgs: [id]);
       }
     }
   }
@@ -1232,6 +1358,8 @@ class AppDatabase {
         'entity_id',
         'attempts',
         'last_error',
+        'conflict_json',
+        'conflict_at',
         'created_at',
       ],
       orderBy: 'CASE WHEN last_error IS NULL THEN 1 ELSE 0 END, created_at',
@@ -1299,6 +1427,21 @@ class AppDatabase {
     await db.rawUpdate(
       'UPDATE sync_queue SET attempts = attempts + 1, last_error = ? WHERE operation_id = ?',
       [error, operationId],
+    );
+  }
+
+  Future<void> markSyncConflict(
+    String operationId,
+    Map<String, dynamic> conflict,
+  ) async {
+    await db.update(
+      'sync_queue',
+      {
+        'conflict_json': jsonEncode(conflict),
+        'conflict_at': DateTime.now().toUtc().toIso8601String(),
+      },
+      where: 'operation_id = ?',
+      whereArgs: [operationId],
     );
   }
 

@@ -7,6 +7,8 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    Numeric,
+    Date,
     LargeBinary,
     String,
     Text,
@@ -112,6 +114,7 @@ class Work(Base, AuditMixin):
     parent_work: Mapped[str | None] = mapped_column(Text)
     section: Mapped[str | None] = mapped_column(Text, index=True)
     anticipated_expenditure: Mapped[int | None] = mapped_column(Integer)
+    tdc: Mapped[str | None] = mapped_column(Text, index=True)
     remarks: Mapped[str | None] = mapped_column(Text)
 
 
@@ -127,6 +130,63 @@ class WorkLink(Base):
     scope_value: Mapped[str | None] = mapped_column(Text)
     station_code: Mapped[str | None] = mapped_column(String(64), ForeignKey("stations.station_code", ondelete="SET NULL"), index=True)
     match_status: Mapped[str | None] = mapped_column(Text, index=True)
+
+
+class WorkProgressUpdate(Base):
+    __tablename__ = "work_progress_updates"
+    __table_args__ = (
+        UniqueConstraint("project_id", "update_date", name="uq_work_progress_project_date"),
+    )
+
+    progress_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey("works.project_id", ondelete="CASCADE"),
+        index=True,
+    )
+    update_date: Mapped[str] = mapped_column(String(32), index=True)
+    progress_percent: Mapped[int | None] = mapped_column(Integer)
+    status: Mapped[str | None] = mapped_column(Text, index=True)
+    physical_progress: Mapped[str | None] = mapped_column(Text)
+    financial_progress: Mapped[str | None] = mapped_column(Text)
+    expenditure_upto_date: Mapped[int | None] = mapped_column(Integer)
+    tdc: Mapped[str | None] = mapped_column(Text)
+    remarks: Mapped[str | None] = mapped_column(Text)
+    source: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class WorkProgressPhoto(Base):
+    __tablename__ = "work_progress_photos"
+
+    photo_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(128), ForeignKey("works.project_id", ondelete="CASCADE"), index=True)
+    progress_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("work_progress_updates.progress_id", ondelete="SET NULL"), index=True)
+    mime_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    caption: Mapped[str | None] = mapped_column(Text)
+    captured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class WorkExpenditureUpdate(Base):
+    """Periodic expenditure ledger; the latest work row remains a summary only."""
+    __tablename__ = "work_expenditure_updates"
+    __table_args__ = (
+        UniqueConstraint("project_id", "update_date", name="uq_work_expenditure_project_date"),
+    )
+
+    expenditure_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[str] = mapped_column(String(128), ForeignKey("works.project_id", ondelete="CASCADE"), index=True)
+    update_date: Mapped[str] = mapped_column(String(32), index=True)
+    period_expenditure: Mapped[int | None] = mapped_column(Integer)
+    cumulative_expenditure: Mapped[int | None] = mapped_column(Integer, index=True)
+    source: Mapped[str | None] = mapped_column(Text)
+    reference: Mapped[str | None] = mapped_column(Text)
+    remarks: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 
 
 class AmenityNorm(Base, AuditMixin):
@@ -364,12 +424,16 @@ class CommercialContract(Base, AuditMixin):
     space_sq_ft: Mapped[int | None] = mapped_column(Integer)
     annual_license_fee: Mapped[int | None] = mapped_column(Integer, index=True)
     quarterly_license_fee: Mapped[int | None] = mapped_column(Integer, index=True)
+    security_deposit: Mapped[int | None] = mapped_column(Integer, index=True)
     no_of_years: Mapped[int | None] = mapped_column(Integer)
     contract_period_from: Mapped[str | None] = mapped_column(Text, index=True)
     contract_upto: Mapped[str | None] = mapped_column(Text, index=True)
     cycle: Mapped[str | None] = mapped_column(Text, index=True)
     year_ending_amount: Mapped[int | None] = mapped_column(Integer)
     total_license_fee_2026_2027: Mapped[int | None] = mapped_column(Integer)
+    renewal_status: Mapped[str | None] = mapped_column(Text, index=True)
+    termination_status: Mapped[str | None] = mapped_column(Text, index=True)
+    tender_status: Mapped[str | None] = mapped_column(Text, index=True)
     station_match_status: Mapped[str | None] = mapped_column(Text, index=True)
     remarks: Mapped[str | None] = mapped_column(Text)
 
@@ -403,6 +467,111 @@ class CommercialContractPayment(Base, AuditMixin):
     payment_status: Mapped[str | None] = mapped_column(Text, index=True)
 
 
+class ContractRegistryContractor(Base, AuditMixin):
+    __tablename__ = "contract_registry_contractors"
+
+    contractor_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    legal_name: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    normalized_name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    gst_number: Mapped[str | None] = mapped_column(String(32))
+    pan_number: Mapped[str | None] = mapped_column(String(32))
+    contact_details: Mapped[str | None] = mapped_column(Text)
+
+
+class ContractRegistryContract(Base, AuditMixin):
+    __tablename__ = "contract_registry_contracts"
+    __table_args__ = (
+        UniqueConstraint("source_system", "contract_number", name="uq_contract_registry_source_number"),
+    )
+
+    contract_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_sl_no: Mapped[int | None] = mapped_column(Integer, index=True)
+    source_system: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    source_file: Mapped[str | None] = mapped_column(Text)
+    source_sheet: Mapped[str | None] = mapped_column(Text)
+    source_row_number: Mapped[int | None] = mapped_column(Integer)
+    contract_number: Mapped[str | None] = mapped_column(String(255), index=True)
+    contract_name: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    contractor_id: Mapped[int | None] = mapped_column(ForeignKey("contract_registry_contractors.contractor_id", ondelete="SET NULL"), index=True)
+    contract_family: Mapped[str] = mapped_column(String(64), nullable=False, default="other", index=True)
+    award_method: Mapped[str | None] = mapped_column(String(64), index=True)
+    policy_code: Mapped[str | None] = mapped_column(String(128), index=True)
+    category: Mapped[str | None] = mapped_column(Text, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown", index=True)
+    status_reason: Mapped[str | None] = mapped_column(Text)
+    contract_date: Mapped[datetime | None] = mapped_column(Date)
+    loa_date: Mapped[datetime | None] = mapped_column(Date)
+    commencement_date: Mapped[datetime | None] = mapped_column(Date)
+    period_start: Mapped[datetime | None] = mapped_column(Date, index=True)
+    period_end: Mapped[datetime | None] = mapped_column(Date, index=True)
+    duration_value: Mapped[float | None] = mapped_column(Numeric(10, 2))
+    duration_unit: Mapped[str | None] = mapped_column(String(32))
+    annual_license_fee: Mapped[float | None] = mapped_column(Numeric(14, 2))
+    quarterly_license_fee: Mapped[float | None] = mapped_column(Numeric(14, 2))
+    total_contract_value: Mapped[float | None] = mapped_column(Numeric(14, 2))
+    additional_license_fee: Mapped[float | None] = mapped_column(Numeric(14, 2))
+    payment_frequency: Mapped[str | None] = mapped_column(String(32))
+    remarks: Mapped[str | None] = mapped_column(Text)
+
+
+class ContractRegistryAsset(Base):
+    __tablename__ = "contract_registry_assets"
+    __table_args__ = (
+        UniqueConstraint("contract_id", "asset_type", "raw_asset_value", name="uq_contract_registry_asset"),
+    )
+
+    contract_asset_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    contract_id: Mapped[int] = mapped_column(ForeignKey("contract_registry_contracts.contract_id", ondelete="CASCADE"), index=True)
+    asset_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    station_code: Mapped[str | None] = mapped_column(String(64), ForeignKey("stations.station_code", ondelete="SET NULL"), index=True)
+    train_number: Mapped[str | None] = mapped_column(String(128), index=True)
+    asset_name: Mapped[str | None] = mapped_column(Text)
+    raw_asset_value: Mapped[str | None] = mapped_column(Text)
+    match_status: Mapped[str] = mapped_column(String(32), nullable=False, default="unmatched", index=True)
+
+
+class ContractRegistryStatusHistory(Base):
+    __tablename__ = "contract_registry_status_history"
+    status_history_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    contract_id: Mapped[int] = mapped_column(ForeignKey("contract_registry_contracts.contract_id", ondelete="CASCADE"), index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    effective_from: Mapped[datetime | None] = mapped_column(Date)
+    effective_to: Mapped[datetime | None] = mapped_column(Date)
+    reason: Mapped[str | None] = mapped_column(Text)
+    source_reference: Mapped[str | None] = mapped_column(Text)
+
+
+class ContractRegistryPaymentSchedule(Base):
+    __tablename__ = "contract_registry_payment_schedules"
+    __table_args__ = (
+        UniqueConstraint("contract_id", "installment_number", name="uq_contract_registry_installment"),
+    )
+
+    schedule_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    contract_id: Mapped[int] = mapped_column(ForeignKey("contract_registry_contracts.contract_id", ondelete="CASCADE"), index=True)
+    installment_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    period_label: Mapped[str | None] = mapped_column(Text)
+    due_date: Mapped[datetime | None] = mapped_column(Date, index=True)
+    expected_amount: Mapped[float | None] = mapped_column(Numeric(14, 2))
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
+
+
+class ContractRegistryPayment(Base, AuditMixin):
+    __tablename__ = "contract_registry_payments"
+    payment_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    contract_id: Mapped[int] = mapped_column(ForeignKey("contract_registry_contracts.contract_id", ondelete="CASCADE"), index=True)
+    schedule_id: Mapped[int | None] = mapped_column(ForeignKey("contract_registry_payment_schedules.schedule_id", ondelete="SET NULL"), index=True)
+    payment_date: Mapped[datetime | None] = mapped_column(Date)
+    amount_due: Mapped[float | None] = mapped_column(Numeric(14, 2))
+    amount_paid: Mapped[float | None] = mapped_column(Numeric(14, 2))
+    interest_amount: Mapped[float | None] = mapped_column(Numeric(14, 2), default=0)
+    delay_days: Mapped[int | None] = mapped_column(Integer)
+    payment_reference: Mapped[str | None] = mapped_column(Text)
+    payment_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
+    source_reference: Mapped[str | None] = mapped_column(Text)
+    remarks: Mapped[str | None] = mapped_column(Text)
+
+
 class DataChangeLog(Base):
     __tablename__ = "data_change_logs"
 
@@ -430,6 +599,35 @@ class CateringSyncRun(Base):
     linked_earnings: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     unlinked_earnings: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     report_json: Mapped[str | None] = mapped_column(Text)
+    error_message: Mapped[str | None] = mapped_column(Text)
+
+
+class ReportPreset(Base):
+    __tablename__ = "report_presets"
+    __table_args__ = (UniqueConstraint("name", name="uq_report_presets_name"),)
+
+    preset_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    report_tab: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    filters_json: Mapped[str] = mapped_column(Text, nullable=False)
+    schedule: Mapped[str | None] = mapped_column(String(32), index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
+    created_by: Mapped[str | None] = mapped_column(String(128))
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class ReportRun(Base):
+    __tablename__ = "report_runs"
+
+    run_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    preset_id: Mapped[str] = mapped_column(String(36), ForeignKey("report_presets.preset_id", ondelete="CASCADE"), index=True)
+    status: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False, index=True)
+    report_json: Mapped[str | None] = mapped_column(Text)
+    row_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     error_message: Mapped[str | None] = mapped_column(Text)
 
 
@@ -600,4 +798,25 @@ class MobileChange(Base):
     action: Mapped[str] = mapped_column(String(32), nullable=False)
     payload_json: Mapped[str] = mapped_column(Text, nullable=False)
     changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False, index=True)
+
+
+class MobileDeviceState(Base):
+    """Latest cache and sync summary reported by each inspection device."""
+
+    __tablename__ = "mobile_device_states"
+
+    device_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    cached_stations: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    cached_station_details: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    cached_works: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    cached_units: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    cached_earnings: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    pending_operations: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    failed_operations: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    data_version: Mapped[str | None] = mapped_column(String(128))
+    cache_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 

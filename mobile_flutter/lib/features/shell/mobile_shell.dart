@@ -7,6 +7,7 @@ import '../reports/reports_screen.dart';
 import '../home/today_screen.dart';
 import '../stations/stations_screen.dart';
 import '../works/works_screen.dart';
+import '../contracts/contracts_screen.dart';
 
 class MobileShell extends StatefulWidget {
   const MobileShell({super.key});
@@ -34,6 +35,11 @@ class _MobileShellState extends State<MobileShell> {
       label: 'Works',
       icon: Icons.construction_outlined,
       selectedIcon: Icons.construction_rounded,
+    ),
+    _Destination(
+      label: 'Contracts',
+      icon: Icons.assignment_outlined,
+      selectedIcon: Icons.assignment_rounded,
     ),
     _Destination(
       label: 'Reports',
@@ -74,6 +80,7 @@ class _MobileShellState extends State<MobileShell> {
       TodayScreen(onNavigate: _select),
       const StationsScreen(),
       const WorksScreen(),
+      const ContractsScreen(),
       const ReportsScreen(),
       const AssistantScreen(),
     ];

@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
+import json
 import re
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -16,11 +17,16 @@ from models import (
     CommercialContract,
     CommercialContractPayment,
     CommercialContractStationLink,
+    CateringSyncRun,
+    DataChangeLog,
     Earning,
     EarningLink,
     PassengerAmenityWork,
     PlatformExtensionSummary,
     PlatformDetail,
+    Inspection,
+    InspectionFinding,
+    MobileDeviceState,
     Station,
     StationInfra,
     StationPlatformExtensionStatus,
@@ -28,6 +34,8 @@ from models import (
     Unit,
     WheelChairAvailability,
     Work,
+    WorkProgressUpdate,
+    WorkExpenditureUpdate,
     WorkLink,
 )
 
@@ -119,6 +127,76 @@ def is_available_unit(unit: Unit | dict[str, Any]) -> bool:
     if normalize(value("unit_status")) == "available":
         return True
     return not clean(value("licensee_name")) and not clean(value("contract_from")) and not clean(value("contract_to"))
+
+
+def contract_risk(
+    valid_to: Any,
+    *,
+    pending_amount: int = 0,
+    station_match_status: Any = None,
+    missing_fee: bool = False,
+    today: date | None = None,
+) -> dict[str, Any]:
+    """Return one consistent risk/notification shape for every contract source."""
+    today = today or date.today()
+    expiry = parse_date_value(valid_to)
+    days = (expiry - today).days if expiry else None
+    if days is None:
+        expiry_points = 25
+        bucket = "no_date"
+        renewal_state = "Date unavailable"
+    elif days < 0:
+        expiry_points = 100
+        bucket = "expired"
+        renewal_state = "Expired"
+    elif days == 0:
+        expiry_points = 95
+        bucket = "due_today"
+        renewal_state = "Due today"
+    elif days <= 5:
+        expiry_points = 90
+        bucket = "due_5_days"
+        renewal_state = f"Due within {days} days"
+    elif days <= 10:
+        expiry_points = 80
+        bucket = "due_10_days"
+        renewal_state = f"Due within {days} days"
+    elif days <= 30:
+        expiry_points = 60
+        bucket = "due_30_days"
+        renewal_state = f"Due within {days} days"
+    elif days <= 50:
+        expiry_points = 45
+        bucket = "due_50_days"
+        renewal_state = f"Due within {days} days"
+    elif days <= 90:
+        expiry_points = 35
+        bucket = "due_90_days"
+        renewal_state = f"Due within {days} days"
+    else:
+        expiry_points = 10
+        bucket = "over_90_days"
+        renewal_state = "Active"
+
+    match_text = normalize(station_match_status)
+    risk_score = min(
+        100,
+        expiry_points
+        + (20 if pending_amount > 0 else 0)
+        + (10 if missing_fee else 0)
+        + (10 if match_text in {"", "unmatched", "asset_scope", "missing link"} else 0),
+    )
+    risk_level = "critical" if risk_score >= 80 else "high" if risk_score >= 60 else "medium" if risk_score >= 35 else "low"
+    return {
+        "valid_to": expiry.isoformat() if expiry else clean(valid_to) or None,
+        "days_to_expiry": days,
+        "expiry_alert_bucket": bucket,
+        "renewal_state": renewal_state,
+        "pending_amount": pending_amount,
+        "risk_score": risk_score,
+        "risk_level": risk_level,
+        "notification_required": days is not None and days <= 90 or pending_amount > 0 or missing_fee,
+    }
 
 
 def is_license_fee_row(row: Earning) -> bool:
@@ -994,12 +1072,16 @@ def parse_commercial_contract_workbook(path_or_bytes: str | bytes) -> dict[str, 
             "space_sq_ft": to_int(value_for(row, "Space Allotted Sq Ft")),
             "annual_license_fee": to_int(value_for(row, "Annual License fee")),
             "quarterly_license_fee": to_int(value_for(row, "QUATERLY LICENSE FEE")),
+            "security_deposit": to_int(value_for(row, "Security Deposit")),
             "no_of_years": to_int(value_for(row, "No of years")),
             "contract_period_from": date_text(value_for(row, "Contract period From")),
             "contract_upto": date_text(value_for(row, "contract Upto")),
             "cycle": clean(value_for(row, "CYCLE")),
             "year_ending_amount": to_int(row[year_ending_indexes[0]]) if year_ending_indexes and year_ending_indexes[0] < len(row) else None,
             "total_license_fee_2026_2027": to_int(row[total_2026_indexes[0]]) if total_2026_indexes and total_2026_indexes[0] < len(row) else None,
+            "renewal_status": clean(value_for(row, "Renewal Status")),
+            "termination_status": clean(value_for(row, "Termination Status")),
+            "tender_status": clean(value_for(row, "Tender Status")),
             "station_match_status": station_match_status,
         }
         contracts.append(contract)
@@ -1213,10 +1295,281 @@ def get_stats() -> dict[str, Any]:
         session.close()
 
 
+def get_data_centre_status() -> dict[str, Any]:
+    """Return one freshness and data-quality view for every managed module."""
+    session = SessionLocal()
+    try:
+        commercial_station_filter = (
+            Station.is_active.is_(True),
+            func.lower(func.trim(Station.categorisation)).notin_(('', 'test', 'non-commercial')),
+        )
+
+        module_models = {
+            "stations": Station,
+            "units": Unit,
+            "earnings": Earning,
+            "works": Work,
+            "work_progress": WorkProgressUpdate,
+            "contracts": CommercialContract,
+        }
+        modules = {}
+        for name, model in module_models.items():
+            query = session.query(model)
+            if name == "stations":
+                query = query.filter(*commercial_station_filter)
+            last_updated_query = session.query(func.max(model.updated_at))
+            if hasattr(model, "is_active"):
+                last_updated_query = last_updated_query.filter(model.is_active.is_(True))
+            last_updated = last_updated_query.scalar()
+            modules[name] = {
+                "count": query.count(),
+                "last_updated_at": last_updated.isoformat() if last_updated else None,
+            }
+
+        amenity_counts = {
+            "norms": session.query(AmenityNorm).filter(AmenityNorm.is_active.is_(True)).count(),
+            "infra": session.query(StationInfra).filter(StationInfra.is_active.is_(True)).count(),
+            "platforms": session.query(PlatformDetail).filter(PlatformDetail.is_active.is_(True)).count(),
+            "wheelchairs": session.query(WheelChairAvailability).filter(WheelChairAvailability.is_active.is_(True)).count(),
+            "trolley": session.query(TrolleyPath).filter(TrolleyPath.is_active.is_(True)).count(),
+            "works": session.query(PassengerAmenityWork).filter(PassengerAmenityWork.is_active.is_(True)).count(),
+            "accessibility": session.query(StationPlatformExtensionStatus).filter(StationPlatformExtensionStatus.is_active.is_(True)).count(),
+        }
+        amenity_models = (
+            AmenityNorm,
+            StationInfra,
+            PlatformDetail,
+            WheelChairAvailability,
+            TrolleyPath,
+            PassengerAmenityWork,
+            StationPlatformExtensionStatus,
+        )
+        amenity_dates = [
+            session.query(func.max(model.updated_at))
+            .filter(model.is_active.is_(True))
+            .scalar()
+            for model in amenity_models
+        ]
+        amenity_last_updated = max((value for value in amenity_dates if value), default=None)
+        modules["amenities"] = {
+            "count": sum(amenity_counts.values()),
+            "last_updated_at": amenity_last_updated.isoformat() if amenity_last_updated else None,
+            "breakdown": amenity_counts,
+        }
+
+        station_codes = {row[0] for row in session.query(Station.station_code).all()}
+        unit_codes = {row[0] for row in session.query(Unit.unit_no).all()}
+        quality = {
+            "units_missing_station": sum(1 for row in session.query(Unit.station_code).all() if not row[0] or row[0] not in station_codes),
+            "earnings_missing_unit": sum(1 for row in session.query(Earning.unit_no).all() if not row[0] or row[0] not in unit_codes),
+            "earnings_missing_station": sum(1 for row in session.query(Earning.station_code).all() if not row[0] or row[0] not in station_codes),
+            "works_unmatched_scope": session.query(WorkLink).filter(WorkLink.match_status != "Matched").count(),
+            "contracts_unmatched_station": session.query(CommercialContractStationLink).filter(CommercialContractStationLink.match_status != "Matched").count(),
+        }
+        quality["total"] = sum(quality.values())
+        quality["exceptions"] = []
+        for row in (
+            session.query(Unit.unit_no, Unit.station_code)
+            .filter((Unit.station_code.is_(None)) | (~Unit.station_code.in_(station_codes)))
+            .limit(50)
+            .all()
+        ):
+            quality["exceptions"].append({
+                "module": "units",
+                "record_key": row.unit_no,
+                "station_code": row.station_code,
+                "problem": "Missing or unmatched station link",
+            })
+        for row in (
+            session.query(Earning.earning_key, Earning.unit_no, Earning.station_code)
+            .filter(
+                (Earning.unit_no.is_(None))
+                | (~Earning.unit_no.in_(unit_codes))
+                | (Earning.station_code.is_(None))
+                | (~Earning.station_code.in_(station_codes))
+            )
+            .limit(50)
+            .all()
+        ):
+            quality["exceptions"].append({
+                "module": "earnings",
+                "record_key": row.earning_key,
+                "station_code": row.station_code,
+                "problem": "Missing or unmatched unit/station link",
+            })
+        for row in (
+            session.query(WorkLink.project_id, WorkLink.station_code, WorkLink.match_status)
+            .filter(WorkLink.match_status != "Matched")
+            .limit(50)
+            .all()
+        ):
+            quality["exceptions"].append({
+                "module": "works",
+                "record_key": row.project_id,
+                "station_code": row.station_code,
+                "problem": row.match_status or "Unmatched work scope",
+            })
+        for row in (
+            session.query(CommercialContractStationLink.contract_key, CommercialContractStationLink.station_code, CommercialContractStationLink.match_status)
+            .filter(CommercialContractStationLink.match_status != "Matched")
+            .limit(50)
+            .all()
+        ):
+            quality["exceptions"].append({
+                "module": "contracts",
+                "record_key": row.contract_key,
+                "station_code": row.station_code,
+                "problem": row.match_status or "Unmatched contract scope",
+            })
+        quality["exceptions"] = quality["exceptions"][:150]
+
+        latest_failed_catering = (
+            session.query(CateringSyncRun)
+            .filter(CateringSyncRun.status == "failed")
+            .order_by(CateringSyncRun.started_at.desc())
+            .first()
+        )
+        failures = []
+        if latest_failed_catering:
+            failures.append({
+                "resource": "catering",
+                "message": latest_failed_catering.error_message or "Catering synchronization failed",
+                "at": latest_failed_catering.started_at.isoformat() if latest_failed_catering.started_at else None,
+            })
+
+        changes = (
+            session.query(DataChangeLog)
+            .order_by(DataChangeLog.created_at.desc())
+            .limit(20)
+            .all()
+        )
+        for row in changes:
+            action = normalize(row.action)
+            if any(token in action for token in ("fail", "error", "rollback")):
+                failures.append({
+                    "resource": row.resource,
+                    "message": row.details or row.action,
+                    "at": row.created_at.isoformat() if row.created_at else None,
+                })
+        failures = failures[:50]
+        recent_sync = [
+            {
+                "resource": row.resource,
+                "action": row.action,
+                "source": row.source,
+                "details": row.details,
+                "at": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row in changes
+        ]
+        latest_successful_sync = recent_sync[0]["at"] if recent_sync else None
+        source_snapshots = {
+            name: {
+                "source": None,
+                "source_count": None,
+                "last_refresh_at": None,
+                "details": None,
+            }
+            for name in modules
+        }
+        for row in changes:
+            resource = {
+                "catering": "catering",
+                "commercial_contracts": "contracts",
+                "passenger_amenities": "amenities",
+            }.get(row.resource, row.resource)
+            targets = ["units", "earnings"] if resource == "catering" else [resource]
+            for target in targets:
+                if target not in source_snapshots or source_snapshots[target]["last_refresh_at"]:
+                    continue
+                details = row.details or ""
+                match = re.search(r"(\d+)\s+rows", details)
+                source_snapshots[target] = {
+                    "source": row.source,
+                    "source_count": int(match.group(1)) if match else None,
+                    "last_refresh_at": row.created_at.isoformat() if row.created_at else None,
+                    "details": details,
+                }
+        catering_run = (
+            session.query(CateringSyncRun)
+            .filter(CateringSyncRun.status == "success")
+            .order_by(CateringSyncRun.started_at.desc())
+            .first()
+        )
+        if catering_run:
+            reconciliation = {}
+            if catering_run.report_json:
+                try:
+                    report_json = json.loads(catering_run.report_json)
+                    applied = report_json.get("applied", {})
+                    reconciliation = {
+                        "added": applied.get("inserted_units", 0) + applied.get("inserted_earnings", 0),
+                        "changed": applied.get("updated_units", 0) + applied.get("updated_earnings", 0),
+                        "removed": applied.get("deactivated_units", 0) + applied.get("removed_stale_earnings", 0),
+                        "unmatched": report_json.get("reconciliation", {}).get("unlinked_earning_rows", 0),
+                    }
+                except (TypeError, ValueError):
+                    reconciliation = {}
+            for target, count in (("units", catering_run.unit_rows), ("earnings", catering_run.earning_rows)):
+                source_snapshots[target] = {
+                    "source": "google_sheet",
+                    "source_count": count,
+                    "last_refresh_at": catering_run.completed_at.isoformat() if catering_run.completed_at else catering_run.started_at.isoformat(),
+                    "details": "Catering sync history",
+                    "reconciliation": reconciliation,
+                }
+        # Always expose a useful baseline in the Data Centre, even for modules
+        # whose last import predates the current change log retention window.
+        for target, module in modules.items():
+            snapshot = source_snapshots[target]
+            if snapshot["source_count"] is None:
+                snapshot.update({
+                    "source": "postgresql",
+                    "source_count": module["count"],
+                    "last_refresh_at": module["last_updated_at"],
+                    "details": "Current PostgreSQL baseline; source history unavailable",
+                })
+        device_states = session.query(MobileDeviceState).order_by(MobileDeviceState.last_seen_at.desc()).all()
+        mobile_cache = {
+            "device_count": len(device_states),
+            "active_device_count": sum(
+                1
+                for device in device_states
+                if device.last_seen_at and device.last_seen_at >= datetime.now(timezone.utc) - timedelta(days=7)
+            ),
+            "last_seen_at": device_states[0].last_seen_at.isoformat() if device_states and device_states[0].last_seen_at else None,
+            "data_version": next((device.data_version for device in device_states if device.data_version), None),
+            "counts": {
+                "stations": sum(device.cached_stations for device in device_states),
+                "station_details": sum(device.cached_station_details for device in device_states),
+                "works": sum(device.cached_works for device in device_states),
+                "units": sum(device.cached_units for device in device_states),
+                "earnings": sum(device.cached_earnings for device in device_states),
+            },
+            "pending_operations": sum(device.pending_operations for device in device_states),
+            "failed_operations": sum(device.failed_operations for device in device_states),
+        }
+        return {
+            "status": "attention" if failures or quality["total"] else "ready",
+            "modules": modules,
+            "quality": quality,
+            "failures": failures,
+            "recent_sync": recent_sync,
+            "source_snapshots": source_snapshots,
+            "mobile_cache": mobile_cache,
+            "last_sync_at": latest_successful_sync,
+        }
+    finally:
+        session.close()
+
+
 def list_stations(q: str | None = None, category: str | None = None) -> list[dict[str, Any]]:
     session = SessionLocal()
     try:
-        query = session.query(Station)
+        query = session.query(Station).filter(
+            Station.is_active.is_(True),
+            func.lower(func.trim(Station.categorisation)).notin_(('', 'test', 'non-commercial')),
+        )
         if q:
             like = f"%{q}%"
             query = query.filter(
@@ -1247,7 +1600,42 @@ def list_units(q: str | None = None, station_code: str | None = None) -> list[di
             )
         if station_code and station_code != "All":
             query = query.filter(Unit.station_code == station_code)
-        return [{**row_to_dict(unit), "station_name": station_name, "categorisation": categorisation} for unit, station_name, categorisation in query.order_by(Unit.station_code, Unit.unit_no).all()]
+        raw_rows = query.order_by(Unit.station_code, Unit.unit_no).all()
+        unit_numbers = [unit.unit_no for unit, _, _ in raw_rows if unit.unit_no]
+        pending_by_unit: dict[str, int] = {}
+        if unit_numbers:
+            earning_rows = session.query(Earning).filter(Earning.unit_no.in_(unit_numbers)).all()
+            for earning in earning_rows:
+                receipt_text = normalize(" ".join([clean(earning.receipt_type), clean(earning.payment_head), clean(earning.payment_sub_head)]))
+                if "pending" in receipt_text or "due" in receipt_text or "outstanding" in receipt_text:
+                    pending_by_unit[earning.unit_no] = pending_by_unit.get(earning.unit_no, 0) + to_money(earning.amount)
+        rows = []
+        for unit, station_name, categorisation in raw_rows:
+            row = {**row_to_dict(unit), "station_name": station_name, "categorisation": categorisation}
+            available = is_available_unit(row)
+            paid_upto = parse_date_value(unit.paid_upto)
+            license_fee = to_money(unit.license_fee)
+            if available or not license_fee:
+                months_pending = 0
+            elif paid_upto is None:
+                months_pending = 1
+            elif paid_upto < date.today():
+                months_pending = month_delta(paid_upto + timedelta(days=1), month_end(date.today()))
+            else:
+                months_pending = 0
+            estimated_pending = months_pending * license_fee
+            pending_amount = max(pending_by_unit.get(unit.unit_no, 0), estimated_pending)
+            row.update(contract_risk(
+                row.get("contract_to"),
+                pending_amount=pending_amount,
+                station_match_status="Station linked" if unit.station_code else "Missing link",
+                missing_fee=not available and not clean(row.get("license_fee")),
+            ))
+            row["months_pending"] = months_pending
+            row["estimated_pending_amount"] = estimated_pending
+            row["pending_receipts"] = 1 if pending_amount else 0
+            rows.append(row)
+        return rows
     finally:
         session.close()
 
@@ -1255,7 +1643,14 @@ def list_units(q: str | None = None, station_code: str | None = None) -> list[di
 def list_works(q: str | None = None, scope_type: str | None = None, station_code: str | None = None) -> list[dict[str, Any]]:
     session = SessionLocal()
     try:
-        query = session.query(Work, WorkLink, Station.station_name, Station.categorisation).join(WorkLink, WorkLink.project_id == Work.project_id, isouter=True).join(Station, Station.station_code == WorkLink.station_code, isouter=True)
+        query = session.query(
+            Work,
+            WorkLink,
+            Station.station_name,
+            Station.categorisation,
+            Station.sr_den,
+            Station.cmi,
+        ).join(WorkLink, WorkLink.project_id == Work.project_id, isouter=True).join(Station, Station.station_code == WorkLink.station_code, isouter=True)
         if q:
             like = f"%{q}%"
             query = query.filter(
@@ -1269,18 +1664,194 @@ def list_works(q: str | None = None, scope_type: str | None = None, station_code
             query = query.filter(WorkLink.scope_type == scope_type)
         if station_code and station_code != "All":
             query = query.filter(WorkLink.station_code == station_code)
-        rows = []
-        for work, wl, station_name, categorisation in query.order_by(Work.date_of_sanction.desc().nullslast(), Work.project_id).all():
-            rows.append({
-                **row_to_dict(work),
-                "scope_type": wl.scope_type if wl else "Unlinked",
-                "scope_value": wl.scope_value if wl else work.block_section_station,
-                "station_code": wl.station_code if wl else None,
-                "match_status": wl.match_status if wl else "Missing link",
-                "station_name": station_name,
-                "categorisation": categorisation,
-            })
+        grouped: dict[str, dict[str, Any]] = {}
+        for work, wl, station_name, categorisation, sr_den, cmi in query.order_by(Work.date_of_sanction.desc().nullslast(), Work.project_id).all():
+            key = work.project_id
+            row = grouped.get(key)
+            if row is None:
+                row = {
+                    **row_to_dict(work),
+                    "scope_type": wl.scope_type if wl else "Unlinked",
+                    "scope_value": wl.scope_value if wl else work.block_section_station,
+                    "station_code": wl.station_code if wl else None,
+                    "match_status": wl.match_status if wl else "Missing link",
+                    "station_name": station_name,
+                    "categorisation": categorisation,
+                    "sr_den": sr_den,
+                    "cmi": cmi,
+                    "station_codes": [],
+                    "station_names": [],
+                    "links": [],
+                }
+                grouped[key] = row
+
+            if wl and wl.station_code:
+                if wl.station_code not in row["station_codes"]:
+                    row["station_codes"].append(wl.station_code)
+                if station_name and station_name not in row["station_names"]:
+                    row["station_names"].append(station_name)
+                row["links"].append({
+                    "station_code": wl.station_code,
+                    "station_name": station_name,
+                    "scope_type": wl.scope_type,
+                    "scope_value": wl.scope_value,
+                    "match_status": wl.match_status,
+                })
+
+        rows = list(grouped.values())
+        for row in rows:
+            row["station_code"] = row["station_codes"][0] if row["station_codes"] else row["station_code"]
+            row["station_name"] = row["station_names"][0] if row["station_names"] else row["station_name"]
+            row["linked_station_count"] = len(row["station_codes"])
         return rows
+    finally:
+        session.close()
+
+
+def get_work_monitoring(
+    q: str | None = None,
+    section: str | None = None,
+    allocation: str | None = None,
+    year: str | None = None,
+    work_type: str | None = None,
+    station_code: str | None = None,
+    today: date | None = None,
+) -> dict[str, Any]:
+    """Build an exception-first monitoring projection from master and history tables."""
+    today = today or date.today()
+    session = SessionLocal()
+    try:
+        query = (
+            session.query(Work, WorkLink, Station.station_name, Station.sr_den, Station.cmi)
+            .join(WorkLink, WorkLink.project_id == Work.project_id, isouter=True)
+            .join(Station, Station.station_code == WorkLink.station_code, isouter=True)
+        )
+        if section and section != "All":
+            query = query.filter(Work.section == section)
+        if allocation and allocation != "All":
+            query = query.filter(Work.allocation == allocation)
+        if year and year != "All":
+            query = query.filter(Work.year_of_sanction == year)
+        if station_code and station_code != "All":
+            query = query.filter(WorkLink.station_code == station_code.upper())
+
+        latest_progress: dict[str, dict[str, Any]] = {}
+        progress_count: dict[str, int] = {}
+        progress_rows = session.query(WorkProgressUpdate).order_by(WorkProgressUpdate.update_date.desc(), WorkProgressUpdate.progress_id.desc()).all()
+        for row in progress_rows:
+            progress_count[row.project_id] = progress_count.get(row.project_id, 0) + 1
+            latest_progress.setdefault(row.project_id, row_to_dict(row))
+        latest_expenditure: dict[str, dict[str, Any]] = {}
+        expenditure_count: dict[str, int] = {}
+        expenditure_rows = session.query(WorkExpenditureUpdate).order_by(WorkExpenditureUpdate.update_date.desc(), WorkExpenditureUpdate.expenditure_id.desc()).all()
+        for row in expenditure_rows:
+            expenditure_count[row.project_id] = expenditure_count.get(row.project_id, 0) + 1
+            latest_expenditure.setdefault(row.project_id, row_to_dict(row))
+
+        def progress_percent(value: Any) -> int | None:
+            match = re.search(r"(\d+(?:\.\d+)?)", clean(value))
+            return round(float(match.group(1))) if match else None
+
+        def classify(work: Work, link: WorkLink | None) -> str:
+            text = normalize(" ".join([clean(work.short_name_of_work), clean(work.remarks), clean(work.section), clean(link.scope_type if link else "")]))
+            if "abss" in text:
+                return "ABSS"
+            if "cao/cn" in text or "cao cn" in text:
+                return "CAO/CN"
+            if "fob" in text or "foot over" in text:
+                return "FOB"
+            if "platform" in text or "raising" in text:
+                return "Platform"
+            if "divyang" in text or "ramp" in text or "lift" in text:
+                return "Divyangjan"
+            if "goods" in text or "csgr" in text:
+                return "Goods / CSGR"
+            return clean(link.scope_type if link else "Other") or "Other"
+
+        grouped: dict[str, dict[str, Any]] = {}
+        for work, link, station_name, sr_den, cmi in query.all():
+            item = grouped.get(work.project_id)
+            if not item:
+                latest = latest_progress.get(work.project_id) or {}
+                expenditure = latest_expenditure.get(work.project_id) or {}
+                status = clean(latest.get("status") or work.status) or "Unknown"
+                percentage = latest.get("progress_percent")
+                if percentage is None:
+                    percentage = progress_percent(latest.get("physical_progress") or work.physical_progress)
+                completed = bool(re.search(r"complete|done", status, flags=re.I))
+                if percentage is not None and percentage >= 100:
+                    completed = True
+                tdc = latest.get("tdc") or work.tdc
+                tdc_date = parse_date_value(tdc)
+                days_to_tdc = (tdc_date - today).days if tdc_date else None
+                contradiction = None
+                if completed and percentage is not None and percentage < 100:
+                    contradiction = "Completed status with progress below 100%"
+                elif not completed and percentage is not None and percentage >= 100:
+                    contradiction = "100% progress with an open status"
+                if contradiction:
+                    alert_type = "contradiction"
+                elif not completed and days_to_tdc is not None and days_to_tdc < 0:
+                    alert_type = "tdc_overdue"
+                elif not completed and days_to_tdc is not None and days_to_tdc <= 30:
+                    alert_type = "tdc_due_30_days"
+                else:
+                    alert_type = None
+                item = {
+                    **row_to_dict(work),
+                    "station_code": link.station_code if link else None,
+                    "station_name": station_name,
+                    "sr_den": sr_den,
+                    "cmi": cmi,
+                    "work_type": classify(work, link),
+                    "effective_status": status,
+                    "progress_percent": percentage,
+                    "completed": completed,
+                    "tdc": tdc,
+                    "days_to_tdc": days_to_tdc,
+                    "alert_type": alert_type,
+                    "alert_label": "TDC overdue" if alert_type == "tdc_overdue" else "TDC due within 30 days" if alert_type == "tdc_due_30_days" else contradiction,
+                    "latest_progress_update": latest.get("update_date"),
+                    "progress_update_count": progress_count.get(work.project_id, 0),
+                    "latest_expenditure_update": expenditure.get("update_date"),
+                    "expenditure_update_count": expenditure_count.get(work.project_id, 0),
+                    "latest_cumulative_expenditure": expenditure.get("cumulative_expenditure") if expenditure else work.expenditure_upto_date,
+                    "station_codes": [],
+                }
+                grouped[work.project_id] = item
+            if link and link.station_code and link.station_code not in item["station_codes"]:
+                item["station_codes"].append(link.station_code)
+
+        items = list(grouped.values())
+        if q:
+            query_text = normalize(q)
+            items = [item for item in items if query_text in normalize(" ".join(str(item.get(key) or "") for key in ("project_id", "short_name_of_work", "section", "allocation", "work_type", "station_name", "station_code", "sr_den", "cmi")))]
+        if work_type and work_type != "All":
+            items = [item for item in items if item["work_type"] == work_type]
+        items.sort(key=lambda item: (item["alert_type"] is None, item["days_to_tdc"] is None, item["days_to_tdc"] if item["days_to_tdc"] is not None else 99999, item["project_id"] or ""))
+
+        def counts(key: str) -> list[dict[str, Any]]:
+            result: dict[str, int] = {}
+            for item in items:
+                label = clean(item.get(key)) or "Unknown"
+                result[label] = result.get(label, 0) + 1
+            return [{"label": label, "value": value} for label, value in sorted(result.items(), key=lambda pair: (-pair[1], pair[0]))]
+
+        return {
+            "as_of": today.isoformat(),
+            "total": len(items),
+            "open": sum(1 for item in items if not item["completed"]),
+            "completed": sum(1 for item in items if item["completed"]),
+            "exceptions": sum(1 for item in items if item["alert_type"]),
+            "tdc_overdue": sum(1 for item in items if item["alert_type"] == "tdc_overdue"),
+            "tdc_due_30_days": sum(1 for item in items if item["alert_type"] == "tdc_due_30_days"),
+            "contradictions": sum(1 for item in items if item["alert_type"] == "contradiction"),
+            "by_section": counts("section"),
+            "by_allocation": counts("allocation"),
+            "by_year": counts("year_of_sanction"),
+            "by_work_type": counts("work_type"),
+            "items": items,
+        }
     finally:
         session.close()
 
@@ -1400,6 +1971,194 @@ def get_commercial_contract_detail(contract_key: int) -> dict[str, Any] | None:
         session.close()
 
 
+def get_contract_alerts(today: date | None = None, station_code: str | None = None) -> dict[str, Any]:
+    """Combine catering and non-catering risk into one action-centre payload."""
+    today = today or date.today()
+    catering = list_units(station_code=station_code)
+    commercial = list_commercial_contracts(station_code=station_code)
+    commercial_report = get_commercial_contract_reports(today)
+    commercial_risk = {row["contract_key"]: row for row in commercial_report.get("contract_risk", [])}
+    rows: list[dict[str, Any]] = []
+
+    for row in catering:
+        if not row.get("notification_required"):
+            continue
+        rows.append({
+            **row,
+            "source_module": "catering",
+            "contract_key": row.get("unit_no"),
+            "contract_name": row.get("licensee_name") or row.get("unit_no"),
+            "contract_type": row.get("type_of_unit") or "Catering",
+            "station_code": row.get("station_code"),
+            "license_fee": row.get("license_fee"),
+        })
+
+    for row in commercial:
+        risk = commercial_risk.get(row.get("contract_key"), contract_risk(
+            row.get("contract_upto"),
+            station_match_status=row.get("station_match_status"),
+            missing_fee=not to_money(row.get("annual_license_fee")),
+            today=today,
+        ))
+        if not risk.get("notification_required"):
+            continue
+        rows.append({
+            **row,
+            **risk,
+            "source_module": "commercial",
+            "contract_type": row.get("sub_category") or row.get("policy") or "Commercial",
+        })
+
+    rows.sort(key=lambda item: (-int(item.get("risk_score") or 0), item.get("days_to_expiry") is None, item.get("contract_name") or ""))
+    buckets = {
+        "expired": 0,
+        "due_today": 0,
+        "due_5_days": 0,
+        "due_10_days": 0,
+        "due_30_days": 0,
+        "due_50_days": 0,
+        "due_90_days": 0,
+        "payment_attention": 0,
+    }
+    for row in rows:
+        bucket = row.get("expiry_alert_bucket")
+        if bucket in buckets:
+            buckets[bucket] += 1
+        if row.get("pending_amount"):
+            buckets["payment_attention"] += 1
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "total_alerts": len(rows),
+        "critical": sum(1 for row in rows if row.get("risk_level") == "critical"),
+        "high": sum(1 for row in rows if row.get("risk_level") == "high"),
+        "buckets": buckets,
+        "rows": rows,
+    }
+
+
+def get_action_centre(station_code: str | None = None, limit: int = 200, today: date | None = None) -> dict[str, Any]:
+    """Return one normalized exception feed for web, Station 360, and mobile clients."""
+    today = today or date.today()
+    items: list[dict[str, Any]] = []
+
+    contract_alerts = get_contract_alerts(today=today, station_code=station_code)
+    for row in contract_alerts.get("rows", []):
+        days = row.get("days_to_expiry")
+        severity = "critical" if row.get("risk_level") == "critical" else "high" if row.get("risk_level") == "high" else "medium"
+        items.append({
+            "notification_key": f"contract:{row.get('source_module')}:{row.get('contract_key')}",
+            "type": "contract_expiry" if days is not None else "payment_attention",
+            "severity": severity,
+            "station_code": row.get("station_code"),
+            "record_id": row.get("contract_key"),
+            "title": row.get("contract_name") or row.get("contract_key"),
+            "message": "Expired" if days is not None and days < 0 else f"{days} days to expiry" if days is not None else "Payment or validity attention required",
+            "days_to_expiry": days,
+            "pending_amount": row.get("pending_amount", 0),
+            "source_module": row.get("source_module"),
+            "updated_at": row.get("updated_at"),
+        })
+
+    work_report = get_work_monitoring(station_code=station_code, today=today)
+    for row in work_report.get("items", []):
+        if not row.get("alert_type"):
+            continue
+        items.append({
+            "notification_key": f"work:{row.get('project_id')}:{row.get('alert_type')}",
+            "type": "work_tdc" if row.get("alert_type") != "contradiction" else "work_contradiction",
+            "severity": "critical" if row.get("alert_type") == "tdc_overdue" else "high",
+            "station_code": row.get("station_code"),
+            "record_id": row.get("project_id"),
+            "title": row.get("short_name_of_work") or row.get("project_id"),
+            "message": row.get("alert_label") or "Work data requires review",
+            "days_to_tdc": row.get("days_to_tdc"),
+            "progress_percent": row.get("progress_percent"),
+            "source_module": "works",
+            "updated_at": row.get("updated_at"),
+        })
+
+    report = get_reports(today)
+    for finding in report.get("inspections", {}).get("overdue_findings", []):
+        if station_code and finding.get("station_code") != station_code.upper():
+            continue
+        items.append({
+            "notification_key": f"finding:{finding.get('finding_id')}",
+            "type": "inspection_action_overdue",
+            "severity": "critical" if str(finding.get("severity", "")).lower() == "critical" else "high",
+            "station_code": finding.get("station_code"),
+            "record_id": finding.get("finding_id"),
+            "title": finding.get("title") or "Inspection finding",
+            "message": f"{finding.get('days_overdue', 0)} days overdue",
+            "days_overdue": finding.get("days_overdue"),
+            "source_module": "inspections",
+            "updated_at": finding.get("updated_at"),
+        })
+
+    for row in list_passenger_amenities(kind="summary", station_code=station_code):
+        missing = []
+        if not row.get("platform_detail_count"):
+            missing.append("platform details")
+        if row.get("wheel_chairs") is None:
+            missing.append("wheelchair record")
+        if not row.get("fob_details"):
+            missing.append("FOB/access details")
+        if not missing:
+            continue
+        items.append({
+            "notification_key": f"amenity:{row.get('station_code')}:{','.join(missing)}",
+            "type": "amenity_incomplete",
+            "severity": "medium",
+            "station_code": row.get("station_code"),
+            "record_id": row.get("station_code"),
+            "title": row.get("station_name") or row.get("station_code"),
+            "message": "Missing " + ", ".join(missing),
+            "source_module": "amenities",
+            "updated_at": None,
+        })
+
+    data_centre = get_data_centre_status()
+    for failure in data_centre.get("failures", []):
+        items.append({
+            "notification_key": f"sync:{failure.get('resource')}:{failure.get('at')}",
+            "type": "sync_failure",
+            "severity": "critical",
+            "station_code": None,
+            "record_id": failure.get("resource"),
+            "title": f"{failure.get('resource', 'Data')} synchronization failed",
+            "message": failure.get("message") or "Source refresh failed",
+            "source_module": "data-centre",
+            "updated_at": failure.get("at"),
+        })
+    for change in data_centre.get("recent_sync", [])[:10]:
+        if not re.search(r"import|replace|sync", clean(change.get("action")), flags=re.I):
+            continue
+        items.append({
+            "notification_key": f"change:{change.get('resource')}:{change.get('at')}",
+            "type": "source_changed",
+            "severity": "info",
+            "station_code": None,
+            "record_id": change.get("resource"),
+            "title": f"{change.get('resource', 'Source')} refreshed",
+            "message": change.get("details") or "New source changes available",
+            "source_module": "data-centre",
+            "updated_at": change.get("at"),
+        })
+
+    unique: dict[str, dict[str, Any]] = {}
+    for item in items:
+        unique[item["notification_key"]] = item
+    severity_order = {"critical": 0, "high": 1, "medium": 2, "info": 3}
+    ordered = sorted(unique.values(), key=lambda item: (severity_order.get(item.get("severity"), 9), str(item.get("title") or "")))[:max(1, min(limit, 1000))]
+    return {
+        "as_of": today.isoformat(),
+        "total": len(ordered),
+        "critical": sum(1 for item in ordered if item.get("severity") == "critical"),
+        "high": sum(1 for item in ordered if item.get("severity") == "high"),
+        "medium": sum(1 for item in ordered if item.get("severity") == "medium"),
+        "items": ordered,
+    }
+
+
 def get_commercial_contract_reports(today: date | None = None) -> dict[str, Any]:
     today = today or date.today()
     next_30 = today + timedelta(days=30)
@@ -1415,7 +2174,23 @@ def get_commercial_contract_reports(today: date | None = None) -> dict[str, Any]
         by_sub_category: dict[str, int] = {}
         by_asset_scope: dict[str, int] = {}
         expiry_alerts = []
+        expiry_buckets = {
+            "expired": 0,
+            "today": 0,
+            "next_5_days": 0,
+            "next_10_days": 0,
+            "next_30_days": 0,
+            "next_50_days": 0,
+            "next_90_days": 0,
+        }
         unmatched = []
+        pending_by_contract: dict[int, int] = {}
+        for payment, _ in payments:
+            pending_by_contract[payment.contract_key] = pending_by_contract.get(payment.contract_key, 0) + max(
+                0,
+                to_money(payment.amount_due) - to_money(payment.amount_paid),
+            )
+        contract_risk_rows = []
         for contract in contracts:
             policy_key = clean(contract.policy) or "Unclassified"
             sub_key = clean(contract.sub_category) or "Unclassified"
@@ -1425,9 +2200,39 @@ def get_commercial_contract_reports(today: date | None = None) -> dict[str, Any]
             by_policy_value[policy_key] = by_policy_value.get(policy_key, 0) + annual
             by_sub_category[sub_key] = by_sub_category.get(sub_key, 0) + 1
             by_asset_scope[scope_key] = by_asset_scope.get(scope_key, 0) + 1
-            upto = parse_date_value(contract.contract_upto)
-            if upto and today <= upto <= next_90:
-                bucket = "next_30_days" if upto <= next_30 else "next_90_days"
+            pending_amount = pending_by_contract.get(contract.contract_key, 0)
+            risk = contract_risk(
+                contract.contract_upto,
+                pending_amount=pending_amount,
+                station_match_status=contract.station_match_status,
+                missing_fee=not annual,
+                today=today,
+            )
+            contract_risk_rows.append({
+                "contract_key": contract.contract_key,
+                "contract_name": contract.contract_name,
+                "policy": contract.policy,
+                "sub_category": contract.sub_category,
+                "contract_upto": contract.contract_upto,
+                **risk,
+            })
+            days_to_expiry = risk["days_to_expiry"]
+            if days_to_expiry is not None and days_to_expiry <= 90:
+                if days_to_expiry < 0:
+                    bucket = "expired"
+                elif days_to_expiry == 0:
+                    bucket = "today"
+                elif days_to_expiry <= 5:
+                    bucket = "next_5_days"
+                elif days_to_expiry <= 10:
+                    bucket = "next_10_days"
+                elif days_to_expiry <= 30:
+                    bucket = "next_30_days"
+                elif days_to_expiry <= 50:
+                    bucket = "next_50_days"
+                else:
+                    bucket = "next_90_days"
+                expiry_buckets[bucket] += 1
                 expiry_alerts.append({
                     "contract_key": contract.contract_key,
                     "contract_name": contract.contract_name,
@@ -1435,8 +2240,11 @@ def get_commercial_contract_reports(today: date | None = None) -> dict[str, Any]
                     "policy": contract.policy,
                     "sub_category": contract.sub_category,
                     "contract_upto": contract.contract_upto,
-                    "days_to_expiry": (upto - today).days,
+                    "days_to_expiry": days_to_expiry,
                     "alert_bucket": bucket,
+                    "risk_score": risk["risk_score"],
+                    "risk_level": risk["risk_level"],
+                    "expiry_alert_bucket": risk["expiry_alert_bucket"],
                 })
             if contract.station_match_status in {"unmatched", "asset_scope"}:
                 unmatched.append({
@@ -1480,7 +2288,9 @@ def get_commercial_contract_reports(today: date | None = None) -> dict[str, Any]
             "by_month": [{"label": key, "value": value} for key, value in sorted(by_month.items())[-24:]],
             "by_station": [{"label": key, "value": value} for key, value in sorted(station_link_counts.items(), key=lambda item: item[1], reverse=True)[:20]],
             "expiry_alerts": sorted(expiry_alerts, key=lambda row: row["days_to_expiry"]),
+            "expiry_buckets": expiry_buckets,
             "pending_payments": pending_like,
+            "contract_risk": sorted(contract_risk_rows, key=lambda row: (-row["risk_score"], row["contract_name"])),
             "unmatched_or_asset_scope": unmatched,
         }
     finally:
@@ -1602,6 +2412,23 @@ def get_station_detail(station_code: str) -> dict[str, Any] | None:
         pa_works = session.query(PassengerAmenityWork).filter(PassengerAmenityWork.station_code == code).order_by(PassengerAmenityWork.work_type, PassengerAmenityWork.work_name).all()
         pf_extension = session.query(StationPlatformExtensionStatus).filter(StationPlatformExtensionStatus.station_code == code).one_or_none()
         norms = session.query(AmenityNorm).filter(AmenityNorm.category == station.categorisation).order_by(AmenityNorm.amenity, AmenityNorm.norm).all() if station.categorisation else []
+        inspections = (
+            session.query(Inspection)
+            .filter(Inspection.station_code == code)
+            .order_by(Inspection.updated_at.desc())
+            .limit(20)
+            .all()
+        )
+        inspection_findings = (
+            session.query(InspectionFinding)
+            .filter(
+                InspectionFinding.station_code == code,
+                InspectionFinding.status.notin_(["verified", "closed"]),
+            )
+            .order_by(InspectionFinding.updated_at.desc())
+            .limit(100)
+            .all()
+        )
 
         platform_lengths = [row.length_m for row in platforms if row.length_m is not None]
         amenities = {
@@ -1635,6 +2462,184 @@ def get_station_detail(station_code: str) -> dict[str, Any] | None:
             "ramp_proposed": bool(pf_extension and pf_extension.ramp_proposed),
             "not_feasible_lift_ramp": bool(pf_extension and pf_extension.not_feasible_lift_ramp),
         }
+        recorded_amenities = dict(amenities)
+        recorded_amenities["norms"] = []
+        recorded_amenity_text = normalize(str(recorded_amenities))
+        compliance_groups: dict[str, dict[str, int]] = {}
+        missing_norms = []
+        matched_norms = 0
+        for norm_row in norms:
+            category = clean(norm_row.category) or "Unclassified"
+            group = compliance_groups.setdefault(category, {"total": 0, "matched": 0})
+            group["total"] += 1
+            labels = [clean(norm_row.amenity), clean(norm_row.norm)]
+            labels = [normalize(label) for label in labels if len(normalize(label)) >= 3]
+            matched = any(label in recorded_amenity_text for label in labels)
+            if matched:
+                group["matched"] += 1
+                matched_norms += 1
+            else:
+                missing_norms.append({
+                    "norm_key": norm_row.norm_key,
+                    "category": category,
+                    "amenity": norm_row.amenity,
+                    "norm": norm_row.norm,
+                    "quantity": norm_row.norm_quantity,
+                })
+        amenity_compliance = {
+            "total_norms": len(norms),
+            "matched_norms": matched_norms,
+            "compliance_percent": round((matched_norms / len(norms)) * 100, 1) if norms else None,
+            "by_category": [
+                {
+                    "category": category,
+                    "total": values["total"],
+                    "matched": values["matched"],
+                    "compliance_percent": round((values["matched"] / values["total"]) * 100, 1) if values["total"] else 0,
+                }
+                for category, values in sorted(compliance_groups.items())
+            ],
+            "missing": missing_norms[:200],
+        }
+        work_ids = [row.get("project_id") for row in works if row.get("project_id")]
+        progress_by_work: dict[str, list[dict[str, Any]]] = {}
+        if work_ids:
+            progress_rows = (
+                session.query(WorkProgressUpdate)
+                .filter(WorkProgressUpdate.project_id.in_(work_ids))
+                .order_by(WorkProgressUpdate.update_date.desc(), WorkProgressUpdate.progress_id.desc())
+                .all()
+            )
+            for progress in progress_rows:
+                progress_by_work.setdefault(progress.project_id, []).append(row_to_dict(progress))
+        for work in works:
+            work["progress_updates"] = progress_by_work.get(work.get("project_id"), [])
+        open_works = [
+            row for row in works
+            if not re.search(r"complete|done", normalize(row.get("status")))
+        ]
+        amenity_flags = []
+        if not infra:
+            amenity_flags.append({"key": "infra", "label": "Station infra details missing", "severity": "high"})
+        if not platforms:
+            amenity_flags.append({"key": "platforms", "label": "Platform-wise details missing", "severity": "medium"})
+        if not wheelchairs:
+            amenity_flags.append({"key": "wheelchair", "label": "Wheelchair availability not recorded", "severity": "medium"})
+        if not norms:
+            amenity_flags.append({"key": "norms", "label": "Category norms not linked", "severity": "medium"})
+        if summary_open := amenity_summary["open_pa_works"]:
+            amenity_flags.append({"key": "pa_works", "label": f"{summary_open} passenger amenity works open", "severity": "high"})
+
+        contract_alerts = []
+        for contract in [*contracts, *commercial_contracts]:
+            days = contract.get("days_to_expiry")
+            pending = contract.get("pending_receipts", 0) or 0
+            if (days is not None and days <= 90) or pending:
+                contract_alerts.append({
+                    "contract_key": contract.get("contract_key") or contract.get("unit_no"),
+                    "contract_name": contract.get("contract_name") or contract.get("licensee_name") or contract.get("unit_no"),
+                    "days_to_expiry": days,
+                    "pending_receipts": pending,
+                    "severity": "critical" if days is not None and days <= 10 else "warning",
+                })
+
+        timeline = []
+        for row in works:
+            timeline.append({
+                "type": "work",
+                "date": row.get("updated_at") or row.get("date_of_sanction"),
+                "title": row.get("short_name") or row.get("work_name") or row.get("project_id"),
+                "status": row.get("status"),
+                "record_id": row.get("project_id"),
+            })
+        for row in earnings:
+            timeline.append({
+                "type": "payment",
+                "date": row.get("date_of_receipt") or row.get("mr_date"),
+                "title": row.get("payment_head") or row.get("receipt_key"),
+                "status": row.get("receipt_type"),
+                "record_id": row.get("receipt_key") or row.get("earning_key"),
+            })
+        for row in inspections:
+            timeline.append({
+                "type": "inspection",
+                "date": row.updated_at,
+                "title": f"Inspection by {row.inspector_name}",
+                "status": row.status,
+                "record_id": row.inspection_id,
+            })
+        for row in inspection_findings:
+            timeline.append({
+                "type": "deficiency",
+                "date": row.updated_at,
+                "title": row.title,
+                "status": row.status,
+                "record_id": row.finding_id,
+            })
+        timeline.sort(key=lambda row: str(row.get("date") or ""), reverse=True)
+        inspection_comparison: dict[str, Any] = {
+            "available": len(inspections) >= 2,
+            "current": None,
+            "previous": None,
+            "score_delta": None,
+            "changed_items": [],
+        }
+        if len(inspections) >= 2:
+            current_inspection, previous_inspection = inspections[0], inspections[1]
+            current_responses = {
+                (row.section_code, row.question_code, row.platform): row
+                for row in session.query(InspectionResponse).filter(
+                    InspectionResponse.inspection_id == current_inspection.inspection_id,
+                ).all()
+            }
+            previous_responses = {
+                (row.section_code, row.question_code, row.platform): row
+                for row in session.query(InspectionResponse).filter(
+                    InspectionResponse.inspection_id == previous_inspection.inspection_id,
+                ).all()
+            }
+            changed_items = []
+            for key in sorted(
+                set(current_responses) | set(previous_responses),
+                key=lambda item: tuple(str(part or "") for part in item),
+            ):
+                current = current_responses.get(key)
+                previous = previous_responses.get(key)
+                current_value = current.response_value if current else None
+                previous_value = previous.response_value if previous else None
+                if current_value == previous_value:
+                    continue
+                changed_items.append({
+                    "section_code": key[0],
+                    "question_code": key[1],
+                    "platform": key[2],
+                    "previous": previous_value,
+                    "current": current_value,
+                    "severity": (current.severity if current else previous.severity) if (current or previous) else None,
+                    "previous_remarks": previous.remarks if previous else None,
+                    "current_remarks": current.remarks if current else None,
+                })
+            inspection_comparison = {
+                "available": True,
+                "current": {
+                    "inspection_id": current_inspection.inspection_id,
+                    "status": current_inspection.status,
+                    "score": current_inspection.score,
+                    "updated_at": current_inspection.updated_at.isoformat() if current_inspection.updated_at else None,
+                },
+                "previous": {
+                    "inspection_id": previous_inspection.inspection_id,
+                    "status": previous_inspection.status,
+                    "score": previous_inspection.score,
+                    "updated_at": previous_inspection.updated_at.isoformat() if previous_inspection.updated_at else None,
+                },
+                "score_delta": (
+                    current_inspection.score - previous_inspection.score
+                    if current_inspection.score is not None and previous_inspection.score is not None
+                    else None
+                ),
+                "changed_items": changed_items[:300],
+            }
         return {
             "station": station_row,
             "contracts": contracts,
@@ -1644,6 +2649,16 @@ def get_station_detail(station_code: str) -> dict[str, Any] | None:
             "commercial_contracts": commercial_contracts,
             "amenities": amenities,
             "amenity_summary": amenity_summary,
+            "amenity_compliance": amenity_compliance,
+            "action_centre": {
+                "contract_alerts": contract_alerts,
+                "open_works": open_works,
+                "amenity_flags": amenity_flags,
+                "open_findings": [row_to_dict(row) for row in inspection_findings],
+                "inspections": [row_to_dict(row) for row in inspections],
+                "inspection_comparison": inspection_comparison,
+                "timeline": timeline[:100],
+            },
         }
     finally:
         session.close()
@@ -1659,12 +2674,24 @@ def get_reports(today: date | None = None) -> dict[str, Any]:
 
     session = SessionLocal()
     try:
-        stations = session.query(Station).all()
+        commercial_station_filter = (
+            Station.is_active.is_(True),
+            func.lower(func.trim(Station.categorisation)).notin_(('', 'test', 'non-commercial')),
+        )
+        stations = session.query(Station).filter(*commercial_station_filter).all()
         units = session.query(Unit, Station.station_name, Station.division, Station.section).join(Station, Station.station_code == Unit.station_code, isouter=True).all()
         earnings = session.query(Earning).filter(
             (Earning.earning_scope.is_(None)) | (Earning.earning_scope != "tender_emd")
         ).all()
-        works = session.query(Work, WorkLink, Station.station_name).join(WorkLink, WorkLink.project_id == Work.project_id, isouter=True).join(Station, Station.station_code == WorkLink.station_code, isouter=True).all()
+        works = session.query(
+            Work,
+            WorkLink,
+            Station.station_name,
+            Station.sr_den,
+            Station.cmi,
+        ).join(WorkLink, WorkLink.project_id == Work.project_id, isouter=True).join(Station, Station.station_code == WorkLink.station_code, isouter=True).all()
+        inspections = session.query(Inspection).all()
+        findings = session.query(InspectionFinding).all()
 
         by_unit: dict[str, list[Earning]] = {}
         for earning in earnings:
@@ -1672,9 +2699,10 @@ def get_reports(today: date | None = None) -> dict[str, Any]:
                 by_unit.setdefault(earning.unit_no, []).append(earning)
 
         station_codes = {station.station_code for station in stations}
+        station_names = {station.station_code: station.station_name for station in stations}
         unit_codes = {unit.unit_no for unit, *_ in units}
         station_with_units = {unit.station_code for unit, *_ in units if unit.station_code}
-        station_with_works = {link.station_code for _, link, _ in works if link and link.station_code}
+        station_with_works = {link.station_code for _, link, *_ in works if link and link.station_code}
         station_with_earnings = {earning.station_code for earning in earnings if earning.station_code}
 
         by_station_category: dict[str, int] = {}
@@ -1719,20 +2747,83 @@ def get_reports(today: date | None = None) -> dict[str, Any]:
         works_by_scope: dict[str, int] = {}
         works_by_section: dict[str, int] = {}
         works_by_station: dict[str, int] = {}
+        works_by_sr_den: dict[str, int] = {}
+        works_by_cmi: dict[str, int] = {}
+        works_by_allocation: dict[str, int] = {}
+        works_by_year: dict[str, int] = {}
         works_seen: set[str] = set()
         completed_work_count = 0
         pending_work_count = 0
-        for work, link, station_name in works:
+        delay_alerts: list[dict[str, Any]] = []
+        work_contradictions: list[dict[str, Any]] = []
+
+        def progress_percent(value: Any) -> int | None:
+            match = re.search(r"(\d+(?:\.\d+)?)\s*%?", clean(value))
+            if not match:
+                return None
+            try:
+                return round(float(match.group(1)))
+            except ValueError:
+                return None
+
+        def canonical_label(values: dict[str, int], value: str) -> str:
+            """Merge case-only variants without changing the first source label."""
+            for existing in values:
+                if existing.casefold() == value.casefold():
+                    return existing
+            return value
+
+        for work, link, station_name, sr_den, cmi in works:
             if work.project_id not in works_seen:
                 works_seen.add(work.project_id)
                 status_key = clean(work.status) or "Unknown"
-                section_key = clean(work.section) or "Unknown"
+                section_key = canonical_label(works_by_section, clean(work.section) or "Unknown")
                 works_by_status[status_key] = works_by_status.get(status_key, 0) + 1
                 works_by_section[section_key] = works_by_section.get(section_key, 0) + 1
+                sr_den_key = clean(sr_den) or "Unassigned"
+                cmi_key = clean(cmi) or "Unassigned"
+                allocation_key = clean(work.allocation) or "Unassigned"
+                year_key = clean(work.year_of_sanction) or "Unknown"
+                works_by_sr_den[sr_den_key] = works_by_sr_den.get(sr_den_key, 0) + 1
+                works_by_cmi[cmi_key] = works_by_cmi.get(cmi_key, 0) + 1
+                works_by_allocation[allocation_key] = works_by_allocation.get(allocation_key, 0) + 1
+                works_by_year[year_key] = works_by_year.get(year_key, 0) + 1
                 if re.search(r"complete|done", status_key, flags=re.I):
                     completed_work_count += 1
                 else:
                     pending_work_count += 1
+                percentage = progress_percent(work.physical_progress)
+                is_completed = bool(re.search(r"complete|done", status_key, flags=re.I))
+                if is_completed and percentage is not None and percentage < 100:
+                    work_contradictions.append({
+                        "project_id": work.project_id,
+                        "problem": "Completed status with progress below 100%",
+                        "status": work.status,
+                        "progress_percent": percentage,
+                        "station_code": link.station_code if link else None,
+                    })
+                if not is_completed and percentage == 100:
+                    work_contradictions.append({
+                        "project_id": work.project_id,
+                        "problem": "100% progress with an open status",
+                        "status": work.status,
+                        "progress_percent": percentage,
+                        "station_code": link.station_code if link else None,
+                    })
+                tdc_date = parse_date_value(work.tdc)
+                if tdc_date and tdc_date < today and not is_completed:
+                    delay_alerts.append({
+                        "project_id": work.project_id,
+                        "short_name_of_work": work.short_name_of_work,
+                        "status": work.status,
+                        "progress_percent": percentage,
+                        "tdc": work.tdc,
+                        "days_overdue": (today - tdc_date).days,
+                        "station_code": link.station_code if link else None,
+                        "station_name": station_name,
+                        "sr_den": sr_den,
+                        "cmi": cmi,
+                    })
             scope_key = clean(link.scope_type) if link else "Unlinked"
             station_key = clean(link.station_code) if link and link.station_code else clean(station_name) or "Unlinked"
             works_by_scope[scope_key or "Unknown"] = works_by_scope.get(scope_key or "Unknown", 0) + 1
@@ -1745,6 +2836,13 @@ def get_reports(today: date | None = None) -> dict[str, Any]:
             "due_next_7_days": 0,
             "due_next_30_days": 0,
             "due_next_90_days": 0,
+            "contract_expired": 0,
+            "contract_due_today": 0,
+            "contract_due_5_days": 0,
+            "contract_due_10_days": 0,
+            "contract_due_30_days": 0,
+            "contract_due_50_days": 0,
+            "contract_due_90_days": 0,
             "needs_review": 0,
         }
         estimated_overdue_amount = 0
@@ -1776,16 +2874,37 @@ def get_reports(today: date | None = None) -> dict[str, Any]:
                 alert_bucket = None
 
             days_to_contract_end = (contract_to - today).days if contract_to else None
-            if contract_to and today <= contract_to <= next_7:
-                contract_bucket = "due_next_7_days"
-            elif contract_to and today <= contract_to <= next_30:
-                contract_bucket = "due_next_30_days"
-            elif contract_to and today <= contract_to <= next_90:
-                contract_bucket = "due_next_90_days"
+            if days_to_contract_end is not None and days_to_contract_end < 0:
+                contract_bucket = "contract_expired"
+            elif days_to_contract_end == 0:
+                contract_bucket = "contract_due_today"
+            elif days_to_contract_end is not None and days_to_contract_end <= 5:
+                contract_bucket = "contract_due_5_days"
+            elif days_to_contract_end is not None and days_to_contract_end <= 10:
+                contract_bucket = "contract_due_10_days"
+            elif days_to_contract_end is not None and days_to_contract_end <= 30:
+                contract_bucket = "contract_due_30_days"
+            elif days_to_contract_end is not None and days_to_contract_end <= 50:
+                contract_bucket = "contract_due_50_days"
+            elif days_to_contract_end is not None and days_to_contract_end <= 90:
+                contract_bucket = "contract_due_90_days"
             else:
                 contract_bucket = None
 
-            final_bucket = alert_bucket or contract_bucket
+            if contract_bucket:
+                bucket_counts[contract_bucket] += 1
+
+            legacy_contract_bucket = None
+            if days_to_contract_end is not None and days_to_contract_end < 0:
+                legacy_contract_bucket = "overdue"
+            elif days_to_contract_end is not None and 0 <= days_to_contract_end <= 7:
+                legacy_contract_bucket = "due_next_7_days"
+            elif days_to_contract_end is not None and 0 < days_to_contract_end <= 30:
+                legacy_contract_bucket = "due_next_30_days"
+            elif days_to_contract_end is not None and 30 < days_to_contract_end <= 90:
+                legacy_contract_bucket = "due_next_90_days"
+
+            final_bucket = alert_bucket or legacy_contract_bucket
             if not final_bucket:
                 continue
 
@@ -1808,6 +2927,7 @@ def get_reports(today: date | None = None) -> dict[str, Any]:
                 "contract_to": unit.contract_to,
                 "last_paid_through": last_paid_through.isoformat() if last_paid_through else None,
                 "days_to_contract_end": days_to_contract_end,
+                "contract_alert_bucket": contract_bucket,
                 "months_pending": months_pending,
                 "estimated_pending_amount": estimated_pending,
                 "alert_bucket": final_bucket,
@@ -1824,6 +2944,30 @@ def get_reports(today: date | None = None) -> dict[str, Any]:
         alerts.sort(key=lambda row: (bucket_order.get(row["alert_bucket"], 9), row["days_to_contract_end"] is None, row["days_to_contract_end"] or 99999, row["unit_no"] or ""))
         commercial_reports = get_commercial_contract_reports(today)
 
+        inspection_by_status: dict[str, int] = {}
+        finding_by_status: dict[str, int] = {}
+        finding_by_severity: dict[str, int] = {}
+        finding_by_department: dict[str, int] = {}
+        overdue_findings: list[dict[str, Any]] = []
+        open_findings: list[dict[str, Any]] = []
+        for inspection in inspections:
+            status_key = clean(inspection.status) or "Unknown"
+            inspection_by_status[status_key] = inspection_by_status.get(status_key, 0) + 1
+        for finding in findings:
+            status_key = clean(finding.status) or "Unknown"
+            severity_key = clean(finding.severity) or "Unknown"
+            department_key = clean(finding.responsible_party) or "Unassigned"
+            finding_by_status[status_key] = finding_by_status.get(status_key, 0) + 1
+            finding_by_severity[severity_key] = finding_by_severity.get(severity_key, 0) + 1
+            finding_by_department[department_key] = finding_by_department.get(department_key, 0) + 1
+            if status_key not in {"verified", "closed"}:
+                item = row_to_dict(finding)
+                item["station_name"] = station_names.get(finding.station_code)
+                open_findings.append(item)
+                target = parse_date_value(finding.target_date)
+                if target and target < today:
+                    overdue_findings.append({**item, "days_overdue": (today - target).days})
+
         return {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "as_of": today.isoformat(),
@@ -1834,7 +2978,7 @@ def get_reports(today: date | None = None) -> dict[str, Any]:
                 "earnings_total": sum(to_money(row.amount) for row in earnings),
                 "works": len(works_seen),
                 "open_works": pending_work_count,
-                "critical_alerts": bucket_counts["overdue"] + bucket_counts["needs_review"],
+                 "critical_alerts": bucket_counts["overdue"] + bucket_counts["needs_review"] + len(overdue_findings),
             },
             "stations": {
                 "total": len(stations),
@@ -1875,12 +3019,20 @@ def get_reports(today: date | None = None) -> dict[str, Any]:
                 "by_scope": [{"label": key, "value": value} for key, value in sorted(works_by_scope.items(), key=lambda item: item[1], reverse=True)],
                 "by_section": [{"label": key, "value": value} for key, value in sorted(works_by_section.items(), key=lambda item: item[1], reverse=True)[:12]],
                 "by_station": [{"label": key, "value": value} for key, value in sorted(works_by_station.items(), key=lambda item: item[1], reverse=True)[:12]],
+                "by_sr_den": [{"label": key, "value": value} for key, value in sorted(works_by_sr_den.items(), key=lambda item: item[1], reverse=True)],
+                "by_cmi": [{"label": key, "value": value} for key, value in sorted(works_by_cmi.items(), key=lambda item: item[1], reverse=True)],
+                "by_allocation": [{"label": key, "value": value} for key, value in sorted(works_by_allocation.items(), key=lambda item: item[1], reverse=True)],
+                "by_year": [{"label": key, "value": value} for key, value in sorted(works_by_year.items(), key=lambda item: item[0])],
+                "delayed": len(delay_alerts),
+                "contradictions": len(work_contradictions),
+                "delay_alerts": sorted(delay_alerts, key=lambda row: row["days_overdue"], reverse=True),
+                "contradiction_rows": work_contradictions,
             },
             "data_quality": {
                 "units_missing_station": sum(1 for unit, *_ in units if unit.station_code and unit.station_code not in station_codes),
                 "earnings_missing_unit": sum(1 for row in earnings if row.unit_no and row.unit_no not in unit_codes),
                 "earnings_missing_station": sum(1 for row in earnings if row.station_code and row.station_code not in station_codes),
-                "works_unmatched_station": sum(1 for _, link, _ in works if link and link.scope_type == "Station" and link.station_code and link.station_code not in station_codes),
+                "works_unmatched_station": sum(1 for _, link, *_ in works if link and link.scope_type == "Station" and link.station_code and link.station_code not in station_codes),
                 "units_missing_license_fee": sum(1 for unit, *_ in units if not to_money(unit.license_fee)),
             },
             "license_fee_alerts": {
@@ -1889,6 +3041,17 @@ def get_reports(today: date | None = None) -> dict[str, Any]:
                 "rows": alerts[:300],
             },
             "commercial_contracts": commercial_reports,
+            "inspections": {
+                "total": len(inspections),
+                "by_status": [{"label": key, "value": value} for key, value in sorted(inspection_by_status.items(), key=lambda item: item[1], reverse=True)],
+                "findings_open": len(open_findings),
+                "findings_overdue": len(overdue_findings),
+                "by_status_findings": [{"label": key, "value": value} for key, value in sorted(finding_by_status.items(), key=lambda item: item[1], reverse=True)],
+                "by_severity": [{"label": key, "value": value} for key, value in sorted(finding_by_severity.items(), key=lambda item: item[1], reverse=True)],
+                "by_department": [{"label": key, "value": value} for key, value in sorted(finding_by_department.items(), key=lambda item: item[1], reverse=True)],
+                "overdue_findings": sorted(overdue_findings, key=lambda row: row["days_overdue"], reverse=True)[:300],
+                "open_findings": open_findings[:300],
+            },
         }
     finally:
         session.close()
