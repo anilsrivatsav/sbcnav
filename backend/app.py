@@ -464,7 +464,12 @@ def _apply_import(resource: str, rows: list[dict]) -> int:
                 # database invariant intact when an existing earning is
                 # re-imported as well as when it is inserted for the first time.
                 earning_rows = [
-                    {**row, "duplicate_count": 1, **audit_fields(now), "source_hash": hash_row("earning", row)}
+                    {
+                        **{key: (None if value == "" else value) for key, value in row.items()},
+                        "duplicate_count": 1,
+                        **audit_fields(now),
+                        "source_hash": hash_row("earning", row),
+                    }
                     for row in rows
                 ]
                 count = upsert_many(session, Earning, earning_rows, [Earning.receipt_key], [c.name for c in Earning.__table__.columns if c.name not in {"earning_key", "receipt_key", "created_at", "first_seen_at"}])
