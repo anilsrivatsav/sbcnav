@@ -1073,7 +1073,12 @@ export default function Page() {
     const q = search.contracts || "";
     const sourceRows = publicityStatus === "running" ? runningPublicityContracts : publicityContracts;
     return sourceRows.filter((row) => {
-      const statusOk = publicityStatus === "all" || normalizeText(row.status) === normalizeText(publicityStatus);
+        // The running source already contains the complete running/active set used by
+        // the chips. Applying an exact second status match drops valid rows (for
+        // example, records normalized as Active), making chips and table disagree.
+        const statusOk = publicityStatus === "running"
+          ? true
+          : publicityStatus === "all" || normalizeText(row.status) === normalizeText(publicityStatus);
       const policyOk = publicityPolicy === "all"
         || (publicityPolicy === "__missing__" ? !String(row.policy_code || "").trim() : normalizeText(row.policy_code) === normalizeText(publicityPolicy));
       const stationOk = publicityStation === "all" || row.assets?.some((asset) => normalizeText(asset.station_code || asset.asset_name || asset.raw_asset_value) === normalizeText(publicityStation));
@@ -2651,7 +2656,18 @@ export default function Page() {
               <Tabs
                 tabs={[{ value: "catering", label: "Catering", icon: Wallet }, { value: "publicity", label: `Publicity (${publicityContracts.length})`, icon: Megaphone }]}
                 value={contractFamily}
-                onChange={(value) => { setContractFamily(value); if (value === "catering") setPublicityStatus("all"); }}
+                onChange={(value) => {
+                  setContractFamily(value);
+                  if (value === "catering") {
+                    setPublicityStatus("all");
+                    setPublicityPolicy("all");
+                    setPublicityStation("all");
+                  } else {
+                    setContractTab("active");
+                    setCateringType("all");
+                    setCateringStation("all");
+                  }
+                }}
               />
               {contractFamily === "publicity" ? (
                 <>
