@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ChevronRight, Search, X } from "lucide-react";
+import { ChevronRight, Eye, Pencil, Plus, Search, X } from "lucide-react";
 
 export const cx = (...classes) => classes.filter(Boolean).join(" ");
 
@@ -198,8 +198,8 @@ const csvEscape = (value) => {
   return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 };
 
-export function DataTable({ columns, rows, getKey, onRowClick, emptyTitle = "No records found", fileName = "export.csv", pageSizeOptions = [10, 25, 50, 100], enableColumnFilters = true }: any) {
-  const [sort, setSort] = useState({ key: columns[0]?.key, direction: "asc" });
+export function DataTable({ columns, rows, getKey, onRowClick, onView, onEdit, onAdd, emptyTitle = "No records found", fileName = "export.csv", pageSizeOptions = [10, 25, 50, 100], enableColumnFilters = true }: any) {
+  const hasActions = Boolean(onView || onEdit || onRowClick);
   const [filters, setFilters] = useState({});
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(pageSizeOptions[1] || 25);
@@ -218,26 +218,11 @@ export function DataTable({ columns, rows, getKey, onRowClick, emptyTitle = "No 
     }));
   }, [columns, filters, rows]);
 
-  const sortedRows = useMemo(() => {
-    const column = columns.find((item) => item.key === sort.key);
-    const direction = sort.direction === "desc" ? -1 : 1;
-    return [...filteredRows].sort((a, b) => {
-      const av = cellValue(column || {}, a);
-      const bv = cellValue(column || {}, b);
-      const an = Number(av);
-      const bn = Number(bv);
-      if (!Number.isNaN(an) && !Number.isNaN(bn)) return (an - bn) * direction;
-      return String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: "base" }) * direction;
-    });
-  }, [columns, filteredRows, sort]);
+  const displayRows = filteredRows;
 
-  const pageCount = Math.max(1, Math.ceil(sortedRows.length / pageSize));
+  const pageCount = Math.max(1, Math.ceil(displayRows.length / pageSize));
   const safePage = Math.min(page, pageCount);
-  const visibleRows = sortedRows.slice((safePage - 1) * pageSize, safePage * pageSize);
-
-  const toggleSort = (key) => {
-    setSort((current) => current.key === key ? { key, direction: current.direction === "asc" ? "desc" : "asc" } : { key, direction: "asc" });
-  };
+  const visibleRows = displayRows.slice((safePage - 1) * pageSize, safePage * pageSize);
 
   const exportVisible = () => {
     const header = columns.map((column) => csvEscape(column.label)).join(",");
@@ -251,12 +236,13 @@ export function DataTable({ columns, rows, getKey, onRowClick, emptyTitle = "No 
     URL.revokeObjectURL(url);
   };
 
-  if (!rows.length) return <EmptyState title={emptyTitle} />;
+  if (!rows.length) return <div className="space-y-3"><EmptyState title={emptyTitle} />{onAdd ? <Button size="sm" onClick={onAdd}><Plus size={14} /> Add</Button> : null}</div>;
   return (
     <div className="space-y-3">
       <div className="soft-inset flex flex-col gap-2 rounded-lg border border-line p-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="text-xs font-bold text-muted">{sortedRows.length} filtered rows from {rows.length}</div>
+        <div className="text-xs font-bold text-muted">{displayRows.length} filtered rows from {rows.length}</div>
         <div className="flex flex-wrap gap-2">
+          {onAdd ? <Button size="sm" onClick={onAdd}><Plus size={14} /> Add</Button> : null}
           {enableColumnFilters ? <Button variant="ghost" size="sm" onClick={() => setShowFilters((value) => !value)}>{showFilters ? "Hide filters" : "Filter columns"}</Button> : null}
           <Button variant="secondary" size="sm" onClick={() => setCompact((value) => !value)}>
             {compact ? "Detailed view" : "Compact view"}
@@ -275,12 +261,10 @@ export function DataTable({ columns, rows, getKey, onRowClick, emptyTitle = "No 
             <tr>
               {columns.map((column) => (
                 <th key={column.key} className="border-b border-line px-3 py-2">
-                  <button type="button" onClick={() => toggleSort(column.key)} className="flex w-full items-center justify-between gap-2 text-left">
-                    <span>{column.label}</span>
-                    <span className="text-[10px]">{sort.key === column.key ? (sort.direction === "asc" ? "ASC" : "DESC") : "SORT"}</span>
-                  </button>
+                  <span>{column.label}</span>
                 </th>
               ))}
+              {hasActions ? <th className="border-b border-line px-3 py-2 text-right">Actions</th> : null}
             </tr>
             {enableColumnFilters && showFilters ? <tr>
               {columns.map((column) => (
@@ -293,6 +277,7 @@ export function DataTable({ columns, rows, getKey, onRowClick, emptyTitle = "No 
                   />
                 </th>
               ))}
+              {hasActions ? <th className="border-b border-line px-3 py-2" /> : null}
             </tr> : null}
           </thead>
           <tbody>
@@ -314,6 +299,14 @@ export function DataTable({ columns, rows, getKey, onRowClick, emptyTitle = "No 
                     {column.render ? column.render(row) : cellValue(column, row)}
                   </td>
                 ))}
+                {hasActions ? (
+                  <td className={cx("align-top text-right", compact ? "px-3 py-2" : "px-4 py-4")}>
+                    <div className="flex justify-end gap-1">
+                      {(onView || onRowClick) ? <Button variant="ghost" size="sm" title="View" aria-label="View" onClick={(event) => { event.stopPropagation(); (onView || onRowClick)(row); }}><Eye size={14} /></Button> : null}
+                      {onEdit ? <Button variant="ghost" size="sm" title="Edit" aria-label="Edit" onClick={(event) => { event.stopPropagation(); onEdit(row); }}><Pencil size={14} /></Button> : null}
+                    </div>
+                  </td>
+                ) : null}
               </tr>
             ))}
           </tbody>

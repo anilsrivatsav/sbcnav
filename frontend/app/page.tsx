@@ -2569,6 +2569,12 @@ export default function Page() {
                       if (amenityTab === "pfExtension") return openStationFromAmenity(row, "platforms");
                       return openStationFromAmenity(row, amenityTab === "platforms" ? "platforms" : "amenities");
                     }}
+                    onView={(row) => {
+                      if (amenityTab === "sanctionedWorks") return openWork(row);
+                      if (amenityTab === "norms") return openAmenity(row);
+                      if (amenityTab === "pfExtension") return openStationFromAmenity(row, "platforms");
+                      return openStationFromAmenity(row, amenityTab === "platforms" ? "platforms" : "amenities");
+                    }}
                     emptyTitle="No passenger amenity records match the current search."
                     fileName={activeAmenity.fileName}
                   />
@@ -2609,6 +2615,9 @@ export default function Page() {
                     rows={activeContract.rows}
                     getKey={(row, index) => `${pretty(row.unit_no || row.receipt_key || row.earning_key)}-${index}`}
                     onRowClick={contractTab === "earnings" ? openEarning : openUnit}
+                    onView={contractTab === "earnings" ? openEarning : openUnit}
+                    onEdit={contractTab === "earnings" ? (row) => openEdit("earnings", row) : (row) => openEdit("units", row)}
+                    onAdd={() => openCreate(contractTab === "earnings" ? "earnings" : "units")}
                     emptyTitle="No contract records match the current search."
                     fileName={activeContract.fileName}
                   />
@@ -2654,6 +2663,9 @@ export default function Page() {
                   rows={filteredCommercialContracts}
                   getKey={(row, index) => `${pretty(row.contract_key || row.contract_name)}-${pretty(row.station_code)}-${index}`}
                   onRowClick={openCommercialContract}
+                  onView={openCommercialContract}
+                  onEdit={(row) => openEdit("commercial-contracts", row)}
+                  onAdd={() => openCreate("commercial-contracts")}
                   emptyTitle="No commercial contracts match the current search or filters."
                   fileName="commercial-contracts.csv"
                 />
@@ -3310,6 +3322,9 @@ export default function Page() {
                 rows={filteredStations}
                 getKey={(row) => row.station_code}
                 onRowClick={openStationSheet}
+                onView={openStationSheet}
+                onEdit={(row) => openEdit("stations", row)}
+                onAdd={() => openCreate("stations")}
                 emptyTitle="No stations match the current search or filters."
                 fileName="stations-visible.csv"
               />
@@ -3319,6 +3334,9 @@ export default function Page() {
                 rows={filteredUnits}
                 getKey={(row) => row.unit_no}
                 onRowClick={openUnit}
+                onView={openUnit}
+                onEdit={(row) => openEdit("units", row)}
+                onAdd={() => openCreate("units")}
                 emptyTitle="No units match the current search or filters."
                 fileName="units-visible.csv"
               />
@@ -3334,6 +3352,9 @@ export default function Page() {
                   rows={filteredEarnings}
                   getKey={(row) => row.earning_key || `${row.unit_no}-${row.date_of_receipt}`}
                   onRowClick={openEarning}
+                  onView={openEarning}
+                  onEdit={(row) => openEdit("earnings", row)}
+                  onAdd={() => openCreate("earnings")}
                   emptyTitle="No earnings match the current search."
                   fileName="earnings-visible.csv"
                 />
@@ -3363,6 +3384,9 @@ export default function Page() {
                   rows={activeWorkRows}
                   getKey={(row, index) => `${pretty(row.project_id)}-${pretty(row.station_code)}-${pretty(row.scope_type)}-${pretty(row.scope_value)}-${index}`}
                   onRowClick={openWork}
+                  onView={openWork}
+                  onEdit={(row) => openEdit("works", row)}
+                  onAdd={() => openCreate("works")}
                   emptyTitle={workTab === "all" ? "No sanctioned works match the current search/status filters." : workTab === "station" ? "No station-linked works match the selected station/search/status." : workTab === "abss" ? "No ABSS works match the current search/status filters." : "No division works match the current search/status filters."}
                   fileName={`works-${workTab}-visible.csv`}
                   pageSizeOptions={[25, 50, 100, 152]}
