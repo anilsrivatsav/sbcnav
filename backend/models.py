@@ -61,6 +61,25 @@ class Station(Base, AuditMixin):
     redevelopment_flag: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
 
 
+class StationMonthlyMetric(Base):
+    """Monthly operational metrics entered for a station."""
+    __tablename__ = "station_monthly_metrics"
+    __table_args__ = (
+        UniqueConstraint("station_code", "metric_month", name="uq_station_monthly_metrics_station_month"),
+    )
+
+    metric_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    station_code: Mapped[str] = mapped_column(String(64), ForeignKey("stations.station_code", ondelete="CASCADE"), index=True)
+    metric_month: Mapped[datetime] = mapped_column(Date, index=True)
+    passenger_footfall: Mapped[int | None] = mapped_column(Integer)
+    tickets_issued: Mapped[int | None] = mapped_column(Integer)
+    earnings: Mapped[float | None] = mapped_column(Numeric(14, 2))
+    source: Mapped[str | None] = mapped_column(Text)
+    remarks: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
 class Unit(Base, AuditMixin):
     __tablename__ = "units"
     __table_args__ = (

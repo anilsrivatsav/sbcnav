@@ -13,7 +13,6 @@ import {
   FileText,
   Home,
   Moon,
-  Megaphone,
   Pencil,
   Plus,
   RefreshCw,
@@ -1671,7 +1670,6 @@ export default function Page() {
         trolley: paTrolley.find((row) => pretty(row.station_code) === pretty(code)),
         pf_extension_status: pfExtensionStatus,
         pa_works: stationPaWorks,
-        paWorks: stationPaWorks,
         norms: paNorms.filter((row) => pretty(row.category) === pretty(station.categorisation)),
       },
       amenity_summary: {
@@ -2183,9 +2181,7 @@ export default function Page() {
           <div className="soft-scroll mt-4 flex w-full min-w-0 max-w-full gap-2 overflow-x-auto pb-2 lg:block lg:space-y-2 lg:overflow-visible lg:pb-0">
             <NavButton active={view === "dashboard"} icon={BarChart3} label="Dashboard" hint="KPI cards and charts" onClick={() => setView("dashboard")} />
             <NavButton active={view === "stations"} icon={TrainFront} label="Stations" hint="Station master and search" onClick={() => setView("stations")} />
-            <NavButton active={view === "contracts"} icon={Wallet} label="Contracts" hint="Catering units and payments" onClick={() => setView("contracts")} />
-            <NavButton active={false} icon={Megaphone} label="Publicity" hint="Station, train, audio, and e-auction contracts" onClick={() => { window.location.href = "/contracts"; }} />
-            <NavButton active={view === "commercial"} icon={Database} label="Commercial" hint="OOH, parking, ATM, mobile assets" onClick={() => setView("commercial")} />
+            <NavButton active={false} icon={Wallet} label="Contracts" hint="Catering, commercial, and publicity" onClick={() => { window.location.href = "/contracts"; }} />
             <div className="hidden pt-2 text-[11px] font-black uppercase tracking-[0.2em] text-muted lg:block">Passenger Amenities</div>
             <NavButton active={view === "amenities"} icon={TrainFront} label="Amenity Infra" hint="Norms, platforms, wheel chairs, trolley paths" onClick={() => setView("amenities")} />
             <NavButton active={view === "works"} icon={Wrench} label="Sanctioned Works" hint="PA sanctioned works and station links" onClick={() => setView("works")} />

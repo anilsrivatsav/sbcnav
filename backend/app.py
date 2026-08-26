@@ -8,7 +8,7 @@ import io
 import json
 import asyncio
 from uuid import uuid4
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import requests
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
@@ -34,6 +34,7 @@ from models import (
     PlatformExtensionSummary,
     PlatformDetail,
     Station,
+    StationMonthlyMetric,
     StationInfra,
     StationPlatformExtensionStatus,
     TrolleyPath,
@@ -1395,6 +1396,55 @@ def station_detail(station_code: str):
     if not detail:
         raise HTTPException(status_code=404, detail="Station not found")
     return envelope(detail, "ok")
+
+
+def _metric_month(value: str | None) -> date | None:
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value[:7], "%Y-%m").date().replace(day=1)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="month must be YYYY-MM") from exc
+
+
+@app.get("/api/station-metrics")
+def station_metrics(station_code: str | None = None, year: int | None = None, month: int | None = None):
+    session = SessionLocal()
+    try:
+        query = session.query(StationMonthlyMetric)
+        if station_code:
+            query = query.filter(StationMonthlyMetric.station_code == station_code.strip().upper())
+        if year:
+            query = query.filter(StationMonthlyMetric.metric_month >= date(year, 1, 1), StationMonthlyMetric.metric_month < date(year + 1, 1, 1))
+        if month:
+            if month < 1 or month > 12:
+                raise HTTPException(status_code=422, detail="month must be between 1 and 12")
+            query = query.filter(StationMonthlyMetric.metric_month.month == month)
+        rows = query.order_by(StationMonthlyMetric.metric_month.desc(), StationMonthlyMetric.station_code).all()
+        return envelope({"items": [row_to_dict(row) for row in rows], "years": sorted({row.metric_month.year for row in rows}, reverse=True)}, "ok")
+    finally:
+        session.close()
+
+
+@app.put("/api/stations/{station_code}/metrics/{month_value}")
+def save_station_metric(station_code: str, month_value: str, payload: dict):
+    code = station_code.strip().upper()
+    metric_month = _metric_month(month_value)
+    session = SessionLocal()
+    try:
+        with session.begin():
+            if not session.get(Station, code):
+                raise HTTPException(status_code=404, detail="Station not found")
+            row = session.query(StationMonthlyMetric).filter_by(station_code=code, metric_month=metric_month).one_or_none()
+            if not row:
+                row = StationMonthlyMetric(station_code=code, metric_month=metric_month)
+                session.add(row)
+            for field in ("passenger_footfall", "tickets_issued", "earnings", "source", "remarks"):
+                if field in payload:
+                    setattr(row, field, payload[field])
+        return envelope(row_to_dict(row), "station monthly metric saved")
+    finally:
+        session.close()
 
 
 @app.get("/api/units")

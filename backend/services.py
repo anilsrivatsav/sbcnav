@@ -28,6 +28,7 @@ from models import (
     InspectionFinding,
     MobileDeviceState,
     Station,
+    StationMonthlyMetric,
     StationInfra,
     StationPlatformExtensionStatus,
     TrolleyPath,
@@ -38,6 +39,7 @@ from models import (
     WorkExpenditureUpdate,
     WorkLink,
 )
+from contract_registry import list_registry_contracts
 
 def clean(value: Any) -> str:
     text = "" if value is None else str(value).strip()
@@ -2385,6 +2387,16 @@ def get_station_detail(station_code: str) -> dict[str, Any] | None:
 
         works = list_works(station_code=code)
         commercial_contracts = list_commercial_contracts(station_code=code)
+        publicity_contracts = [
+            row for row in list_registry_contracts()
+            if any(asset.get("station_code") == code for asset in row.get("assets", []))
+        ]
+        monthly_metrics = (
+            session.query(StationMonthlyMetric)
+            .filter(StationMonthlyMetric.station_code == code)
+            .order_by(StationMonthlyMetric.metric_month.desc())
+            .all()
+        )
         commercial_keys = {
             row.get("contract_key")
             for row in commercial_contracts
@@ -2531,7 +2543,7 @@ def get_station_detail(station_code: str) -> dict[str, Any] | None:
             amenity_flags.append({"key": "pa_works", "label": f"{summary_open} passenger amenity works open", "severity": "high"})
 
         contract_alerts = []
-        for contract in [*contracts, *commercial_contracts]:
+        for contract in [*contracts, *commercial_contracts, *publicity_contracts]:
             days = contract.get("days_to_expiry")
             pending = contract.get("pending_receipts", 0) or 0
             if (days is not None and days <= 90) or pending:
@@ -2647,6 +2659,9 @@ def get_station_detail(station_code: str) -> dict[str, Any] | None:
             "earnings": earnings,
             "works": works,
             "commercial_contracts": commercial_contracts,
+            "publicity_contracts": publicity_contracts,
+            "monthly_metrics": [row_to_dict(row) for row in monthly_metrics],
+            "latest_monthly_metric": row_to_dict(monthly_metrics[0]) if monthly_metrics else None,
             "amenities": amenities,
             "amenity_summary": amenity_summary,
             "amenity_compliance": amenity_compliance,

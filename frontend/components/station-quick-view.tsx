@@ -66,6 +66,7 @@ export function StationQuickView({ record, loading, stationAlerts = [], onOpenDe
   const summary = record?.amenity_summary || {};
   const contracts = record?.contracts || record?.units || [];
   const commercial = record?.commercial_contracts || [];
+  const publicity = record?.publicity_contracts || [];
   const works = record?.works || [];
   const alerts = stationAlerts.filter((row) => String(row.station_code || "") === String(station.station_code || ""));
   const platforms = platformTotal(amenities.platforms, summary.platforms);
@@ -94,7 +95,7 @@ export function StationQuickView({ record, loading, stationAlerts = [], onOpenDe
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <SnapshotMetric icon={Users} label="Daily footfall" value={compactNumber(dailyFootfall(station))} />
         <SnapshotMetric icon={BarChart3} label="Platforms" value={platforms} />
-        <SnapshotMetric icon={Wallet} label="Contracts" value={contracts.length + commercial.length} />
+        <SnapshotMetric icon={Wallet} label="Contracts" value={contracts.length + commercial.length + publicity.length} />
         <SnapshotMetric icon={Wrench} label="Linked works" value={works.length} />
       </div>
 
@@ -108,7 +109,7 @@ export function StationQuickView({ record, loading, stationAlerts = [], onOpenDe
         />
         <PreviewList
           title="Contracts and available units"
-          rows={[...contracts, ...commercial]}
+          rows={[...contracts, ...commercial, ...publicity]}
           empty="No linked contracts."
           label={(row) => isAvailableUnit(row) ? `${valueText(row.unit_no)} · Available` : valueText(row.licensee_name || row.contract_name || row.unit_no)}
           meta={(row) => valueText(row.type_of_unit || row.policy || row.sub_category)}

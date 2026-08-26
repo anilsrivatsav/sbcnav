@@ -1,9 +1,11 @@
 // @ts-nocheck
 "use client";
+import { useState } from "react";
 // Legacy API payloads are intentionally heterogeneous; feature typing is added at the API boundary.
 
 import { BarChart3, CircleAlert, Database, TrainFront, Wallet, Wrench } from "lucide-react";
 import { Badge, Button, DataTable, Panel, Tabs } from "./ui";
+import { API_URL, fetchJson } from "../lib/api";
 
 const boolText = (value) => (value ? "Yes" : "No");
 const isAvailableUnit = (unit = {}) => String(unit.unit_status || "").trim().toLowerCase() === "available"
@@ -41,6 +43,18 @@ function StationMetric({ label, value, subtext, tone = "accent" }) {
       {tone === "danger" ? <div className="mt-3 h-1 rounded-full bg-red-500/70" /> : <div className="mt-3 h-1 rounded-full bg-accent/70" />}
     </div>
   );
+}
+
+function MonthlyMetrics({ station, record, money }) {
+  const [rows, setRows] = useState(record.monthly_metrics || []);
+  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [form, setForm] = useState({ passenger_footfall: "", tickets_issued: "", earnings: "" });
+  const latest = rows[0] || record.latest_monthly_metric;
+  const save = async () => {
+    const saved = await fetchJson(`${API_URL}/api/stations/${encodeURIComponent(station.station_code)}/metrics/${month}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...form, passenger_footfall: form.passenger_footfall ? Number(form.passenger_footfall) : null, tickets_issued: form.tickets_issued ? Number(form.tickets_issued) : null, earnings: form.earnings ? Number(form.earnings) : null, source: "manual" }) });
+    setRows((current) => [saved, ...current.filter((row) => row.metric_month !== saved.metric_month)]); setForm({ passenger_footfall: "", tickets_issued: "", earnings: "" });
+  };
+  return <Panel title="Monthly station metrics" subtitle="Latest month is shown first. Add footfall, tickets and earnings as each month closes."><div className="grid gap-3 sm:grid-cols-3"><StationMetric label="Latest footfall" value={latest?.passenger_footfall?.toLocaleString?.("en-IN") || "—"} subtext={latest?.metric_month || "No monthly entry yet"} /><StationMetric label="Latest tickets" value={latest?.tickets_issued?.toLocaleString?.("en-IN") || "—"} subtext="Tickets issued" /><StationMetric label="Latest earnings" value={latest ? money(latest.earnings) : "—"} subtext="Monthly earnings" /></div><div className="mt-4 grid gap-2 rounded-lg border border-line p-3 sm:grid-cols-5"><input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="rounded-md border border-line bg-surface px-2 py-2 text-sm" /><input type="number" placeholder="Footfall" value={form.passenger_footfall} onChange={(e) => setForm({ ...form, passenger_footfall: e.target.value })} className="rounded-md border border-line bg-surface px-2 py-2 text-sm" /><input type="number" placeholder="Tickets" value={form.tickets_issued} onChange={(e) => setForm({ ...form, tickets_issued: e.target.value })} className="rounded-md border border-line bg-surface px-2 py-2 text-sm" /><input type="number" placeholder="Earnings" value={form.earnings} onChange={(e) => setForm({ ...form, earnings: e.target.value })} className="rounded-md border border-line bg-surface px-2 py-2 text-sm" /><Button size="sm" onClick={save}>Save month</Button></div><div className="mt-4 space-y-2">{rows.slice(0, 12).map((row) => <div key={row.metric_id} className="flex flex-wrap justify-between gap-2 border-b border-line/70 py-2 text-sm"><span className="font-bold text-ink">{row.metric_month}</span><span className="text-muted">Footfall {row.passenger_footfall?.toLocaleString?.("en-IN") || "—"} · Tickets {row.tickets_issued?.toLocaleString?.("en-IN") || "—"} · {money(row.earnings)}</span></div>)}</div></Panel>;
 }
 
 function StationRiskPanel({ record, stationAlerts = [], qualityRows = [] }) {
@@ -182,6 +196,7 @@ export function Station360({
     { value: "amenities", label: "Amenities", icon: Database },
     { value: "contracts", label: "Contracts", icon: Wallet },
     { value: "commercial", label: "Commercial", icon: Database },
+    { value: "publicity", label: "Publicity", icon: Wallet },
     { value: "works", label: "Works", icon: Wrench },
     { value: "alerts", label: "Risks", icon: CircleAlert },
     { value: "norms", label: "Norms", icon: CircleAlert },
@@ -213,6 +228,7 @@ export function Station360({
 
       {activeTab === "overview" ? (
         <div className="space-y-4">
+          <MonthlyMetrics station={station} record={record} money={money} />
           <KeyValueGrid
             rows={[
               ["Division", station.division],
@@ -334,6 +350,22 @@ export function Station360({
           onRowClick={openCommercialContract}
           emptyTitle="No non-catering commercial contracts found for this station."
           fileName={`${station.station_code}-commercial-contracts.csv`}
+        />
+      ) : null}
+
+      {activeTab === "publicity" ? (
+        <DataTable
+          columns={[
+            { key: "contract_name", label: "Contract", value: (row) => row.contract_name },
+            { key: "contractor", label: "Contractor", value: (row) => row.contractor?.legal_name },
+            { key: "status", label: "Status", value: (row) => row.status },
+            { key: "policy_code", label: "Policy", value: (row) => row.policy_code },
+            { key: "total_contract_value", label: "Value", value: (row) => money(row.financials?.total_contract_value), render: (row) => money(row.financials?.total_contract_value) },
+          ]}
+          rows={record.publicity_contracts || []}
+          getKey={(row) => row.contract_id}
+          emptyTitle="No publicity contracts linked to this station."
+          fileName={`${station.station_code}-publicity-contracts.csv`}
         />
       ) : null}
 
