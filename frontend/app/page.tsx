@@ -910,10 +910,6 @@ export default function Page() {
   }, []);
 
   useEffect(() => {
-    loadData();
-  }, []);
-
-  useEffect(() => {
     const stored = window.localStorage.getItem("rail-dashboard-theme");
     if (stored === "dark" || stored === "light") {
       setTheme(stored);
@@ -2188,7 +2184,7 @@ export default function Page() {
           <div className="soft-scroll mt-4 flex w-full min-w-0 max-w-full gap-2 overflow-x-auto pb-2 lg:block lg:space-y-2 lg:overflow-visible lg:pb-0">
             <NavButton active={view === "dashboard"} icon={BarChart3} label="Dashboard" hint="KPI cards and charts" onClick={() => setView("dashboard")} />
             <NavButton active={view === "stations"} icon={TrainFront} label="Stations" hint="Station master and search" onClick={() => setView("stations")} />
-            <NavButton active={false} icon={Wallet} label="Contracts" hint="Catering, commercial, and publicity" onClick={() => { window.location.href = "/contracts"; }} />
+            <NavButton active={view === "contracts"} icon={Wallet} label="Contracts" hint="Catering and publicity contracts" onClick={() => setView("contracts")} />
             <div className="hidden pt-2 text-[11px] font-black uppercase tracking-[0.2em] text-muted lg:block">Passenger Amenities</div>
             <NavButton active={view === "amenities"} icon={TrainFront} label="Amenity Infra" hint="Norms, platforms, wheel chairs, trolley paths" onClick={() => setView("amenities")} />
             <NavButton active={view === "works"} icon={Wrench} label="Sanctioned Works" hint="PA sanctioned works and station links" onClick={() => setView("works")} />
@@ -2282,7 +2278,7 @@ export default function Page() {
             </div>
           ) : null}
 
-          {view === "dashboard" && false ? (
+          {view === "dashboard" ? (
             <>
               <Panel
                 title="Data Centre"
@@ -2518,7 +2514,10 @@ export default function Page() {
                 title="Contracts Workspace"
                 subtitle="Catering units are the contract records. Payments and earnings are reviewed inside the unit/contract context."
                 action={
-                  <Button size="sm" variant="secondary" onClick={() => setView("settings")}><SettingsIcon size={15} /> Manage in Settings</Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" onClick={() => openCreate("units")}><Plus size={15} /> Add catering contract</Button>
+                    <Button size="sm" variant="secondary" onClick={() => setView("settings")}><SettingsIcon size={15} /> Manage in Settings</Button>
+                  </div>
                 }
               >
                 {cateringSyncResult ? (

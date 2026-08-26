@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { loadRailDashboardData } from "../lib/api";
 
 export function useRailDashboardData() {
@@ -62,12 +62,30 @@ export function useRailDashboardData() {
     try {
       const errors = await loadFromDb();
       setActivityStatus(errors.length ? `Data loaded with ${errors.length} warning(s)` : "Data refreshed successfully");
+      return errors;
     } catch (error) {
       setActivityStatus(error?.message || "Refresh failed");
+      return [error?.message || "Refresh failed"];
     } finally {
       setLoading(false);
     }
   };
+
+  // Render may need a few seconds to wake the API. Retry automatically when
+  // the first load has warnings so users do not have to press Refresh DB.
+  useEffect(() => {
+    let retryTimer;
+    let cancelled = false;
+    const loadWithRetry = async () => {
+      const errors = await loadData();
+      if (!cancelled && errors?.length) retryTimer = window.setTimeout(loadWithRetry, 5000);
+    };
+    loadWithRetry();
+    return () => {
+      cancelled = true;
+      if (retryTimer) window.clearTimeout(retryTimer);
+    };
+  }, []);
 
   return {
     stats,
