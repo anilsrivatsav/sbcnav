@@ -974,7 +974,7 @@ export default function Page() {
   // infer publicity from keywords: valid station, train, parking, audio, mobile,
   // and miscellaneous policy rows may not contain an advertising keyword.
   const publicityContracts = useMemo(() => registryContracts.filter((contract) => (contract.source?.system === "e_auction" || !contract.source?.system) && String(contract.policy_code || "").trim()), [registryContracts]);
-  const runningPublicityContracts = useMemo(() => publicityContracts.filter((contract) => /running|active/i.test(String(contract.status || ""))), [publicityContracts]);
+  const runningPublicityContracts = useMemo(() => publicityContracts.filter((contract) => normalizeText(contract.status) === "running"), [publicityContracts]);
   const paidEarnings = useMemo(() => earnings.filter((entry) => /paid|received/i.test(String(entry.receipt_type || ""))).length, [earnings]);
   const pendingEarnings = useMemo(() => earnings.filter((entry) => /pending/i.test(String(entry.receipt_type || ""))).length, [earnings]);
 
@@ -1076,14 +1076,11 @@ export default function Page() {
 
   const filteredPublicityContracts = useMemo(() => {
     const q = search.contracts || "";
-    const sourceRows = publicityStatus === "running" ? runningPublicityContracts : publicityContracts;
+    const sourceRows = publicityStatus === "all"
+      ? publicityContracts
+      : publicityContracts.filter((row) => normalizeText(row.status) === normalizeText(publicityStatus));
     return sourceRows.filter((row) => {
-        // The running source already contains the complete running/active set used by
-        // the chips. Applying an exact second status match drops valid rows (for
-        // example, records normalized as Active), making chips and table disagree.
-        const statusOk = publicityStatus === "running"
-          ? true
-          : publicityStatus === "all" || normalizeText(row.status) === normalizeText(publicityStatus);
+        const statusOk = true;
       const policyOk = publicityPolicy === "all"
         || (publicityPolicy === "__missing__" ? !String(row.policy_code || "").trim() : normalizeText(row.policy_code) === normalizeText(publicityPolicy));
       const stationOk = publicityStation === "all" || row.assets?.some((asset) => normalizeText(asset.station_code || asset.asset_name || asset.raw_asset_value) === normalizeText(publicityStation));
