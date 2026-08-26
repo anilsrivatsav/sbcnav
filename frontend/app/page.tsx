@@ -104,6 +104,16 @@ const workReportSection = (row) => {
   if (text.includes("gsu") || text.includes("gati sakthi")) return "GSU/SBC";
   return pretty(row.section) === "NA" ? "Other" : pretty(row.section);
 };
+
+function StationMetricsReport() {
+  const [rows, setRows] = useState([]);
+  const [period, setPeriod] = useState("latest");
+  useEffect(() => { fetchJson(`${API_URL}/api/station-metrics`).then((data) => setRows(data.items || [])).catch(() => setRows([])); }, []);
+  const years = [...new Set(rows.map((row) => String(row.metric_month || "").slice(0, 4)).filter(Boolean))].sort().reverse();
+  const visible = rows.filter((row) => period === "latest" ? row.metric_month === rows[0]?.metric_month : String(row.metric_month || "").startsWith(period));
+  const totals = visible.reduce((sum, row) => ({ footfall: sum.footfall + Number(row.passenger_footfall || 0), tickets: sum.tickets + Number(row.tickets_issued || 0), earnings: sum.earnings + Number(row.earnings || 0) }), { footfall: 0, tickets: 0, earnings: 0 });
+  return <Panel title="Station monthly metrics" subtitle="Latest month by default. Switch to a year or month to compare station inputs."><div className="flex flex-wrap items-end gap-3"><label className="space-y-1"><span className="text-[11px] font-black uppercase tracking-[0.16em] text-muted">Period</span><select value={period} onChange={(event) => setPeriod(event.target.value)} className="soft-inset h-11 rounded-lg border border-line px-3 text-sm"><option value="latest">Latest month</option>{years.map((year) => <optgroup key={year} label={year}>{Array.from({ length: 12 }, (_, index) => { const month = `${year}-${String(index + 1).padStart(2, "0")}`; return <option key={month} value={month}>{month}</option>; })}</optgroup>)}</select></label><Badge tone="accent">{visible.length} station entries</Badge></div><div className="mt-4 grid gap-3 sm:grid-cols-3"><Card icon={Users} label="Footfall" value={totals.footfall.toLocaleString("en-IN")} subtext="Selected period" /><Card icon={FileText} label="Tickets" value={totals.tickets.toLocaleString("en-IN")} subtext="Selected period" /><Card icon={Wallet} label="Earnings" value={money(totals.earnings)} subtext="Selected period" /></div></Panel>;
+}
 const workReportType = (row) => {
   const text = normalizeText(`${row.short_name_of_work || ""} ${row.work_name || ""} ${row.remarks || ""} ${row.category || ""} ${row.parent_work || ""} ${row.block_section_station || ""} ${row.scope_type || ""} ${row.scope_value || ""} ${row.match_status || ""} ${row.section || ""}`);
   const scope = normalizeText(`${row.scope_type || ""} ${row.scope_value || ""} ${row.match_status || ""} ${row.block_section_station || ""}`);
@@ -2577,6 +2587,7 @@ export default function Page() {
 
           {view === "reports" ? (
             <div className="space-y-4">
+              <StationMetricsReport />
               <Tabs tabs={reportTabs} value={reportTab} onChange={setReportTab} />
               <ReportTemplatesPanel templates={reportTemplates} onApply={applyReportTemplate} />
               <Panel
