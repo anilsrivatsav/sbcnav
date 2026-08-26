@@ -195,8 +195,6 @@ export function Station360({
     { value: "platforms", label: "Platforms", icon: BarChart3 },
     { value: "amenities", label: "Amenities", icon: Database },
     { value: "contracts", label: "Contracts", icon: Wallet },
-    { value: "commercial", label: "Commercial", icon: Database },
-    { value: "publicity", label: "Publicity", icon: Wallet },
     { value: "works", label: "Works", icon: Wrench },
     { value: "alerts", label: "Risks", icon: CircleAlert },
     { value: "norms", label: "Norms", icon: CircleAlert },
@@ -328,45 +326,17 @@ export function Station360({
       ) : null}
 
       {activeTab === "contracts" ? (
-        <DataTable
-          columns={[
-            ...columns.unitColumns,
-            { key: "earnings_total", label: "Paid", value: (row) => isAvailableUnit(row) ? "" : row.earnings_total || 0, render: (row) => <span className="font-semibold">{isAvailableUnit(row) ? "Not applicable" : money(row.earnings_total)}</span> },
-            { key: "pending_receipts", label: "Pending", value: (row) => isAvailableUnit(row) ? "" : row.pending_receipts, render: (row) => isAvailableUnit(row) ? <span className="text-muted">Not applicable</span> : row.pending_receipts },
-          ]}
-          rows={record.contracts || record.units || []}
-          getKey={(row, index) => `${row.unit_no}-${index}`}
-          onRowClick={openUnit}
-          emptyTitle="No catering contracts or available units found for this station."
-          fileName={`${station.station_code}-contracts.csv`}
-        />
-      ) : null}
-
-      {activeTab === "commercial" ? (
-        <DataTable
-          columns={columns.commercialContractColumns}
-          rows={record.commercial_contracts || []}
-          getKey={(row, index) => `${row.contract_key}-${row.station_code}-${index}`}
-          onRowClick={openCommercialContract}
-          emptyTitle="No non-catering commercial contracts found for this station."
-          fileName={`${station.station_code}-commercial-contracts.csv`}
-        />
-      ) : null}
-
-      {activeTab === "publicity" ? (
-        <DataTable
-          columns={[
-            { key: "contract_name", label: "Contract", value: (row) => row.contract_name },
-            { key: "contractor", label: "Contractor", value: (row) => row.contractor?.legal_name },
-            { key: "status", label: "Status", value: (row) => row.status },
-            { key: "policy_code", label: "Policy", value: (row) => row.policy_code },
-            { key: "total_contract_value", label: "Value", value: (row) => money(row.financials?.total_contract_value), render: (row) => money(row.financials?.total_contract_value) },
-          ]}
-          rows={record.publicity_contracts || []}
-          getKey={(row) => row.contract_id}
-          emptyTitle="No publicity contracts linked to this station."
-          fileName={`${station.station_code}-publicity-contracts.csv`}
-        />
+        <div className="space-y-4">
+          <Panel title="Catering" subtitle="Units, licensees, contract periods, and receipts.">
+            <DataTable columns={[...columns.unitColumns, { key: "earnings_total", label: "Paid", value: (row) => isAvailableUnit(row) ? "" : row.earnings_total || 0, render: (row) => isAvailableUnit(row) ? <span className="text-muted">Not applicable</span> : money(row.earnings_total) }]} rows={record.contracts || record.units || []} getKey={(row, index) => `${row.unit_no}-${index}`} onRowClick={openUnit} emptyTitle="No catering units linked." fileName={`${station.station_code}-catering.csv`} />
+          </Panel>
+          <Panel title="Commercial" subtitle="OOH, parking, ATM, mobile, and other station assets.">
+            <DataTable columns={columns.commercialContractColumns} rows={record.commercial_contracts || []} getKey={(row, index) => `${row.contract_key}-${index}`} onRowClick={openCommercialContract} emptyTitle="No commercial contracts linked." fileName={`${station.station_code}-commercial.csv`} />
+          </Panel>
+          <Panel title="Publicity" subtitle="E-auction and policy-based station, train, audio, and other publicity contracts.">
+            <DataTable columns={[{ key: "contract_name", label: "Contract", value: (row) => row.contract_name }, { key: "contractor", label: "Contractor", value: (row) => row.contractor?.legal_name }, { key: "status", label: "Status", value: (row) => row.status }, { key: "policy_code", label: "Policy", value: (row) => row.policy_code }, { key: "total_contract_value", label: "Value", value: (row) => money(row.financials?.total_contract_value), render: (row) => money(row.financials?.total_contract_value) }]} rows={record.publicity_contracts || []} getKey={(row) => row.contract_id} emptyTitle="No publicity contracts linked." fileName={`${station.station_code}-publicity.csv`} />
+          </Panel>
+        </div>
       ) : null}
 
       {activeTab === "works" ? (

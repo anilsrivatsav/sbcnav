@@ -4,51 +4,39 @@
 
 :root {
   color-scheme: light;
-  --color-ink: 30 42 53;
-  --color-muted: 94 107 119;
-  --color-line: 197 207 215;
-  --color-page: 232 237 241;
-  --color-surface: 239 243 246;
-  --color-surface-strong: 249 251 252;
-  --color-accent: 16 124 116;
-  --color-accent-soft: 207 235 231;
-  --color-accent-strong: 10 91 85;
-  --color-blue: 45 101 145;
-  --shadow-soft:
-    7px 7px 16px rgba(172, 183, 192, 0.62),
-    -7px -7px 16px rgba(255, 255, 255, 0.9);
-  --shadow-raised:
-    4px 4px 10px rgba(172, 183, 192, 0.56),
-    -4px -4px 10px rgba(255, 255, 255, 0.82);
-  --shadow-pressed:
-    inset 3px 3px 7px rgba(172, 183, 192, 0.52),
-    inset -3px -3px 7px rgba(255, 255, 255, 0.78);
-  --shadow-overlay: 0 18px 50px rgba(30, 42, 53, 0.22);
+  --color-ink: 15 23 42;
+  --color-muted: 100 116 139;
+  --color-line: 226 232 240;
+  --color-page: 248 250 252;
+  --color-surface: 255 255 255;
+  --color-surface-strong: 248 250 252;
+  --color-accent: 37 99 235;
+  --color-accent-soft: 239 246 255;
+  --color-accent-strong: 29 78 216;
+  --color-blue: 37 99 235;
+  --shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.04), 0 10px 30px rgba(15, 23, 42, 0.05);
+  --shadow-raised: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 14px rgba(15, 23, 42, 0.06);
+  --shadow-pressed: inset 0 0 0 1px rgba(148, 163, 184, 0.12), 0 1px 2px rgba(15, 23, 42, 0.03);
+  --shadow-overlay: 0 24px 70px rgba(15, 23, 42, 0.2);
   --page-background: rgb(var(--color-page));
 }
 
 [data-theme="dark"] {
   color-scheme: dark;
-  --color-ink: 235 240 243;
-  --color-muted: 157 169 178;
-  --color-line: 62 73 81;
-  --color-page: 35 42 47;
-  --color-surface: 40 48 54;
-  --color-surface-strong: 47 56 63;
-  --color-accent: 55 197 184;
-  --color-accent-soft: 35 78 74;
-  --color-accent-strong: 137 235 224;
-  --color-blue: 115 178 224;
-  --shadow-soft:
-    7px 7px 16px rgba(17, 21, 24, 0.72),
-    -7px -7px 16px rgba(64, 75, 83, 0.42);
-  --shadow-raised:
-    4px 4px 10px rgba(17, 21, 24, 0.68),
-    -4px -4px 10px rgba(64, 75, 83, 0.34);
-  --shadow-pressed:
-    inset 3px 3px 7px rgba(16, 20, 23, 0.72),
-    inset -3px -3px 7px rgba(67, 78, 86, 0.32);
-  --shadow-overlay: 0 18px 50px rgba(0, 0, 0, 0.46);
+  --color-ink: 226 232 240;
+  --color-muted: 148 163 184;
+  --color-line: 51 65 85;
+  --color-page: 15 23 42;
+  --color-surface: 30 41 59;
+  --color-surface-strong: 51 65 85;
+  --color-accent: 96 165 250;
+  --color-accent-soft: 30 58 138;
+  --color-accent-strong: 147 197 253;
+  --color-blue: 96 165 250;
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.2), 0 10px 30px rgba(0, 0, 0, 0.12);
+  --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.2), 0 4px 14px rgba(0, 0, 0, 0.16);
+  --shadow-pressed: inset 0 0 0 1px rgba(148, 163, 184, 0.14), 0 1px 2px rgba(0, 0, 0, 0.12);
+  --shadow-overlay: 0 24px 70px rgba(0, 0, 0, 0.46);
   --page-background: rgb(var(--color-page));
 }
 
@@ -88,6 +76,19 @@ html {
 .soft-inset {
   background: rgb(var(--color-surface));
   box-shadow: var(--shadow-pressed);
+}
+
+.soft-surface,
+.soft-raised,
+.soft-inset,
+.soft-control {
+  border-radius: 0.875rem;
+}
+
+.soft-surface,
+.soft-raised,
+.soft-control {
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
 .soft-control {

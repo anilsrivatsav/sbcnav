@@ -34,6 +34,8 @@ export function Badge({ children, tone = "neutral" }: any) {
     neutral: "border-line bg-surfaceStrong text-muted",
     accent: "border-accent/30 bg-accentSoft text-accentStrong",
     danger: "border-red-300/70 bg-red-500/10 text-red-600",
+    warning: "border-amber-300/70 bg-amber-500/10 text-amber-700",
+    success: "border-emerald-300/70 bg-emerald-500/10 text-emerald-700",
   };
   return (
     <span className={cx("inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-black uppercase tracking-[0.12em]", tones[tone])}>

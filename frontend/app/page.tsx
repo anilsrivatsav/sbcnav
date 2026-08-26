@@ -225,10 +225,10 @@ function Tabs({ tabs, value, onChange }) {
 
 function Card({ icon: Icon, label, value, subtext }) {
   return (
-    <div className="soft-surface rounded-lg border p-5 transition hover:-translate-y-0.5">
+    <div className="soft-surface rounded-xl border p-5 transition hover:-translate-y-0.5 hover:border-accent/40">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <div className="text-[11px] font-black uppercase tracking-[0.18em] text-muted">{label}</div>
+          <div className="text-xs font-semibold text-muted">{label}</div>
           <div className="mt-2 text-2xl font-black text-ink">{value}</div>
         </div>
         <div className="soft-raised rounded-lg border border-accent/20 bg-accentSoft p-3 text-accentStrong">
@@ -242,10 +242,10 @@ function Card({ icon: Icon, label, value, subtext }) {
 
 function Panel({ title, subtitle, action, children }) {
   return (
-    <section className="soft-surface rounded-lg border p-5">
+    <section className="soft-surface rounded-xl border p-5">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-sm font-black uppercase tracking-[0.18em] text-ink">{title}</h2>
+          <h2 className="text-base font-bold tracking-tight text-ink">{title}</h2>
           {subtitle ? <p className="mt-1 text-sm text-muted">{subtitle}</p> : null}
         </div>
         {action}
@@ -373,15 +373,16 @@ function NavButton({ active, icon: Icon, label, hint, onClick }) {
     <button
       type="button"
       onClick={onClick}
-      className={`focus-ring flex min-w-[184px] items-start gap-3 rounded-lg border px-3 py-3 text-left transition lg:w-full lg:min-w-0 ${active ? "border-accent bg-accentSoft text-accentStrong shadow-pressed" : "soft-raised border-line text-ink hover:border-accent hover:text-accentStrong"
+      title={hint}
+      className={`focus-ring flex min-w-[184px] items-start gap-3 rounded-xl border px-3 py-3 text-left transition lg:w-full lg:min-w-0 ${active ? "border-blue-200 bg-blue-50 text-blue-700 shadow-none" : "border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-950"
         }`}
     >
-      <span className="rounded-md border border-line bg-surfaceStrong p-1.5">
+      <span className={`rounded-lg p-1.5 ${active ? "bg-white text-blue-600" : "bg-slate-100 text-slate-500"}`}>
         <Icon size={16} className="shrink-0" />
       </span>
       <span className="min-w-0">
         <span className="block text-sm font-black">{label}</span>
-        <span className="mt-0.5 block text-[11px] font-semibold text-muted">{hint}</span>
+        <span className="sr-only">{hint}</span>
       </span>
     </button>
   );
@@ -1278,7 +1279,6 @@ export default function Page() {
   const dashboardCards = [
     { key: "stations", icon: TrainFront, label: "Stations", subtext: "Registered stations in the database" },
     { key: "units", icon: Users, label: "Contracts", subtext: "Catering stalls and vending contracts" },
-    { key: "commercialContracts", icon: Database, label: "Commercial", subtext: "OOH, parking, ATM and mobile asset contracts" },
     { key: "works", icon: Wrench, label: "Works", subtext: "Sanctioned work records" },
     { key: "earningsTotal", icon: Wallet, label: "Contract Revenue", subtext: "Payments captured inside catering units", money: true },
     { key: "completedWorks", icon: BarChart3, label: "Completed Works", subtext: "Works with complete/done status" },
