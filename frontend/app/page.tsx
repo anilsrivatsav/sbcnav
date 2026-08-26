@@ -1507,11 +1507,6 @@ export default function Page() {
     { value: "sanctionedWorks", label: "Sanctioned Works", icon: FileText },
     { value: "norms", label: "Norms", icon: CircleAlert },
   ];
-  const contractTabs = [
-    { value: "active", label: "Running / Active", icon: CheckCircle2 },
-    { value: "other", label: "Unawarded / Other", icon: CircleAlert },
-    { value: "earnings", label: "Payments", icon: Wallet },
-  ];
   const activeContract = contractTab === "earnings"
     ? { rows: filteredContracts.earnings, columns: earningColumns, fileName: "contract-payments.csv" }
     : { rows: filteredContracts[contractTab] || filteredContracts.active, columns: unitColumns, fileName: `catering-${contractTab}.csv` };
@@ -2687,9 +2682,9 @@ export default function Page() {
               ) : (
               <>
               <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-full border border-line bg-accentSoft px-3 py-1.5 text-xs font-black text-ink">Running / Active <b className="ml-1 text-accent">{filteredContracts.active.length}</b></span>
-                <span className="rounded-full border border-line bg-surfaceStrong px-3 py-1.5 text-xs font-black text-ink">Unawarded / Other <b className="ml-1 text-accent">{filteredContracts.other.length}</b></span>
-                <span className="rounded-full border border-line bg-surfaceStrong px-3 py-1.5 text-xs font-black text-ink">Payments <b className="ml-1 text-accent">{filteredContracts.earnings.length}</b></span>
+                <button type="button" onClick={() => setContractTab("active")} className={cx("rounded-full border px-3 py-1.5 text-xs font-black transition hover:border-accent", contractTab === "active" ? "border-accent bg-accent text-white" : "soft-control text-ink")}>Running / Active <b className="ml-1 opacity-75">{filteredContracts.active.length}</b></button>
+                <button type="button" onClick={() => setContractTab("other")} className={cx("rounded-full border px-3 py-1.5 text-xs font-black transition hover:border-accent", contractTab === "other" ? "border-accent bg-accent text-white" : "soft-control text-ink")}>Unawarded / Other <b className="ml-1 opacity-75">{filteredContracts.other.length}</b></button>
+                <button type="button" onClick={() => setContractTab("earnings")} className={cx("rounded-full border px-3 py-1.5 text-xs font-black transition hover:border-accent", contractTab === "earnings" ? "border-accent bg-accent text-white" : "soft-control text-ink")}>Payments <b className="ml-1 opacity-75">{filteredContracts.earnings.length}</b></button>
                 {cateringTypeChips.map((chip) => <button key={chip.value} type="button" onClick={() => setCateringType(chip.value)} className={cx("rounded-full border px-3 py-1.5 text-xs font-black transition hover:border-accent", cateringType === chip.value ? "border-accent bg-accent text-white" : "soft-control text-ink")}>{chip.label} <span className="ml-1 opacity-75">{chip.count}</span></button>)}
                 <label className="flex items-center gap-1.5 text-xs font-black text-muted"><span>Station</span><select value={cateringStation} onChange={(event) => setCateringStation(event.target.value)} className="soft-inset h-8 max-w-48 rounded-full border border-line px-2.5 text-xs font-bold text-ink outline-none focus:border-accent">{contractStations.map((option) => <option key={option} value={option}>{option === "all" ? "All stations" : option}</option>)}</select></label>
               </div>
@@ -2711,7 +2706,6 @@ export default function Page() {
                     <div><span className="font-black text-ink">{cateringSyncResult.reconciliation?.linked_earning_rows || 0}</span> unit-linked receipts</div>
                   </div>
                 ) : null}
-                <Tabs tabs={contractTabs} value={contractTab} onChange={setContractTab} />
                 <div className="mt-4">
                   <DataTable
                     columns={activeContract.columns}
