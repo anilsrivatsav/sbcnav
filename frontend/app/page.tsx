@@ -1518,10 +1518,12 @@ export default function Page() {
   const publicityStations = ["all", ...Array.from(new Set(publicityContracts.flatMap((row) => (row.assets || []).map((asset) => pretty(asset.station_code || asset.asset_name || asset.raw_asset_value)).filter((value) => value !== "NA")))).sort()];
   const contractStations = ["all", ...Array.from(new Set(units.map((row) => pretty(row.station_code)).filter((value) => value !== "NA"))).sort()];
   const cateringTypes = Array.from(new Set(units.map((row) => String(row.type_of_unit || "").trim()).filter(Boolean))).sort();
+  const cateringTypeRows = contractTab === "active" ? units.filter(isActiveCateringUnit) : contractTab === "other" ? units.filter((row) => !isActiveCateringUnit(row)) : earnings;
+  const cateringUnitTypeByNo = new Map(units.map((row) => [pretty(row.unit_no), row.type_of_unit]));
   const cateringTypeChips = [
-    { value: "all", label: "All types", count: units.length },
-    ...cateringTypes.map((type) => ({ value: type, label: type, count: units.filter((row) => normalizeText(row.type_of_unit) === normalizeText(type)).length })),
-    ...(units.some((row) => !String(row.type_of_unit || "").trim()) ? [{ value: "__missing__", label: "Type not recorded", count: units.filter((row) => !String(row.type_of_unit || "").trim()).length }] : []),
+    { value: "all", label: "All types", count: cateringTypeRows.length },
+    ...cateringTypes.map((type) => ({ value: type, label: type, count: cateringTypeRows.filter((row) => normalizeText(contractTab === "earnings" ? cateringUnitTypeByNo.get(pretty(row.unit_no)) : row.type_of_unit) === normalizeText(type)).length })),
+    ...(cateringTypeRows.some((row) => !String(contractTab === "earnings" ? cateringUnitTypeByNo.get(pretty(row.unit_no)) : row.type_of_unit || "").trim()) ? [{ value: "__missing__", label: "Type not recorded", count: cateringTypeRows.filter((row) => !String(contractTab === "earnings" ? cateringUnitTypeByNo.get(pretty(row.unit_no)) : row.type_of_unit || "").trim()).length }] : []),
   ];
   const earningsByUnit = useMemo(() => {
     const grouped = new Map();
