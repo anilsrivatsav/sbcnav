@@ -2298,9 +2298,9 @@ export default function Page() {
   };
 
   return (
-    <main className="min-h-screen px-2 py-2 text-ink sm:px-4 sm:py-3 lg:px-5">
-      <section className="mx-auto grid min-w-0 max-w-[1560px] grid-cols-[minmax(0,1fr)] gap-4 lg:h-[calc(100vh-1.5rem)] lg:grid-cols-[256px_minmax(0,1fr)]">
-        <aside className="soft-surface soft-scroll min-w-0 max-w-full rounded-lg border p-3 sm:p-4 lg:sticky lg:top-3 lg:h-[calc(100vh-1.5rem)] lg:overflow-auto">
+    <main className="min-h-screen bg-[var(--page-background)] text-ink">
+      <section className="mx-auto grid min-w-0 max-w-[1680px] grid-cols-[minmax(0,1fr)] lg:h-screen lg:grid-cols-[248px_minmax(0,1fr)]">
+        <aside className="soft-surface soft-scroll min-w-0 max-w-full rounded-none border-y-0 border-l-0 border-r p-4 sm:p-5 lg:sticky lg:top-0 lg:h-screen lg:overflow-auto">
           <div className="flex items-start justify-between gap-3">
             <div>
               <div className="text-xs font-black uppercase tracking-[0.22em] text-accent">Rail dashboard</div>
@@ -2332,8 +2332,8 @@ export default function Page() {
           </div>
         </aside>
 
-        <section className="soft-scroll min-w-0 space-y-4 lg:h-full lg:overflow-auto lg:pr-2">
-          <div className="soft-surface sticky top-0 z-30 rounded-lg border p-3 sm:p-4">
+        <section className="soft-scroll min-w-0 space-y-4 px-3 py-3 sm:px-5 sm:py-4 lg:h-full lg:overflow-auto lg:px-8 lg:py-6">
+          <div className="soft-surface sticky top-0 z-30 rounded-xl border p-3 sm:p-4">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <Breadcrumbs title={viewConfig.title} />
