@@ -5,6 +5,8 @@ import { loadRailDashboardData } from "../lib/api";
 
 const cacheKey = "sbcnav-postgres-dashboard-snapshot-v2";
 const oldCacheKey = "sbcnav-postgres-read-model-v1";
+const indexedDbName = "sbcnav-postgres-dashboard-cache";
+const indexedDbStore = "snapshots";
 
 const rows = (value) => Array.isArray(value) ? value : (value?.items || []);
 
@@ -48,6 +50,52 @@ function snapshotOf(data) {
       reports: amenities.reports || null,
     },
   };
+}
+
+function coreSnapshotOf(data) {
+  return {
+    stats: data.stats,
+    dataCentre: data.dataCentre,
+    actionCentre: data.actionCentre,
+    stations: rows(data.stations),
+    units: rows(data.units),
+    works: rows(data.works),
+    workMonitoring: data.workMonitoring,
+    commercialContracts: rows(data.commercialContracts),
+    commercialContractReports: data.commercialContractReports,
+    contractAlerts: data.contractAlerts,
+    registryContracts: rows(data.registryContracts),
+  };
+}
+
+function openIndexedCache() {
+  return new Promise<any>((resolve) => {
+    if (typeof window === "undefined" || !window.indexedDB) return resolve(null);
+    const request = window.indexedDB.open(indexedDbName, 1);
+    request.onupgradeneeded = () => request.result.createObjectStore(indexedDbStore);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => resolve(null);
+  });
+}
+
+async function readIndexedSnapshot() {
+  const db = await openIndexedCache();
+  if (!db) return null;
+  return new Promise<any>((resolve) => {
+    const request = db.transaction(indexedDbStore, "readonly").objectStore(indexedDbStore).get("latest");
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => resolve(null);
+  });
+}
+
+async function writeIndexedSnapshot(snapshot) {
+  const db = await openIndexedCache();
+  if (!db) return;
+  await new Promise((resolve) => {
+    const request = db.transaction(indexedDbStore, "readwrite").objectStore(indexedDbStore).put(snapshot, "latest");
+    request.onsuccess = resolve;
+    request.onerror = resolve;
+  });
 }
 
 export function useRailDashboardData() {
@@ -109,10 +157,11 @@ export function useRailDashboardData() {
     const data = await loadRailDashboardData();
     applyData(data);
     try {
-      window.localStorage.setItem(cacheKey, JSON.stringify(snapshotOf(data)));
+      window.localStorage.setItem(cacheKey, JSON.stringify(coreSnapshotOf(data)));
     } catch {
       // A browser storage limit must not prevent the live PostgreSQL refresh.
     }
+    await writeIndexedSnapshot(snapshotOf(data));
     return data.errors || [];
   };
 
@@ -132,9 +181,18 @@ export function useRailDashboardData() {
   };
 
   useEffect(() => {
+    let active = true;
     try { window.localStorage.removeItem(oldCacheKey); } catch { /* Ignore storage cleanup failures. */ }
     if (initialSnapshot?.stats) setActivityStatus("Showing last PostgreSQL snapshot; checking latest data...");
-    loadData();
+    (async () => {
+      const cached = await readIndexedSnapshot();
+      if (active && cached?.stats) {
+        applyData(cached);
+        setActivityStatus("Showing last PostgreSQL snapshot; checking latest data...");
+      }
+      if (active) await loadData();
+    })();
+    return () => { active = false; };
   }, [initialSnapshot]);
 
   return {
