@@ -1075,9 +1075,10 @@ export default function Page() {
       const statusOk = sameFilterValue(row.status, filters.workStatus);
       return searchOk && statusOk;
     });
-    const stationRows = baseRows.filter((row) => sameFilterValue(row.scope_type || row.work_type, "Station") && (row.station_code || row.station_codes?.length));
-    const abssRows = baseRows.filter((row) => sameFilterValue(row.scope_type || row.work_type, "ABSS"));
-    const divisionRows = baseRows.filter((row) => sameFilterValue(row.scope_type || row.work_type, "Division"));
+    const workType = (row) => normalizeText(row.scope_type || row.work_type);
+    const stationRows = baseRows.filter((row) => (workType(row).includes("station") || row.station_code || row.station_codes?.length) && (row.station_code || row.station_codes?.length));
+    const abssRows = baseRows.filter((row) => workType(row).includes("abss"));
+    const divisionRows = baseRows.filter((row) => workType(row).includes("division"));
     const stationFilteredRows = stationRows.filter((row) => sameFilterValue(row.station_code, filters.workStation));
     return {
       station: stationFilteredRows,
