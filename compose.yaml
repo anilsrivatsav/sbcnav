@@ -22,6 +22,20 @@ services:
       retries: 20
       start_period: 10s
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
   backend:
     build:
       context: .
@@ -29,6 +43,8 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      DASHBOARD_CACHE_TTL_SECONDS: ${DASHBOARD_CACHE_TTL_SECONDS:-60}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       AI_MODEL: ${AI_MODEL:-gpt-4.1-mini}
@@ -39,6 +55,8 @@ services:
       - "${BACKEND_PORT:-8000}:8000"
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test:
@@ -79,3 +97,5 @@ services:
 volumes:
   postgres_data:
     name: ${COMPOSE_PROJECT_NAME:-rail-dashboard}_postgres_data
+  redis_data:
+    name: ${COMPOSE_PROJECT_NAME:-rail-dashboard}_redis_data

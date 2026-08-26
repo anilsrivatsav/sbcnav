@@ -11,3 +11,4 @@ langgraph
 openai
 uvicorn[standard]
 gunicorn
+redis

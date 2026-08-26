@@ -7,6 +7,7 @@ import csv
 import io
 import json
 import asyncio
+import time
 from uuid import uuid4
 from datetime import date, datetime, timedelta, timezone
 
@@ -106,8 +107,58 @@ from contract_registry import (
     list_registry_contracts,
     registry_summary,
 )
+
+try:
+    import redis
+except ImportError:  # pragma: no cover - optional locally; Render installs it from requirements
+    redis = None
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rail_dashboard.api")
+
+BOOTSTRAP_CACHE_KEY = "sbcnav:dashboard-bootstrap:v1"
+BOOTSTRAP_CACHE_TTL = int(os.getenv("DASHBOARD_CACHE_TTL_SECONDS", "60"))
+_bootstrap_memory_cache: dict[str, tuple[float, dict]] = {}
+_redis_client = None
+if redis and os.getenv("REDIS_URL"):
+    try:
+        _redis_client = redis.Redis.from_url(os.environ["REDIS_URL"], decode_responses=True, socket_connect_timeout=1, socket_timeout=1)
+        _redis_client.ping()
+        logger.info("Dashboard bootstrap Redis cache enabled")
+    except Exception as exc:
+        _redis_client = None
+        logger.warning("Redis cache unavailable; using process memory cache: %s", exc)
+
+
+def _invalidate_bootstrap_cache() -> None:
+    _bootstrap_memory_cache.clear()
+    if _redis_client:
+        try:
+            _redis_client.delete(BOOTSTRAP_CACHE_KEY)
+        except Exception:
+            logger.warning("Unable to invalidate Redis dashboard cache", exc_info=True)
+
+
+def _bootstrap_cache_get() -> dict | None:
+    if _redis_client:
+        try:
+            cached = _redis_client.get(BOOTSTRAP_CACHE_KEY)
+            return json.loads(cached) if cached else None
+        except Exception:
+            logger.warning("Unable to read Redis dashboard cache", exc_info=True)
+    entry = _bootstrap_memory_cache.get(BOOTSTRAP_CACHE_KEY)
+    if entry and entry[0] > time.time():
+        return entry[1]
+    return None
+
+
+def _bootstrap_cache_set(payload: dict) -> None:
+    if _redis_client:
+        try:
+            _redis_client.setex(BOOTSTRAP_CACHE_KEY, BOOTSTRAP_CACHE_TTL, json.dumps(payload, default=str))
+            return
+        except Exception:
+            logger.warning("Unable to write Redis dashboard cache", exc_info=True)
+    _bootstrap_memory_cache[BOOTSTRAP_CACHE_KEY] = (time.time() + BOOTSTRAP_CACHE_TTL, payload)
 
 PA_INFRA_SPREADSHEET_ID = "1UdRgQQPEkak1fUTuVH7jIn5R4sE3szAhM4VZJOdFIOU"
 SANCTIONED_WORKS_SPREADSHEET_ID = "1rJbfhcnEVuGMwGkT8yBObb9Bk5Hx0uU224EGxfplGRc"
@@ -157,6 +208,8 @@ app.add_middleware(
 async def request_logger(request: Request, call_next):
     try:
         response = await call_next(request)
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path.startswith("/api/"):
+            _invalidate_bootstrap_cache()
         logger.info("%s %s -> %s", request.method, request.url.path, response.status_code)
         return response
     except Exception as exc:
@@ -997,6 +1050,58 @@ def action_centre(station_code: str | None = None, limit: int = 200):
 @app.get("/api/reports")
 def reports():
     return envelope(get_reports(), "ok")
+
+
+def _bootstrap_page(items: list[dict], sort_key: str | None = None) -> dict:
+    rows = list(items or [])
+    if sort_key:
+        rows.sort(key=lambda row: str(row.get(sort_key) or "").lower())
+    return {"items": rows, "pagination": {"total": len(rows), "page": 1, "page_size": len(rows)}}
+
+
+@app.get("/api/dashboard-bootstrap")
+def dashboard_bootstrap(refresh: bool = False):
+    """Return the complete PostgreSQL read model in one cacheable response.
+
+    Google Sheets/workbook imports are deliberately not called here. They remain
+    explicit Settings actions; this endpoint only reads PostgreSQL and caches the
+    assembled response for fast dashboard startup.
+    """
+    if not refresh:
+        cached = _bootstrap_cache_get()
+        if cached:
+            return envelope({**cached, "cache": "hit"}, "dashboard bootstrap cache hit")
+
+    work_monitoring_data = get_work_monitoring()
+    works_rows = work_monitoring_data.get("items") or list_works()
+    payload = {
+        "stats": get_stats(),
+        "dataCentre": get_data_centre_status(),
+        "actionCentre": get_action_centre(limit=500),
+        "stations": _bootstrap_page(list_stations(), "station_name"),
+        "units": _bootstrap_page(list_units(), "unit_no"),
+        "earnings": _bootstrap_page(list_earnings(), "date_of_receipt"),
+        "works": _bootstrap_page(works_rows, "project_id"),
+        "workMonitoring": {**work_monitoring_data, "items": works_rows},
+        "commercialContracts": _bootstrap_page(list_commercial_contracts(), "contract_name"),
+        "commercialContractReports": get_commercial_contract_reports(),
+        "contractAlerts": get_contract_alerts(),
+        "registryContracts": _bootstrap_page(list_registry_contracts(), "contract_name"),
+        "reports": get_reports(),
+        "passengerAmenities": {
+            "summary": _bootstrap_page(list_passenger_amenities(kind="summary"), "station_code"),
+            "infra": _bootstrap_page(list_passenger_amenities(kind="infra"), "station_code"),
+            "platforms": _bootstrap_page(list_passenger_amenities(kind="platforms"), "station_code"),
+            "wheelchairs": _bootstrap_page(list_passenger_amenities(kind="wheelchairs"), "station_code"),
+            "trolley": _bootstrap_page(list_passenger_amenities(kind="trolley"), "station_code"),
+            "works": _bootstrap_page(list_passenger_amenities(kind="pa_works"), "station_code"),
+            "pfExtension": _bootstrap_page(list_passenger_amenities(kind="pf_extension"), "station_code"),
+            "norms": _bootstrap_page(list_passenger_amenities(kind="norms"), "category"),
+            "reports": get_passenger_amenity_reports(),
+        },
+    }
+    _bootstrap_cache_set(payload)
+    return envelope({**payload, "cache": "miss"}, "dashboard bootstrap ready")
 
 
 def _report_preset_dict(row: ReportPreset) -> dict:

@@ -43,6 +43,15 @@ async function fetchOrDefault(url, fallback) {
 }
 
 export async function loadRailDashboardData() {
+  // One PostgreSQL-backed read model avoids waiting on twenty separate API
+  // requests. The backend caches this response in Redis (or a short-lived
+  // process cache when Redis is not configured). It never imports source sheets.
+  const bootstrap = await fetchOrDefault(dashboardBootstrapUrl(), null);
+  if (!bootstrap.error && bootstrap.data?.stats && bootstrap.data?.passengerAmenities) {
+    return { ...bootstrap.data, errors: [] };
+  }
+
+  // Compatibility fallback while an older backend instance is still deploying.
   const results = await Promise.all([
     fetchOrDefault(`${API_URL}/api/stats`, {}),
     fetchOrDefault(`${API_URL}/api/data-centre`, {}),
@@ -122,6 +131,10 @@ export async function loadRailDashboardData() {
     },
     errors,
   };
+}
+
+export function dashboardBootstrapUrl({ refresh = false } = {}) {
+  return `${API_URL}/api/dashboard-bootstrap${refresh ? "?refresh=true" : ""}`;
 }
 
 export function contractAlertsUrl(stationCode?: string) {
