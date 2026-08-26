@@ -672,6 +672,7 @@ export default function Page() {
   const [publicityCategory, setPublicityCategory] = useState("all");
   const [publicityStation, setPublicityStation] = useState("all");
   const [cateringStation, setCateringStation] = useState("all");
+  const [cateringType, setCateringType] = useState("all");
   const [workTab, setWorkTab] = useState("all");
   const [workSummaryTab, setWorkSummaryTab] = useState("summary");
   const [workSummarySheet, setWorkSummarySheet] = useState({ open: false, title: "", rows: [] });
@@ -1059,13 +1060,15 @@ export default function Page() {
   const filteredContracts = useMemo(() => {
     const q = search.contracts || "";
     const stationOk = (row) => sameFilterValue(row.station_code, cateringStation);
+    const typeOk = (row) => cateringType === "__missing__" ? !String(row.type_of_unit || "").trim() : sameFilterValue(row.type_of_unit, cateringType);
+    const typeByUnit = new Map(units.map((row) => [pretty(row.unit_no), row.type_of_unit]));
     return {
-      units: units.filter((row) => stationOk(row) && matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "unit_status", "remarks", "station_category", "type_of_unit", "pf_no"], q)),
-      active: units.filter((row) => stationOk(row) && isActiveCateringUnit(row) && matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "unit_status", "remarks", "station_category", "type_of_unit", "pf_no"], q)),
-      other: units.filter((row) => stationOk(row) && !isActiveCateringUnit(row) && matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "unit_status", "remarks", "station_category", "type_of_unit", "pf_no"], q)),
-      earnings: earnings.filter((row) => sameFilterValue(row.station_code, cateringStation) && matchesQuery(row, ["unit_no", "station_code", "licensee_name", "payment_head", "payment_sub_head", "receipt_type", "mr_no", "amount"], q)),
+      units: units.filter((row) => stationOk(row) && typeOk(row) && matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "unit_status", "remarks", "station_category", "type_of_unit", "pf_no"], q)),
+      active: units.filter((row) => stationOk(row) && typeOk(row) && isActiveCateringUnit(row) && matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "unit_status", "remarks", "station_category", "type_of_unit", "pf_no"], q)),
+      other: units.filter((row) => stationOk(row) && typeOk(row) && !isActiveCateringUnit(row) && matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "unit_status", "remarks", "station_category", "type_of_unit", "pf_no"], q)),
+      earnings: earnings.filter((row) => sameFilterValue(row.station_code, cateringStation) && (cateringType === "__missing__" ? !String(typeByUnit.get(pretty(row.unit_no)) || "").trim() : sameFilterValue(typeByUnit.get(pretty(row.unit_no)), cateringType)) && matchesQuery(row, ["unit_no", "station_code", "licensee_name", "payment_head", "payment_sub_head", "receipt_type", "mr_no", "amount"], q)),
     };
-  }, [units, earnings, search.contracts, cateringStation]);
+  }, [units, earnings, search.contracts, cateringStation, cateringType]);
 
   const filteredPublicityContracts = useMemo(() => {
     const q = search.contracts || "";
@@ -1512,15 +1515,22 @@ export default function Page() {
   const activeContract = contractTab === "earnings"
     ? { rows: filteredContracts.earnings, columns: earningColumns, fileName: "contract-payments.csv" }
     : { rows: filteredContracts[contractTab] || filteredContracts.active, columns: unitColumns, fileName: `catering-${contractTab}.csv` };
-  const publicityPolicies = Array.from(new Set(publicityContracts.map((row) => String(row.policy_code || "").trim()).filter(Boolean))).sort();
+  const runningPolicyContracts = runningPublicityContracts;
+  const publicityPolicies = Array.from(new Set(runningPolicyContracts.map((row) => String(row.policy_code || "").trim()).filter(Boolean))).sort();
   const publicityPolicyChips = [
-    { value: "all", label: "All policies", count: publicityContracts.length },
-    ...publicityPolicies.map((policy) => ({ value: policy, label: policy, count: publicityContracts.filter((row) => normalizeText(row.policy_code) === normalizeText(policy)).length })),
-    ...(publicityContracts.some((row) => !String(row.policy_code || "").trim()) ? [{ value: "__missing__", label: "Policy not recorded", count: publicityContracts.filter((row) => !String(row.policy_code || "").trim()).length }] : []),
+    { value: "all", label: "All running policies", count: runningPolicyContracts.length },
+    ...publicityPolicies.map((policy) => ({ value: policy, label: policy, count: runningPolicyContracts.filter((row) => normalizeText(row.policy_code) === normalizeText(policy)).length })),
+    ...(runningPolicyContracts.some((row) => !String(row.policy_code || "").trim()) ? [{ value: "__missing__", label: "Policy not recorded", count: runningPolicyContracts.filter((row) => !String(row.policy_code || "").trim()).length }] : []),
   ];
   const publicityCategories = ["all", ...Array.from(new Set(publicityContracts.map((row) => pretty(row.category)).filter((value) => value !== "NA"))).sort()];
   const publicityStations = ["all", ...Array.from(new Set(publicityContracts.flatMap((row) => (row.assets || []).map((asset) => pretty(asset.station_code || asset.asset_name || asset.raw_asset_value)).filter((value) => value !== "NA")))).sort()];
   const contractStations = ["all", ...Array.from(new Set(units.map((row) => pretty(row.station_code)).filter((value) => value !== "NA"))).sort()];
+  const cateringTypes = Array.from(new Set(units.map((row) => String(row.type_of_unit || "").trim()).filter(Boolean))).sort();
+  const cateringTypeChips = [
+    { value: "all", label: "All types", count: units.length },
+    ...cateringTypes.map((type) => ({ value: type, label: type, count: units.filter((row) => normalizeText(row.type_of_unit) === normalizeText(type)).length })),
+    ...(units.some((row) => !String(row.type_of_unit || "").trim()) ? [{ value: "__missing__", label: "Type not recorded", count: units.filter((row) => !String(row.type_of_unit || "").trim()).length }] : []),
+  ];
   const earningsByUnit = useMemo(() => {
     const grouped = new Map();
     earnings.forEach((item) => {
@@ -2652,10 +2662,10 @@ export default function Page() {
               {contractFamily === "publicity" ? (
                 <>
                   <div className="flex flex-wrap items-center gap-2">
-                    {["all", "running", "completed", "cancelled"].map((status) => <button key={status} type="button" onClick={() => setPublicityStatus(status)} className={cx("rounded-full border px-3 py-1.5 text-xs font-black transition hover:border-accent", publicityStatus === status ? "border-accent bg-accent text-white" : "soft-control text-ink")}>
+                    {["all", "running", "completed", "cancelled"].map((status) => <button key={status} type="button" onClick={() => { setPublicityStatus(status); setPublicityPolicy("all"); }} className={cx("rounded-full border px-3 py-1.5 text-xs font-black transition hover:border-accent", publicityStatus === status ? "border-accent bg-accent text-white" : "soft-control text-ink")}>
                       {status === "all" ? "All" : pretty(status)} <span className="ml-1 opacity-75">{status === "all" ? publicityContracts.length : publicityContracts.filter((row) => normalizeText(row.status) === status).length}</span>
                     </button>)}
-                    {publicityPolicyChips.map((chip) => <button key={chip.value} type="button" onClick={() => setPublicityPolicy(chip.value)} className={cx("rounded-full border px-3 py-1.5 text-xs font-black transition hover:border-accent", publicityPolicy === chip.value ? "border-accent bg-accent text-white" : "soft-control text-ink")}>{chip.label} <span className="ml-1 opacity-75">{chip.count}</span></button>)}
+                    {publicityStatus === "running" ? publicityPolicyChips.map((chip) => <button key={chip.value} type="button" onClick={() => setPublicityPolicy(chip.value)} className={cx("rounded-full border px-3 py-1.5 text-xs font-black transition hover:border-accent", publicityPolicy === chip.value ? "border-accent bg-accent text-white" : "soft-control text-ink")}>{chip.label} <span className="ml-1 opacity-75">{chip.count}</span></button>) : null}
                     {[['Category', publicityCategory, setPublicityCategory, publicityCategories], ['Station', publicityStation, setPublicityStation, publicityStations]].map(([label, value, setter, options]) => (
                       <label key={label} className="flex items-center gap-1.5 text-xs font-black text-muted"><span>{label}</span><select value={value} onChange={(event) => setter(event.target.value)} className="soft-inset h-8 max-w-48 rounded-full border border-line px-2.5 text-xs font-bold text-ink outline-none focus:border-accent">{options.map((option) => <option key={option} value={option}>{option === "all" ? `All ${label.toLowerCase()}` : option}</option>)}</select></label>
                     ))}
@@ -2680,6 +2690,7 @@ export default function Page() {
                 <span className="rounded-full border border-line bg-accentSoft px-3 py-1.5 text-xs font-black text-ink">Running / Active <b className="ml-1 text-accent">{filteredContracts.active.length}</b></span>
                 <span className="rounded-full border border-line bg-surfaceStrong px-3 py-1.5 text-xs font-black text-ink">Unawarded / Other <b className="ml-1 text-accent">{filteredContracts.other.length}</b></span>
                 <span className="rounded-full border border-line bg-surfaceStrong px-3 py-1.5 text-xs font-black text-ink">Payments <b className="ml-1 text-accent">{filteredContracts.earnings.length}</b></span>
+                {cateringTypeChips.map((chip) => <button key={chip.value} type="button" onClick={() => setCateringType(chip.value)} className={cx("rounded-full border px-3 py-1.5 text-xs font-black transition hover:border-accent", cateringType === chip.value ? "border-accent bg-accent text-white" : "soft-control text-ink")}>{chip.label} <span className="ml-1 opacity-75">{chip.count}</span></button>)}
                 <label className="flex items-center gap-1.5 text-xs font-black text-muted"><span>Station</span><select value={cateringStation} onChange={(event) => setCateringStation(event.target.value)} className="soft-inset h-8 max-w-48 rounded-full border border-line px-2.5 text-xs font-bold text-ink outline-none focus:border-accent">{contractStations.map((option) => <option key={option} value={option}>{option === "all" ? "All stations" : option}</option>)}</select></label>
               </div>
               <Panel
