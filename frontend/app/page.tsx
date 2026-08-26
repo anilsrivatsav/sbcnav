@@ -921,10 +921,6 @@ export default function Page() {
   };
 
   useEffect(() => {
-    setActivityStatus("Ready");
-  }, []);
-
-  useEffect(() => {
     const stored = window.localStorage.getItem("rail-dashboard-theme");
     if (stored === "dark" || stored === "light") {
       setTheme(stored);

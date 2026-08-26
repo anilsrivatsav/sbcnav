@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { loadRailDashboardData } from "../lib/api";
 
 export function useRailDashboardData() {
+  const cacheKey = "sbcnav-postgres-read-model-v1";
   const [stats, setStats] = useState(null);
   const [dataCentre, setDataCentre] = useState(null);
   const [actionCentre, setActionCentre] = useState(null);
@@ -60,6 +61,11 @@ export function useRailDashboardData() {
   const loadFromDb = async () => {
     const data = await loadRailDashboardData();
     applyData(data);
+    try {
+      window.localStorage.setItem(cacheKey, JSON.stringify(data));
+    } catch {
+      // A browser storage limit must not prevent the live PostgreSQL refresh.
+    }
     return data.errors || [];
   };
 
@@ -79,6 +85,15 @@ export function useRailDashboardData() {
   };
 
   useEffect(() => {
+    try {
+      const cached = JSON.parse(window.localStorage.getItem(cacheKey) || "null");
+      if (cached?.stats && cached?.passengerAmenities) {
+        applyData(cached);
+        setActivityStatus("Showing last PostgreSQL snapshot; checking latest data...");
+      }
+    } catch {
+      // Ignore an unavailable or invalid local snapshot.
+    }
     loadData();
   }, []);
 
