@@ -154,7 +154,21 @@ export function useRailDashboardData() {
   };
 
   const loadFromDb = async () => {
-    const data = await loadRailDashboardData();
+    let data;
+    let lastError;
+    // Render can take a few seconds to wake from idle. Retry the single
+    // PostgreSQL bootstrap request so the UI does not remain on an empty
+    // snapshot after a normal cold start.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        data = await loadRailDashboardData();
+        break;
+      } catch (error) {
+        lastError = error;
+        if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 1200 * (attempt + 1)));
+      }
+    }
+    if (!data) throw lastError || new Error("Unable to load PostgreSQL data");
     applyData(data);
     try {
       window.localStorage.setItem(cacheKey, JSON.stringify(coreSnapshotOf(data)));
