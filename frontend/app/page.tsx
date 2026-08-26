@@ -37,7 +37,7 @@ import { BottomSheet, DataTable } from "../components/ui";
 import { Station360 } from "../components/station-360";
 import { StationQuickView } from "../components/station-quick-view";
 import { ReportTemplatesPanel } from "../components/reports/report-templates-panel";
-import { API_URL, aiQueryUrl, amenityFindingsUrl, cateringSyncUrl, commercialContractDetailUrl, commercialContractStatementUrl, fetchJson, importCommercialContractsUrl, importPassengerAmenitiesUrl, importPfExtensionUrl, importSanctionedWorksUrl, previewPassengerAmenitiesUrl, previewSanctionedWorksUrl, reportPresetRunUrl, reportPresetsUrl, stationDetailUrl, workExpenditureUrl, workProgressUrl } from "../lib/api";
+import { API_URL, aiQueryUrl, amenityFindingsUrl, cateringSyncUrl, commercialContractDetailUrl, commercialContractStatementUrl, contractRegistryDetailUrl, fetchJson, importCommercialContractsUrl, importPassengerAmenitiesUrl, importPfExtensionUrl, importSanctionedWorksUrl, previewPassengerAmenitiesUrl, previewSanctionedWorksUrl, reportPresetRunUrl, reportPresetsUrl, stationDetailUrl, workExpenditureUrl, workProgressUrl } from "../lib/api";
 import { reportTemplates, templateFilterState, templatePreset } from "../lib/report-templates";
 import { useRailDashboardData } from "../hooks/use-rail-dashboard-data";
 
@@ -668,6 +668,10 @@ export default function Page() {
   const [contractTab, setContractTab] = useState("active");
   const [contractFamily, setContractFamily] = useState("catering");
   const [publicityStatus, setPublicityStatus] = useState("all");
+  const [publicityPolicy, setPublicityPolicy] = useState("all");
+  const [publicityCategory, setPublicityCategory] = useState("all");
+  const [publicityStation, setPublicityStation] = useState("all");
+  const [cateringStation, setCateringStation] = useState("all");
   const [workTab, setWorkTab] = useState("all");
   const [workSummaryTab, setWorkSummaryTab] = useState("summary");
   const [workSummarySheet, setWorkSummarySheet] = useState({ open: false, title: "", rows: [] });
@@ -1051,21 +1055,25 @@ export default function Page() {
 
   const filteredContracts = useMemo(() => {
     const q = search.contracts || "";
+    const stationOk = (row) => sameFilterValue(row.station_code, cateringStation);
     return {
-      units: units.filter((row) => matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "unit_status", "remarks", "station_category", "type_of_unit", "pf_no"], q)),
-      active: units.filter((row) => isActiveCateringUnit(row) && matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "unit_status", "remarks", "station_category", "type_of_unit", "pf_no"], q)),
-      other: units.filter((row) => !isActiveCateringUnit(row) && matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "unit_status", "remarks", "station_category", "type_of_unit", "pf_no"], q)),
-      earnings: earnings.filter((row) => matchesQuery(row, ["unit_no", "station_code", "licensee_name", "payment_head", "payment_sub_head", "receipt_type", "mr_no", "amount"], q)),
+      units: units.filter((row) => stationOk(row) && matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "unit_status", "remarks", "station_category", "type_of_unit", "pf_no"], q)),
+      active: units.filter((row) => stationOk(row) && isActiveCateringUnit(row) && matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "unit_status", "remarks", "station_category", "type_of_unit", "pf_no"], q)),
+      other: units.filter((row) => stationOk(row) && !isActiveCateringUnit(row) && matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "unit_status", "remarks", "station_category", "type_of_unit", "pf_no"], q)),
+      earnings: earnings.filter((row) => sameFilterValue(row.station_code, cateringStation) && matchesQuery(row, ["unit_no", "station_code", "licensee_name", "payment_head", "payment_sub_head", "receipt_type", "mr_no", "amount"], q)),
     };
-  }, [units, earnings, search.contracts]);
+  }, [units, earnings, search.contracts, cateringStation]);
 
   const filteredPublicityContracts = useMemo(() => {
     const q = search.contracts || "";
     return registryContracts.filter((row) => {
       const statusOk = publicityStatus === "all" || normalizeText(row.status) === normalizeText(publicityStatus);
-      return statusOk && matchesQuery(row, ["contract_number", "contract_name", "category", "policy_code", (item) => item.contractor?.legal_name, (item) => item.assets?.map((asset) => `${asset.station_code || ""} ${asset.train_number || ""} ${asset.asset_name || ""}`).join(" ")], q);
+      const policyOk = sameFilterValue(row.policy_code, publicityPolicy);
+      const categoryOk = sameFilterValue(row.category, publicityCategory);
+      const stationOk = publicityStation === "all" || row.assets?.some((asset) => normalizeText(asset.station_code) === normalizeText(publicityStation));
+      return statusOk && policyOk && categoryOk && stationOk && matchesQuery(row, ["contract_number", "contract_name", "category", "policy_code", (item) => item.contractor?.legal_name, (item) => item.assets?.map((asset) => `${asset.station_code || ""} ${asset.train_number || ""} ${asset.asset_name || ""}`).join(" ")], q);
     });
-  }, [registryContracts, publicityStatus, search.contracts]);
+  }, [registryContracts, publicityStatus, publicityPolicy, publicityCategory, publicityStation, search.contracts]);
 
   const filteredCommercialContracts = useMemo(() => {
     const q = search.commercial || "";
@@ -1378,6 +1386,7 @@ export default function Page() {
     { key: "period", label: "Period", value: (row) => `${pretty(row.period?.start)} to ${pretty(row.period?.end)}` },
     { key: "status", label: "Status", value: (row) => pretty(row.status), render: (row) => <Badge tone={/running|active/i.test(pretty(row.status)) ? "accent" : "neutral"}>{pretty(row.status)}</Badge> },
     { key: "value", label: "Value", value: (row) => row.financials?.total_contract_value || row.financials?.annual_license_fee || 0, render: (row) => money(row.financials?.total_contract_value || row.financials?.annual_license_fee) },
+    { key: "payments", label: "Payments", value: (row) => row.payment_summary?.recorded || row.payment_summary?.scheduled || 0, render: (row) => <span className="text-xs font-bold text-muted">{row.payment_summary?.recorded || 0} paid · {row.payment_summary?.scheduled || 0} scheduled</span> },
   ];
   const reportWorkColumns = [
     { key: "sl_no", label: "Sl.no" },
@@ -1499,6 +1508,10 @@ export default function Page() {
   const activeContract = contractTab === "earnings"
     ? { rows: filteredContracts.earnings, columns: earningColumns, fileName: "contract-payments.csv" }
     : { rows: filteredContracts[contractTab] || filteredContracts.active, columns: unitColumns, fileName: `catering-${contractTab}.csv` };
+  const publicityPolicies = ["all", ...Array.from(new Set(publicityContracts.map((row) => pretty(row.policy_code)).filter((value) => value !== "NA"))).sort()];
+  const publicityCategories = ["all", ...Array.from(new Set(publicityContracts.map((row) => pretty(row.category)).filter((value) => value !== "NA"))).sort()];
+  const publicityStations = ["all", ...Array.from(new Set(publicityContracts.flatMap((row) => (row.assets || []).map((asset) => pretty(asset.station_code)).filter((value) => value !== "NA")))).sort()];
+  const contractStations = ["all", ...Array.from(new Set(units.map((row) => pretty(row.station_code)).filter((value) => value !== "NA"))).sort()];
   const activeAmenity = (() => {
     if (amenityTab === "infra") return { rows: filteredAmenities.infra, columns: infraColumns, fileName: "pa-infra.csv" };
     if (amenityTab === "platforms") return { rows: filteredAmenities.platforms, columns: platformColumns, fileName: "pa-platforms.csv" };
@@ -1836,6 +1849,9 @@ export default function Page() {
 
   const openPublicity = (contract) => {
     setModal({ open: true, type: "publicity", record: { contract } });
+    fetchJson(contractRegistryDetailUrl(contract.contract_id))
+      .then((detail) => setModal((current) => current.open && current.type === "publicity" ? { ...current, record: { contract: detail } } : current))
+      .catch((error) => setActivityStatus(error?.message || "Publicity payment detail unavailable"));
   };
 
   const openDashboardDrilldown = (key) => {
@@ -2608,8 +2624,13 @@ export default function Page() {
               />
               {contractFamily === "publicity" ? (
                 <>
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                    {["all", "running", "completed", "cancelled"].map((status) => <button key={status} type="button" onClick={() => setPublicityStatus(status)} className={cx("soft-raised rounded-xl border p-3 text-left transition hover:border-accent", publicityStatus === status ? "border-accent bg-accentSoft" : "border-line")}><div className="text-xs font-black uppercase tracking-[0.12em] text-muted">{status === "all" ? "All publicity" : pretty(status)}</div><div className="mt-1 text-xl font-black text-ink">{status === "all" ? registryContracts.length : registryContracts.filter((row) => normalizeText(row.status) === status).length}</div></button>)}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {["all", "running", "completed", "cancelled"].map((status) => <button key={status} type="button" onClick={() => setPublicityStatus(status)} className={cx("rounded-full border px-3 py-1.5 text-xs font-black transition hover:border-accent", publicityStatus === status ? "border-accent bg-accent text-white" : "soft-control text-ink")}>
+                      {status === "all" ? "All" : pretty(status)} <span className="ml-1 opacity-75">{status === "all" ? publicityContracts.length : publicityContracts.filter((row) => normalizeText(row.status) === status).length}</span>
+                    </button>)}
+                    {[['Policy', publicityPolicy, setPublicityPolicy, publicityPolicies], ['Category', publicityCategory, setPublicityCategory, publicityCategories], ['Station', publicityStation, setPublicityStation, publicityStations]].map(([label, value, setter, options]) => (
+                      <label key={label} className="flex items-center gap-1.5 text-xs font-black text-muted"><span>{label}</span><select value={value} onChange={(event) => setter(event.target.value)} className="soft-inset h-8 max-w-48 rounded-full border border-line px-2.5 text-xs font-bold text-ink outline-none focus:border-accent">{options.map((option) => <option key={option} value={option}>{option === "all" ? `All ${label.toLowerCase()}` : option}</option>)}</select></label>
+                    ))}
                   </div>
                   <Panel title="Publicity Contracts" subtitle="Station, train, audio, advertising, and other policy-based contracts from the registry." action={<Button size="sm" variant="secondary" onClick={() => setView("settings")}><SettingsIcon size={14} /> Manage in Settings</Button>}>
                     <div className="mb-3 flex flex-wrap gap-2 text-xs font-bold text-muted"><span>{filteredPublicityContracts.length} records</span><span>·</span><span>Loaded from PostgreSQL contract registry</span></div>
@@ -2626,10 +2647,11 @@ export default function Page() {
                 </>
               ) : (
               <>
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <Card icon={CheckCircle2} label="Running / Active" value={filteredContracts.active.length} subtext="Awarded units currently active" />
-                <Card icon={CircleAlert} label="Unawarded / Other" value={filteredContracts.other.length} subtext="No offer, tender, or other status" />
-                <Card icon={Wallet} label="Payments" value={filteredContracts.earnings.length} subtext="Unit-wise payment records" />
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full border border-line bg-accentSoft px-3 py-1.5 text-xs font-black text-ink">Running / Active <b className="ml-1 text-accent">{filteredContracts.active.length}</b></span>
+                <span className="rounded-full border border-line bg-surfaceStrong px-3 py-1.5 text-xs font-black text-ink">Unawarded / Other <b className="ml-1 text-accent">{filteredContracts.other.length}</b></span>
+                <span className="rounded-full border border-line bg-surfaceStrong px-3 py-1.5 text-xs font-black text-ink">Payments <b className="ml-1 text-accent">{filteredContracts.earnings.length}</b></span>
+                <label className="flex items-center gap-1.5 text-xs font-black text-muted"><span>Station</span><select value={cateringStation} onChange={(event) => setCateringStation(event.target.value)} className="soft-inset h-8 max-w-48 rounded-full border border-line px-2.5 text-xs font-bold text-ink outline-none focus:border-accent">{contractStations.map((option) => <option key={option} value={option}>{option === "all" ? "All stations" : option}</option>)}</select></label>
               </div>
               <Panel
                 title="Contracts Workspace"
@@ -3800,8 +3822,38 @@ export default function Page() {
                 ["End", modal.record.contract.period?.end],
                 ["Annual License Fee", money(modal.record.contract.financials?.annual_license_fee)],
                 ["Total Contract Value", money(modal.record.contract.financials?.total_contract_value)],
+                ["Payments Recorded", modal.record.contract.payment_summary?.recorded || 0],
+                ["Payments Scheduled", modal.record.contract.payment_summary?.scheduled || 0],
+                ["Amount Paid", money(modal.record.contract.payment_summary?.amount_paid)],
+                ["Amount Due", money(modal.record.contract.payment_summary?.amount_due)],
               ]}
             />
+            <Panel title="Contract-wise Payments" subtitle="Payments and instalments linked to this contract only.">
+              {(modal.record.contract.payments || []).length ? (
+                <DataTable
+                  columns={[
+                    { key: "payment_date", label: "Date" },
+                    { key: "amount_due", label: "Due", render: (row) => money(row.amount_due) },
+                    { key: "amount_paid", label: "Paid", render: (row) => money(row.amount_paid) },
+                    { key: "payment_status", label: "Status", render: (row) => <Badge tone={/paid|received/i.test(pretty(row.payment_status)) ? "accent" : "warning"}>{pretty(row.payment_status)}</Badge> },
+                    { key: "payment_reference", label: "Reference" },
+                  ]}
+                  rows={modal.record.contract.payments || []}
+                  getKey={(row, index) => `${row.payment_id || row.payment_date || "payment"}-${index}`}
+                  emptyTitle="No recorded payments for this contract."
+                  fileName="publicity-contract-payments.csv"
+                />
+              ) : <div className="text-sm text-muted">No recorded payment entries. Scheduled instalments: {modal.record.contract.payment_summary?.scheduled || 0}.</div>}
+            </Panel>
+            <Panel title="Payment Schedule" subtitle="Contract-specific instalments from the auction register.">
+              <DataTable
+                columns={[{ key: "installment_number", label: "Installment" }, { key: "period_label", label: "Period" }, { key: "due_date", label: "Due Date" }, { key: "expected_amount", label: "Expected", render: (row) => money(row.expected_amount) }, { key: "status", label: "Status" }]}
+                rows={modal.record.contract.payment_schedule || []}
+                getKey={(row, index) => `${row.schedule_id || row.installment_number}-${index}`}
+                emptyTitle="No payment schedule found for this contract."
+                fileName="publicity-contract-schedule.csv"
+              />
+            </Panel>
           </div>
         ) : modal.type === "amenity" ? (
           <div className="space-y-4">

@@ -13,6 +13,7 @@ from models import (
     ContractRegistryContract,
     ContractRegistryContractor,
     ContractRegistryPaymentSchedule,
+    ContractRegistryPayment,
     ContractRegistryStatusHistory,
     CommercialContract,
     Unit,
@@ -214,8 +215,10 @@ def backfill_legacy_contracts() -> dict[str, int]:
         session.close()
 
 
-def _contract_dict(row: ContractRegistryContract, contractor: ContractRegistryContractor | None, assets: list[ContractRegistryAsset], schedules: list[ContractRegistryPaymentSchedule]) -> dict[str, Any]:
-    return {"contract_id": row.contract_id, "contract_number": row.contract_number, "contract_name": row.contract_name, "status": row.status, "contract_family": row.contract_family, "award_method": row.award_method, "policy_code": row.policy_code, "category": row.category, "period": {"loa_date": row.loa_date, "start": row.period_start, "end": row.period_end, "duration_value": row.duration_value, "duration_unit": row.duration_unit}, "financials": {"annual_license_fee": row.annual_license_fee, "quarterly_license_fee": row.quarterly_license_fee, "total_contract_value": row.total_contract_value, "additional_license_fee": row.additional_license_fee}, "contractor": {"contractor_id": contractor.contractor_id, "legal_name": contractor.legal_name} if contractor else None, "assets": [{"asset_type": item.asset_type, "station_code": item.station_code, "train_number": item.train_number, "asset_name": item.asset_name, "raw_asset_value": item.raw_asset_value, "match_status": item.match_status} for item in assets], "payment_schedule": [{"schedule_id": item.schedule_id, "installment_number": item.installment_number, "period_label": item.period_label, "due_date": item.due_date, "expected_amount": item.expected_amount, "status": item.status} for item in schedules], "source": {"system": row.source_system, "file": row.source_file, "sheet": row.source_sheet, "row": row.source_row_number}}
+def _contract_dict(row: ContractRegistryContract, contractor: ContractRegistryContractor | None, assets: list[ContractRegistryAsset], schedules: list[ContractRegistryPaymentSchedule], payments: list[ContractRegistryPayment] | None = None) -> dict[str, Any]:
+    payment_rows = payments or []
+    payment_items = [{"payment_id": item.payment_id, "schedule_id": item.schedule_id, "payment_date": item.payment_date, "amount_due": item.amount_due, "amount_paid": item.amount_paid, "interest_amount": item.interest_amount, "delay_days": item.delay_days, "payment_reference": item.payment_reference, "payment_status": item.payment_status, "source_reference": item.source_reference, "remarks": item.remarks} for item in payment_rows]
+    return {"contract_id": row.contract_id, "contract_number": row.contract_number, "contract_name": row.contract_name, "status": row.status, "contract_family": row.contract_family, "award_method": row.award_method, "policy_code": row.policy_code, "category": row.category, "period": {"loa_date": row.loa_date, "start": row.period_start, "end": row.period_end, "duration_value": row.duration_value, "duration_unit": row.duration_unit}, "financials": {"annual_license_fee": row.annual_license_fee, "quarterly_license_fee": row.quarterly_license_fee, "total_contract_value": row.total_contract_value, "additional_license_fee": row.additional_license_fee}, "contractor": {"contractor_id": contractor.contractor_id, "legal_name": contractor.legal_name} if contractor else None, "assets": [{"asset_type": item.asset_type, "station_code": item.station_code, "train_number": item.train_number, "asset_name": item.asset_name, "raw_asset_value": item.raw_asset_value, "match_status": item.match_status} for item in assets], "payment_schedule": [{"schedule_id": item.schedule_id, "installment_number": item.installment_number, "period_label": item.period_label, "due_date": item.due_date, "expected_amount": item.expected_amount, "status": item.status} for item in schedules], "payments": payment_items, "payment_summary": {"scheduled": len(schedules), "recorded": len(payment_items), "amount_due": sum(float(item.amount_due or 0) for item in payment_rows), "amount_paid": sum(float(item.amount_paid or 0) for item in payment_rows), "pending": sum(1 for item in payment_rows if str(item.payment_status or '').lower() in {'pending', 'overdue'})}, "source": {"system": row.source_system, "file": row.source_file, "sheet": row.source_sheet, "row": row.source_row_number}}
 
 
 def list_registry_contracts(status: str | None = None, search: str | None = None, asset_type: str | None = None) -> list[dict[str, Any]]:
@@ -230,17 +233,20 @@ def list_registry_contracts(status: str | None = None, search: str | None = None
         contract_ids = [contract.contract_id for contract, _ in contract_rows]
         assets_by_contract: dict[int, list[ContractRegistryAsset]] = {}
         schedules_by_contract: dict[int, list[ContractRegistryPaymentSchedule]] = {}
+        payments_by_contract: dict[int, list[ContractRegistryPayment]] = {}
         if contract_ids:
             for item in session.query(ContractRegistryAsset).filter(ContractRegistryAsset.contract_id.in_(contract_ids)).all():
                 assets_by_contract.setdefault(item.contract_id, []).append(item)
             for item in session.query(ContractRegistryPaymentSchedule).filter(ContractRegistryPaymentSchedule.contract_id.in_(contract_ids)).order_by(ContractRegistryPaymentSchedule.installment_number).all():
                 schedules_by_contract.setdefault(item.contract_id, []).append(item)
+            for item in session.query(ContractRegistryPayment).filter(ContractRegistryPayment.contract_id.in_(contract_ids)).order_by(ContractRegistryPayment.payment_date, ContractRegistryPayment.payment_id).all():
+                payments_by_contract.setdefault(item.contract_id, []).append(item)
         rows = []
         for contract, contractor in contract_rows:
             assets = assets_by_contract.get(contract.contract_id, [])
             if asset_type and asset_type != "all" and not any(item.asset_type == asset_type for item in assets):
                 continue
-            rows.append(_contract_dict(contract, contractor, assets, schedules_by_contract.get(contract.contract_id, [])))
+            rows.append(_contract_dict(contract, contractor, assets, schedules_by_contract.get(contract.contract_id, []), payments_by_contract.get(contract.contract_id, [])))
         return rows
     finally: session.close()
 
@@ -253,7 +259,8 @@ def get_registry_contract(contract_id: int) -> dict[str, Any] | None:
         contractor = session.get(ContractRegistryContractor, row.contractor_id) if row.contractor_id else None
         assets = session.query(ContractRegistryAsset).filter_by(contract_id=contract_id).all()
         schedules = session.query(ContractRegistryPaymentSchedule).filter_by(contract_id=contract_id).order_by(ContractRegistryPaymentSchedule.installment_number).all()
-        return _contract_dict(row, contractor, assets, schedules)
+        payments = session.query(ContractRegistryPayment).filter_by(contract_id=contract_id).order_by(ContractRegistryPayment.payment_date, ContractRegistryPayment.payment_id).all()
+        return _contract_dict(row, contractor, assets, schedules, payments)
     finally: session.close()
 
 
