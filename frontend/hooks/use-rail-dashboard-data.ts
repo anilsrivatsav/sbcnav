@@ -15,6 +15,7 @@ export function useRailDashboardData() {
   const [commercialContracts, setCommercialContracts] = useState([]);
   const [commercialContractReports, setCommercialContractReports] = useState(null);
   const [contractAlerts, setContractAlerts] = useState(null);
+  const [registryContracts, setRegistryContracts] = useState([]);
   const [paSummary, setPaSummary] = useState([]);
   const [paInfra, setPaInfra] = useState([]);
   const [paPlatforms, setPaPlatforms] = useState([]);
@@ -42,6 +43,7 @@ export function useRailDashboardData() {
     setCommercialContracts(data.commercialContracts);
     setCommercialContractReports(data.commercialContractReports);
     setContractAlerts(data.contractAlerts);
+    setRegistryContracts(data.registryContracts);
     setReports(data.reports);
     setPaSummary(data.passengerAmenities.summary);
     setPaInfra(data.passengerAmenities.infra);
@@ -99,6 +101,7 @@ export function useRailDashboardData() {
     commercialContracts,
     commercialContractReports,
     contractAlerts,
+    registryContracts,
     paSummary,
     paInfra,
     paPlatforms,

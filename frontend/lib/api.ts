@@ -55,6 +55,7 @@ export async function loadRailDashboardData() {
     fetchOrDefault(`${API_URL}/api/commercial-contracts?page=1&page_size=5000&sort_by=contract_name`, defaultPage),
     fetchOrDefault(`${API_URL}/api/commercial-contracts/reports`, {}),
     fetchOrDefault(`${API_URL}/api/contracts/alerts`, {}),
+    fetchOrDefault(`${API_URL}/api/contracts?status=all&page=1&page_size=5000`, defaultPage),
     fetchOrDefault(`${API_URL}/api/reports`, {}),
     fetchOrDefault(`${API_URL}/api/passenger-amenities?kind=summary&page=1&page_size=5000&sort_by=station_code`, defaultPage),
     fetchOrDefault(`${API_URL}/api/passenger-amenities?kind=infra&page=1&page_size=5000&sort_by=station_code`, defaultPage),
@@ -78,6 +79,7 @@ export async function loadRailDashboardData() {
     commercialContractsData,
     commercialContractReportsData,
     contractAlertsData,
+    registryContractsData,
     reportsData,
     paSummaryData,
     paInfraData,
@@ -105,6 +107,7 @@ export async function loadRailDashboardData() {
     commercialContracts: commercialContractsData.items || [],
     commercialContractReports: commercialContractReportsData,
     contractAlerts: contractAlertsData,
+    registryContracts: registryContractsData.items || [],
     reports: reportsData,
     passengerAmenities: {
       summary: paSummaryData.items || [],

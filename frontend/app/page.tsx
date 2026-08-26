@@ -14,6 +14,7 @@ import {
   Download,
   FileText,
   Home,
+  Megaphone,
   Moon,
   Pencil,
   Plus,
@@ -230,9 +231,9 @@ function Tabs({ tabs, value, onChange }) {
   );
 }
 
-function Card({ icon: Icon, label, value, subtext }) {
-  return (
-    <div className="soft-surface rounded-xl border p-5 transition hover:-translate-y-0.5 hover:border-accent/40">
+function Card({ icon: Icon, label, value, subtext, onClick }) {
+  const content = (
+    <div className={cx("soft-surface rounded-xl border p-5 transition", onClick ? "hover:-translate-y-0.5 hover:border-accent/50" : "hover:-translate-y-0.5 hover:border-accent/40")}>
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="text-xs font-semibold text-muted">{label}</div>
@@ -245,6 +246,7 @@ function Card({ icon: Icon, label, value, subtext }) {
       <div className="mt-3 text-xs font-semibold text-muted">{subtext}</div>
     </div>
   );
+  return onClick ? <button type="button" onClick={onClick} className="block w-full text-left focus-ring">{content}</button> : content;
 }
 
 function Panel({ title, subtitle, action, children }) {
@@ -649,6 +651,7 @@ export default function Page() {
     paNorms,
     paReports,
     reports,
+    registryContracts,
     loading,
     setLoading,
     activityStatus,
@@ -666,6 +669,7 @@ export default function Page() {
   const [workTab, setWorkTab] = useState("all");
   const [workSummaryTab, setWorkSummaryTab] = useState("summary");
   const [workSummarySheet, setWorkSummarySheet] = useState({ open: false, title: "", rows: [] });
+  const [dashboardSheet, setDashboardSheet] = useState({ open: false, title: "", subtitle: "", groups: [] });
   const [stationModalTab, setStationModalTab] = useState("overview");
   const [reportTab, setReportTab] = useState("overview");
   const [contractExpiryWindow, setContractExpiryWindow] = useState(30);
@@ -964,6 +968,8 @@ export default function Page() {
 
   const completedWorks = useMemo(() => works.filter((work) => /complete|done/i.test(String(work.status || ""))).length, [works]);
   const pendingWorks = useMemo(() => works.filter((work) => !/complete|done/i.test(String(work.status || ""))).length, [works]);
+  const publicityContracts = useMemo(() => registryContracts.filter((contract) => /advert|publicity|audio|announcement|out.?of.?home|ooh/i.test(`${contract.category || ""} ${contract.contract_name || ""} ${contract.policy_code || ""}`)), [registryContracts]);
+  const runningPublicityContracts = useMemo(() => publicityContracts.filter((contract) => /running|active/i.test(String(contract.status || ""))), [publicityContracts]);
   const paidEarnings = useMemo(() => earnings.filter((entry) => /paid|received/i.test(String(entry.receipt_type || ""))).length, [earnings]);
   const pendingEarnings = useMemo(() => earnings.filter((entry) => /pending/i.test(String(entry.receipt_type || ""))).length, [earnings]);
 
@@ -1285,11 +1291,9 @@ export default function Page() {
     { key: "stations", icon: TrainFront, label: "Stations", subtext: "Registered stations in the database" },
     { key: "units", icon: Users, label: "Contracts", subtext: "Catering stalls and vending contracts" },
     { key: "works", icon: Wrench, label: "Works", subtext: "Sanctioned work records" },
-    { key: "earningsTotal", icon: Wallet, label: "Contract Revenue", subtext: "Payments captured inside catering units", money: true },
+    { key: "publicityRunning", icon: Megaphone, label: "Publicity Running", subtext: "Running publicity, advertising, and audio contracts" },
     { key: "completedWorks", icon: BarChart3, label: "Completed Works", subtext: "Works with complete/done status" },
-    { key: "pendingWorks", icon: CircleAlert, label: "Pending Works", subtext: "Open or unfinished work items" },
-    { key: "openFindings", icon: CircleAlert, label: "Open Findings", subtext: "Inspection deficiencies needing action" },
-    { key: "overdueFindings", icon: Timer, label: "Overdue Findings", subtext: "Inspection actions past target date" },
+    { key: "pendingWorks", icon: CircleAlert, label: "Work in Progress", subtext: "Open or unfinished work items" },
   ];
 
   const amenityCount = filteredAmenities[amenityTab]?.length || 0;
@@ -1812,6 +1816,38 @@ export default function Page() {
     } catch (error) {
       setActivityStatus(error?.message || "Progress history unavailable");
     }
+  };
+
+  const openPublicity = (contract) => {
+    setModal({ open: true, type: "publicity", record: { contract } });
+  };
+
+  const openDashboardDrilldown = (key) => {
+    const groupRows = (rows, getLabel) => {
+      const grouped = new Map();
+      rows.forEach((row) => {
+        const label = pretty(getLabel(row) || "Other");
+        if (!grouped.has(label)) grouped.set(label, []);
+        grouped.get(label).push(row);
+      });
+      return Array.from(grouped.entries())
+        .sort((left, right) => right[1].length - left[1].length || left[0].localeCompare(right[0]))
+        .map(([label, rows]) => ({ label, rows }));
+    };
+    if (key === "stations") {
+      setDashboardSheet({ open: true, title: "Stations", subtitle: `${stations.length} stations · grouped by station category`, groups: groupRows(stations, (row) => row.categorisation || row.division) });
+      return;
+    }
+    if (key === "units") {
+      setDashboardSheet({ open: true, title: "Catering contracts", subtitle: `${units.length} stalls and vending units · grouped by type/category`, groups: groupRows(units, (row) => row.type_of_unit || row.station_category) });
+      return;
+    }
+    if (key === "publicityRunning") {
+      setDashboardSheet({ open: true, title: "Running publicity contracts", subtitle: `${runningPublicityContracts.length} running contracts · grouped by publicity type/category`, groups: groupRows(runningPublicityContracts, (row) => row.category || row.policy_code) });
+      return;
+    }
+    const rows = key === "completedWorks" ? works.filter((row) => /complete|done/i.test(String(row.status || ""))) : key === "pendingWorks" ? works.filter((row) => !/complete|done/i.test(String(row.status || ""))) : works;
+    setDashboardSheet({ open: true, title: key === "completedWorks" ? "Completed works" : key === "pendingWorks" ? "Work in progress" : "Sanctioned works", subtitle: `${rows.length} works · grouped by work type/allocation`, groups: groupRows(rows, (row) => row.scope_type || row.work_type || row.allocation) });
   };
 
   const saveWorkProgress = async () => {
@@ -2479,8 +2515,9 @@ export default function Page() {
                     key={card.key}
                     icon={card.icon}
                     label={card.label}
-                    value={card.money ? money(stats?.[card.key] ?? 0) : card.key === "completedWorks" ? completedWorks : card.key === "pendingWorks" ? pendingWorks : card.key === "openFindings" ? reports?.inspections?.findings_open ?? 0 : card.key === "overdueFindings" ? reports?.inspections?.findings_overdue ?? 0 : stats?.[card.key] ?? 0}
+                    value={card.key === "completedWorks" ? completedWorks : card.key === "pendingWorks" ? pendingWorks : card.key === "publicityRunning" ? runningPublicityContracts.length : stats?.[card.key] ?? 0}
                     subtext={card.subtext}
+                    onClick={() => openDashboardDrilldown(card.key)}
                   />
                 ))}
               </div>
@@ -3383,6 +3420,42 @@ export default function Page() {
         </div>
       </BottomSheet>
 
+      <BottomSheet
+        open={dashboardSheet.open}
+        title={dashboardSheet.title}
+        subtitle={dashboardSheet.subtitle}
+        onClose={() => setDashboardSheet({ open: false, title: "", subtitle: "", groups: [] })}
+      >
+        <div className="space-y-4">
+          {dashboardSheet.groups.map((group) => (
+            <Panel key={group.label} title={`${group.label} · ${group.rows.length}`}>
+              <div className="space-y-2">
+                {group.rows.map((row, index) => {
+                  const isPublicity = dashboardSheet.title.toLowerCase().includes("publicity");
+                  const isWork = dashboardSheet.title.toLowerCase().includes("work");
+                  return (
+                    <button
+                      key={`${row.contract_id || row.project_id || row.unit_no || row.station_code || index}`}
+                      type="button"
+                      onClick={() => isPublicity ? openPublicity(row) : isWork ? openWork(row) : dashboardSheet.title.toLowerCase().includes("catering") ? openUnit(row) : openStation(row)}
+                      className="soft-raised flex w-full items-start justify-between gap-3 rounded-lg border border-line p-3 text-left hover:border-accent"
+                    >
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-black text-ink">{pretty(isPublicity ? row.contract_name : isWork ? (row.source_project_id || row.project_id) : dashboardSheet.title.toLowerCase().includes("catering") ? row.unit_no : row.station_code)}</div>
+                        <div className="mt-1 line-clamp-2 text-xs text-muted">{pretty(isPublicity ? (row.contractor?.legal_name || row.category) : isWork ? row.short_name_of_work : dashboardSheet.title.toLowerCase().includes("catering") ? `${row.type_of_unit || "Unit"} · ${row.station_code || "No station"}` : row.station_name)}</div>
+                        {isWork ? <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-bold text-muted"><span>Physical: {pretty(row.physical_progress)}</span><span>Financial: {pretty(row.financial_progress)}</span><span>Allocation: {pretty(row.allocation)}</span></div> : null}
+                      </div>
+                      <Badge tone="accent">{pretty(isPublicity ? row.status : isWork ? row.status : dashboardSheet.title.toLowerCase().includes("catering") ? (isAvailableUnit(row) ? "Available" : row.unit_status) : row.categorisation)}</Badge>
+                    </button>
+                  );
+                })}
+              </div>
+            </Panel>
+          ))}
+          {!dashboardSheet.groups.length ? <EmptyState title="No records found" description="This KPI has no records in the current database snapshot." /> : null}
+        </div>
+      </BottomSheet>
+
       <Modal
         open={modal.open}
         title={
@@ -3396,6 +3469,8 @@ export default function Page() {
                   ? `${pretty(modal.record?.work?.project_id)} - ${pretty(modal.record?.work?.short_name_of_work)}`
                   : modal.type === "commercial"
                     ? `${pretty(modal.record?.contract?.contract_name)} - Commercial`
+                  : modal.type === "publicity"
+                    ? `${pretty(modal.record?.contract?.contract_name)} - Publicity`
                   : modal.type === "amenity"
                     ? `${pretty(modal.record?.amenity?.station_code || modal.record?.amenity?.category)} - Passenger Amenity`
                   : "Detail"
@@ -3411,6 +3486,8 @@ export default function Page() {
                   ? "Full sanctioned work record."
                   : modal.type === "commercial"
                     ? "Commercial contract details with station linkage and payment schedule."
+                  : modal.type === "publicity"
+                    ? "Publicity contract details from the contract registry."
                   : modal.type === "amenity"
                     ? "Passenger amenity data linked by station code."
                   : null
@@ -3659,6 +3736,24 @@ export default function Page() {
                 fileName="commercial-contract-payments.csv"
               />
             </Panel>
+          </div>
+        ) : modal.type === "publicity" ? (
+          <div className="space-y-4">
+            <KeyValueGrid
+              rows={[
+                ["Contract Number", modal.record.contract.contract_number],
+                ["Category", modal.record.contract.category],
+                ["Policy", modal.record.contract.policy_code],
+                ["Status", modal.record.contract.status],
+                ["Contractor", modal.record.contract.contractor?.legal_name],
+                ["Asset Type", modal.record.contract.assets?.map((asset) => asset.asset_type).join(", ")],
+                ["Asset / Station / Train", modal.record.contract.assets?.map((asset) => asset.asset_name || asset.station_code || asset.train_number).join(", ")],
+                ["Start", modal.record.contract.period?.start],
+                ["End", modal.record.contract.period?.end],
+                ["Annual License Fee", money(modal.record.contract.financials?.annual_license_fee)],
+                ["Total Contract Value", money(modal.record.contract.financials?.total_contract_value)],
+              ]}
+            />
           </div>
         ) : modal.type === "amenity" ? (
           <div className="space-y-4">
