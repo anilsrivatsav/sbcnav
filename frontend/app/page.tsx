@@ -2277,6 +2277,15 @@ export default function Page() {
                 </div>
                 <div className="mt-3 flex flex-wrap gap-3 rounded-lg border border-line bg-surfaceStrong p-3 text-sm"><span className="font-semibold text-ink">Status: {dataCentre?.status === "ready" ? "Ready" : "Needs attention"}</span><span className="text-muted">Last activity: {dataCentre?.last_sync_at ? compactDate(dataCentre.last_sync_at) : "Not available"}</span><span className="text-muted">Quality exceptions: {dataCentre?.quality?.total ?? 0}</span></div>
               </Panel>
+              <Panel title="Source health" subtitle="Green means the source is connected and its row count matches PostgreSQL. Amber means it needs a refresh or has no source snapshot.">
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                  {Object.entries(dataCentre?.modules || {}).map(([key, module]) => {
+                    const source = dataCentre?.source_snapshots?.[key] || {};
+                    const healthy = Boolean(source.last_refresh_at) && Number(source.source_count) === Number(module.count);
+                    return <div key={key} className="flex items-center gap-3 rounded-lg border border-line bg-surfaceStrong p-3"><span className={`h-3 w-3 shrink-0 rounded-full ${healthy ? "bg-emerald-500" : "bg-amber-500"}`} title={healthy ? "Refreshed" : "Needs refresh"} /><div className="min-w-0"><div className="truncate text-sm font-black text-ink">{pretty(key)}</div><div className="truncate text-xs text-muted">{healthy ? `Refreshed · ${source.source || "PostgreSQL"}` : "Needs refresh"}</div></div></div>;
+                  })}
+                </div>
+              </Panel>
               <Panel title="Manual imports" subtitle="Use these for workbook or CSV-based source updates when required.">
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                   <Button variant="secondary" onClick={importCommercialContractsWorkbook} disabled={loading} className="min-h-16 justify-start text-accent"><UploadCloud size={17} /><span><span className="block font-black">Import contracts XLSX</span><span className="text-xs font-medium opacity-75">Commercial contract registry</span></span></Button>
@@ -2295,7 +2304,7 @@ export default function Page() {
 
           {view === "dashboard" ? (
             <>
-              <Panel
+              {false ? <Panel
                 title="Data Centre"
                 subtitle="Freshness and quality of the records currently powering this dashboard."
                 action={
@@ -2416,7 +2425,7 @@ export default function Page() {
                     </div>
                   </div>
                 ) : null}
-              </Panel>
+              </Panel> : null}
               <Panel
                 title="Action Centre"
                 subtitle="The next records that need attention across contracts, receipts, works, and station links."
