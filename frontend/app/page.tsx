@@ -978,7 +978,7 @@ export default function Page() {
   const worksByCategory = useMemo(() => {
     const counts = new Map();
     works.forEach((work) => {
-      const key = work.scope_type || "Other";
+      const key = work.scope_type || work.work_type || "Other";
       counts.set(key, (counts.get(key) || 0) + 1);
     });
     return Array.from(counts.entries()).map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
@@ -1075,9 +1075,9 @@ export default function Page() {
       const statusOk = sameFilterValue(row.status, filters.workStatus);
       return searchOk && statusOk;
     });
-    const stationRows = baseRows.filter((row) => sameFilterValue(row.scope_type, "Station") && row.station_code);
-    const abssRows = baseRows.filter((row) => sameFilterValue(row.scope_type, "ABSS"));
-    const divisionRows = baseRows.filter((row) => sameFilterValue(row.scope_type, "Division"));
+    const stationRows = baseRows.filter((row) => sameFilterValue(row.scope_type || row.work_type, "Station") && (row.station_code || row.station_codes?.length));
+    const abssRows = baseRows.filter((row) => sameFilterValue(row.scope_type || row.work_type, "ABSS"));
+    const divisionRows = baseRows.filter((row) => sameFilterValue(row.scope_type || row.work_type, "Division"));
     const stationFilteredRows = stationRows.filter((row) => sameFilterValue(row.station_code, filters.workStation));
     return {
       station: stationFilteredRows,
