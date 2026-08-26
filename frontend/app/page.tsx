@@ -2,7 +2,7 @@
 "use client";
 // The main screen is being decomposed into typed feature modules incrementally.
 
-import { useEffect, useMemo, useState } from "react";
+import { startTransition, useEffect, useMemo, useState } from "react";
 import {
   BarChart3,
   Bot,
@@ -381,7 +381,7 @@ function NavButton({ active, icon: Icon, label, hint, onClick }) {
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={() => startTransition(onClick)}
       title={hint}
       className={`focus-ring flex min-w-[184px] items-start gap-2 rounded-lg border px-2.5 py-2 text-left transition lg:w-full lg:min-w-0 ${active ? "border-blue-200 bg-blue-50 text-blue-700 shadow-none" : "border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-950"
         }`}
