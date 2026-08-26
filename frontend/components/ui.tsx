@@ -198,7 +198,7 @@ const csvEscape = (value) => {
   return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 };
 
-export function DataTable({ columns, rows, getKey, onRowClick, emptyTitle = "No records found", fileName = "export.csv", pageSizeOptions = [10, 25, 50, 100] }: any) {
+export function DataTable({ columns, rows, getKey, onRowClick, emptyTitle = "No records found", fileName = "export.csv", pageSizeOptions = [10, 25, 50, 100], enableColumnFilters = true }: any) {
   const [sort, setSort] = useState({ key: columns[0]?.key, direction: "asc" });
   const [filters, setFilters] = useState({});
   const [page, setPage] = useState(1);
@@ -257,9 +257,7 @@ export function DataTable({ columns, rows, getKey, onRowClick, emptyTitle = "No 
       <div className="soft-inset flex flex-col gap-2 rounded-lg border border-line p-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="text-xs font-bold text-muted">{sortedRows.length} filtered rows from {rows.length}</div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="ghost" size="sm" onClick={() => setShowFilters((value) => !value)}>
-            {showFilters ? "Hide filters" : "Filter columns"}
-          </Button>
+          {enableColumnFilters ? <Button variant="ghost" size="sm" onClick={() => setShowFilters((value) => !value)}>{showFilters ? "Hide filters" : "Filter columns"}</Button> : null}
           <Button variant="secondary" size="sm" onClick={() => setCompact((value) => !value)}>
             {compact ? "Detailed view" : "Compact view"}
           </Button>
@@ -284,7 +282,7 @@ export function DataTable({ columns, rows, getKey, onRowClick, emptyTitle = "No 
                 </th>
               ))}
             </tr>
-            {showFilters ? <tr>
+            {enableColumnFilters && showFilters ? <tr>
               {columns.map((column) => (
                 <th key={`${column.key}-filter`} className="border-b border-line px-3 py-2">
                   <input

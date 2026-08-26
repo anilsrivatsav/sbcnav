@@ -6,6 +6,8 @@ import { useEffect, useMemo, useState } from "react";
 import {
   BarChart3,
   Bot,
+  CalendarDays,
+  CheckCircle2,
   CircleAlert,
   ChevronRight,
   Database,
@@ -103,6 +105,11 @@ const workReportSection = (row) => {
   if (text.includes("sdee")) return "SDEE";
   if (text.includes("gsu") || text.includes("gati sakthi")) return "GSU/SBC";
   return pretty(row.section) === "NA" ? "Other" : pretty(row.section);
+};
+const isActiveCateringUnit = (unit = {}) => {
+  const status = String(unit.unit_status || "").toLowerCase();
+  if (isAvailableUnit(unit)) return false;
+  return !/no offers|scheduled|tender|under process|cancelled|not awarded|no train service/.test(status);
 };
 
 function StationMetricsReport() {
@@ -655,8 +662,9 @@ export default function Page() {
   const [search, setSearch] = useState({ dashboard: "", stations: "", contracts: "", commercial: "", units: "", earnings: "", works: "", amenities: "", reports: "", ai: "", settings: "" });
   const [visibleLimit, setVisibleLimit] = useState({ stations: 24, units: 24, earnings: 24, works: 24, reports: 24, commercial: 24 });
   const [amenityTab, setAmenityTab] = useState("summary");
-  const [contractTab, setContractTab] = useState("units");
-  const [workTab, setWorkTab] = useState("station");
+  const [contractTab, setContractTab] = useState("active");
+  const [workTab, setWorkTab] = useState("all");
+  const [workSummaryTab, setWorkSummaryTab] = useState("summary");
   const [stationModalTab, setStationModalTab] = useState("overview");
   const [reportTab, setReportTab] = useState("overview");
   const [contractExpiryWindow, setContractExpiryWindow] = useState(30);
@@ -946,8 +954,8 @@ export default function Page() {
   }, [reportPresets]);
 
   useEffect(() => {
-    if (!["station", "abss", "division"].includes(workTab)) {
-      setWorkTab("station");
+    if (!["all", "station", "abss", "division"].includes(workTab)) {
+      setWorkTab("all");
     }
   }, [workTab]);
 
@@ -1040,6 +1048,8 @@ export default function Page() {
     const q = search.contracts || "";
     return {
       units: units.filter((row) => matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "unit_status", "remarks", "station_category", "type_of_unit", "pf_no"], q)),
+      active: units.filter((row) => isActiveCateringUnit(row) && matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "unit_status", "remarks", "station_category", "type_of_unit", "pf_no"], q)),
+      other: units.filter((row) => !isActiveCateringUnit(row) && matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "unit_status", "remarks", "station_category", "type_of_unit", "pf_no"], q)),
       earnings: earnings.filter((row) => matchesQuery(row, ["unit_no", "station_code", "licensee_name", "payment_head", "payment_sub_head", "receipt_type", "mr_no", "amount"], q)),
     };
   }, [units, earnings, search.contracts]);
@@ -1284,6 +1294,12 @@ export default function Page() {
   const contractCount = filteredContracts[contractTab]?.length || 0;
   const aiRows = Array.isArray(aiResult?.rows) ? aiResult.rows : [];
   const activeWorkRows = filteredWorks[workTab] || [];
+  const workSummaryRows = workMonitoring?.items || works;
+  const workSummaryGroups = useMemo(() => {
+    const keyFor = (row, key) => pretty(row[key] || "Unknown");
+    const grouped = (key) => Array.from(workSummaryRows.reduce((map, row) => { const keyValue = keyFor(row, key); map.set(keyValue, (map.get(keyValue) || 0) + 1); return map; }, new Map()).entries()).map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
+    return { srden: grouped("sr_den"), year: grouped("year_of_sanction"), allocation: grouped("allocation") };
+  }, [workSummaryRows]);
   const dashboardCount = view === "stations" ? filteredStations.length : view === "contracts" ? contractCount : view === "commercial" ? filteredCommercialContracts.length : view === "units" ? filteredUnits.length : view === "earnings" ? filteredEarnings.length : view === "works" ? activeWorkRows.length : view === "amenities" ? amenityCount : view === "reports" ? filteredReportAlerts.length : view === "ai" ? aiRows.length : stats?.stations ?? 0;
   const activeSearch = search[view] ?? "";
   const setActiveSearch = (value) => {
@@ -1324,15 +1340,13 @@ export default function Page() {
     { key: "amount", label: "Amount", value: (row) => row.amount || 0, render: (row) => <span className="font-semibold">{money(row.amount)}</span> },
   ];
   const workColumns = [
-    { key: "source_sn", label: "SN" },
     { key: "source_project_id", label: "Project", value: (row) => pretty(row.source_project_id || row.project_id), render: (row) => <span className="font-black text-blue">{pretty(row.source_project_id || row.project_id)}</span> },
     { key: "short_name_of_work", label: "Work", value: (row) => pretty(row.short_name_of_work), render: (row) => <span className="line-clamp-2 font-medium text-ink">{pretty(row.short_name_of_work)}</span> },
-    { key: "status", label: "Status", value: (row) => pretty(row.status), render: (row) => <Badge tone={/complete|done/i.test(pretty(row.status)) ? "accent" : "neutral"}>{pretty(row.status)}</Badge> },
-    { key: "scope_type", label: "Scope" },
-    { key: "station_code", label: "Station" },
-    { key: "section", label: "Section" },
     { key: "cost", label: "Cost", value: (row) => row.cost || 0, render: (row) => <span className="font-semibold">{money(row.cost)}</span> },
-    { key: "physical_progress", label: "Physical" },
+    { key: "physical_progress", label: "Physical progress" },
+    { key: "financial_progress", label: "Financial progress" },
+    { key: "allocation", label: "Allocation" },
+    { key: "remarks", label: "Remarks", render: (row) => <div className="max-w-md line-clamp-3">{pretty(row.remarks)}</div> },
   ];
   const reportWorkColumns = [
     { key: "sl_no", label: "Sl.no" },
@@ -1447,12 +1461,13 @@ export default function Page() {
     { value: "norms", label: "Norms", icon: CircleAlert },
   ];
   const contractTabs = [
-    { value: "units", label: "Catering Units", icon: Users },
+    { value: "active", label: "Running / Active", icon: CheckCircle2 },
+    { value: "other", label: "Unawarded / Other", icon: CircleAlert },
     { value: "earnings", label: "Payments", icon: Wallet },
   ];
   const activeContract = contractTab === "earnings"
     ? { rows: filteredContracts.earnings, columns: earningColumns, fileName: "contract-payments.csv" }
-    : { rows: filteredContracts.units, columns: unitColumns, fileName: "catering-contracts.csv" };
+    : { rows: filteredContracts[contractTab] || filteredContracts.active, columns: unitColumns, fileName: `catering-${contractTab}.csv` };
   const activeAmenity = (() => {
     if (amenityTab === "infra") return { rows: filteredAmenities.infra, columns: infraColumns, fileName: "pa-infra.csv" };
     if (amenityTab === "platforms") return { rows: filteredAmenities.platforms, columns: platformColumns, fileName: "pa-platforms.csv" };
@@ -2505,10 +2520,9 @@ export default function Page() {
           {view === "contracts" ? (
             <div className="space-y-4">
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <Card icon={Users} label="Catering Units" value={filteredContracts.units.length} subtext="Contracts linked to stations" />
+                <Card icon={CheckCircle2} label="Running / Active" value={filteredContracts.active.length} subtext="Awarded units currently active" />
+                <Card icon={CircleAlert} label="Unawarded / Other" value={filteredContracts.other.length} subtext="No offer, tender, or other status" />
                 <Card icon={Wallet} label="Payments" value={filteredContracts.earnings.length} subtext="Unit-wise payment records" />
-                <Card icon={CircleAlert} label="Pending Payments" value={filteredContracts.earnings.filter((row) => /pending/i.test(pretty(row.receipt_type))).length} subtext="Receipts marked pending" />
-                <Card icon={TrendingUp} label="Revenue" value={money(filteredContracts.earnings.reduce((sum, row) => sum + Number(row.amount || 0), 0))} subtext="Visible contract payments" />
               </div>
               <Panel
                 title="Contracts Workspace"
@@ -3144,7 +3158,12 @@ export default function Page() {
             title={viewConfig.title}
             subtitle={view === "stations" ? "Station master with filtering and search." : view === "units" ? "Catering units linked to stations." : view === "earnings" ? "Earnings linked to units and station codes." : view === "works" ? "Sanctioned works with scope and status." : view === "reports" ? "License fee pending and contract expiry alert list." : "Dashboard summary"}
             action={
-              crudFields[view] ? (
+              view === "works" ? (
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" onClick={() => openCreate("works")}><Plus size={15} /> Add work</Button>
+                  <Button size="sm" variant="secondary" onClick={importSanctionedWorks} disabled={loading}><RefreshCw size={14} /> Fetch latest sheet</Button>
+                </div>
+              ) : crudFields[view] ? (
                 <Button size="sm" onClick={() => openCreate(view)}>
                   <Plus size={15} />
                   Add
@@ -3267,9 +3286,33 @@ export default function Page() {
                   <Card icon={Timer} label="TDC overdue" value={workMonitoring?.tdc_overdue ?? 0} subtext="Open works past target date" />
                   <Card icon={TrendingUp} label="Expenditure updates" value={(workMonitoring?.items || []).reduce((sum, row) => sum + Number(row.expenditure_update_count || 0), 0)} subtext="Historical ledger entries" />
                 </div>
+                <Panel title="Works summary" subtitle={`Tally: ${workSummaryRows.length} sanctioned works from the latest register.`}>
+                  <Tabs
+                    tabs={[
+                      { value: "summary", label: "Summary", icon: BarChart3 },
+                      { value: "srden", label: "Sr.DEN wise", icon: Users },
+                      { value: "year", label: "Year wise", icon: CalendarDays },
+                      { value: "allocation", label: "Allocation wise", icon: Wallet },
+                    ]}
+                    value={workSummaryTab}
+                    onChange={setWorkSummaryTab}
+                  />
+                  {workSummaryTab === "summary" ? (
+                    <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                      <Card icon={Wrench} label="Total register" value={workSummaryRows.length} subtext="Must tally with source sheet" />
+                      <Card icon={CheckCircle2} label="Completed" value={workMonitoring?.completed ?? 0} subtext="Effective completed status" />
+                      <Card icon={CircleAlert} label="Open / attention" value={workMonitoring?.open ?? 0} subtext="Not completed or needs review" />
+                    </div>
+                  ) : (
+                    <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                      {(workSummaryGroups[workSummaryTab] || []).map((item) => <button key={item.label} type="button" onClick={() => setSearch((current) => ({ ...current, works: item.label }))} className="soft-raised flex items-center justify-between rounded-lg border border-line p-3 text-left hover:border-accent"><span className="truncate text-sm font-semibold text-ink">{item.label}</span><Badge tone="accent">{item.value}</Badge></button>)}
+                    </div>
+                  )}
+                </Panel>
                 <Tabs
                   tabs={[
-                    { value: "station", label: `All Stations (${filteredWorks.station.length})`, icon: TrainFront },
+                    { value: "all", label: `All sanctioned works (${filteredWorks.all.length})`, icon: Wrench },
+                    { value: "station", label: `Station-linked (${filteredWorks.station.length})`, icon: TrainFront },
                     { value: "abss", label: `ABSS (${filteredWorks.abss.length})`, icon: TrainFront },
                     { value: "division", label: `Division (${filteredWorks.division.length})`, icon: Database },
                   ]}
@@ -3281,8 +3324,10 @@ export default function Page() {
                   rows={activeWorkRows}
                   getKey={(row, index) => `${pretty(row.project_id)}-${pretty(row.station_code)}-${pretty(row.scope_type)}-${pretty(row.scope_value)}-${index}`}
                   onRowClick={openWork}
-                  emptyTitle={workTab === "station" ? "No station-linked works match the selected station/search/status." : workTab === "abss" ? "No ABSS works match the current search/status filters." : "No division works match the current search/status filters."}
+                  emptyTitle={workTab === "all" ? "No sanctioned works match the current search/status filters." : workTab === "station" ? "No station-linked works match the selected station/search/status." : workTab === "abss" ? "No ABSS works match the current search/status filters." : "No division works match the current search/status filters."}
                   fileName={`works-${workTab}-visible.csv`}
+                  pageSizeOptions={[25, 50, 100, 152]}
+                  enableColumnFilters={false}
                 />
               </div>
             ) : null}

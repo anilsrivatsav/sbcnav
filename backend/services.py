@@ -363,6 +363,7 @@ def parse_works(text: str) -> list[dict[str, Any]]:
                 "cost": "cost",
                 "expenditure upto date": "expenditure_upto_date",
                 "physical progress in %": "physical_progress",
+                "financial progress in %": "financial_progress",
                 "financial progress": "financial_progress",
                 "if ub?": "if_ub",
                 "parent work": "parent_work",
