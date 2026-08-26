@@ -68,6 +68,7 @@ export function StationQuickView({ record, loading, stationAlerts = [], onOpenDe
   const commercial = record?.commercial_contracts || [];
   const publicity = record?.publicity_contracts || [];
   const works = record?.works || [];
+  const latestMetric = record?.latest_monthly_metric;
   const alerts = stationAlerts.filter((row) => String(row.station_code || "") === String(station.station_code || ""));
   const platforms = platformTotal(amenities.platforms, summary.platforms);
   const access = [
@@ -93,7 +94,7 @@ export function StationQuickView({ record, loading, stationAlerts = [], onOpenDe
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <SnapshotMetric icon={Users} label="Daily footfall" value={compactNumber(dailyFootfall(station))} />
+        <SnapshotMetric icon={Users} label={latestMetric ? "Latest footfall" : "Baseline footfall"} value={compactNumber(latestMetric?.passenger_footfall || dailyFootfall(station))} />
         <SnapshotMetric icon={BarChart3} label="Platforms" value={platforms} />
         <SnapshotMetric icon={Wallet} label="Contracts" value={contracts.length + commercial.length + publicity.length} />
         <SnapshotMetric icon={Wrench} label="Linked works" value={works.length} />

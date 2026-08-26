@@ -204,6 +204,7 @@ export function DataTable({ columns, rows, getKey, onRowClick, emptyTitle = "No 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(pageSizeOptions[1] || 25);
   const [compact, setCompact] = useState(true);
+  const [showFilters, setShowFilters] = useState(false);
 
   useEffect(() => {
     setPage(1);
@@ -256,6 +257,9 @@ export function DataTable({ columns, rows, getKey, onRowClick, emptyTitle = "No 
       <div className="soft-inset flex flex-col gap-2 rounded-lg border border-line p-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="text-xs font-bold text-muted">{sortedRows.length} filtered rows from {rows.length}</div>
         <div className="flex flex-wrap gap-2">
+          <Button variant="ghost" size="sm" onClick={() => setShowFilters((value) => !value)}>
+            {showFilters ? "Hide filters" : "Filter columns"}
+          </Button>
           <Button variant="secondary" size="sm" onClick={() => setCompact((value) => !value)}>
             {compact ? "Detailed view" : "Compact view"}
           </Button>
@@ -280,7 +284,7 @@ export function DataTable({ columns, rows, getKey, onRowClick, emptyTitle = "No 
                 </th>
               ))}
             </tr>
-            <tr>
+            {showFilters ? <tr>
               {columns.map((column) => (
                 <th key={`${column.key}-filter`} className="border-b border-line px-3 py-2">
                   <input
@@ -291,7 +295,7 @@ export function DataTable({ columns, rows, getKey, onRowClick, emptyTitle = "No 
                   />
                 </th>
               ))}
-            </tr>
+            </tr> : null}
           </thead>
           <tbody>
             {visibleRows.map((row, index) => (

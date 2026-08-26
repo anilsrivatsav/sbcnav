@@ -550,9 +550,6 @@ export default function Page() {
       { name: "section", label: "Section" },
       { name: "categorisation", label: "Category" },
       { name: "platform_type", label: "Platform Type" },
-      { name: "passenger_footfall", label: "Passenger Footfall", type: "number" },
-      { name: "earnings_per_day", label: "Earnings Per Day", type: "number" },
-      { name: "footfalls_per_day", label: "Footfalls Per Day", type: "number" },
     ],
     units: [
       { name: "unit_no", label: "Unit No.", required: true, readOnly: true },
