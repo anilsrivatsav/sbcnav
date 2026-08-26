@@ -226,12 +226,21 @@ def list_registry_contracts(status: str | None = None, search: str | None = None
         if search:
             like = f"%{search}%"
             query = query.filter(or_(ContractRegistryContract.contract_number.ilike(like), ContractRegistryContract.contract_name.ilike(like), ContractRegistryContract.policy_code.ilike(like), ContractRegistryContractor.legal_name.ilike(like)))
+        contract_rows = query.order_by(ContractRegistryContract.status, ContractRegistryContract.period_end, ContractRegistryContract.contract_name).all()
+        contract_ids = [contract.contract_id for contract, _ in contract_rows]
+        assets_by_contract: dict[int, list[ContractRegistryAsset]] = {}
+        schedules_by_contract: dict[int, list[ContractRegistryPaymentSchedule]] = {}
+        if contract_ids:
+            for item in session.query(ContractRegistryAsset).filter(ContractRegistryAsset.contract_id.in_(contract_ids)).all():
+                assets_by_contract.setdefault(item.contract_id, []).append(item)
+            for item in session.query(ContractRegistryPaymentSchedule).filter(ContractRegistryPaymentSchedule.contract_id.in_(contract_ids)).order_by(ContractRegistryPaymentSchedule.installment_number).all():
+                schedules_by_contract.setdefault(item.contract_id, []).append(item)
         rows = []
-        for contract, contractor in query.order_by(ContractRegistryContract.status, ContractRegistryContract.period_end, ContractRegistryContract.contract_name).all():
-            assets = session.query(ContractRegistryAsset).filter_by(contract_id=contract.contract_id).all()
-            if asset_type and asset_type != "all" and not any(item.asset_type == asset_type for item in assets): continue
-            schedules = session.query(ContractRegistryPaymentSchedule).filter_by(contract_id=contract.contract_id).order_by(ContractRegistryPaymentSchedule.installment_number).all()
-            rows.append(_contract_dict(contract, contractor, assets, schedules))
+        for contract, contractor in contract_rows:
+            assets = assets_by_contract.get(contract.contract_id, [])
+            if asset_type and asset_type != "all" and not any(item.asset_type == asset_type for item in assets):
+                continue
+            rows.append(_contract_dict(contract, contractor, assets, schedules_by_contract.get(contract.contract_id, [])))
         return rows
     finally: session.close()
 
