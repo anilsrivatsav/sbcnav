@@ -666,6 +666,8 @@ export default function Page() {
   const [visibleLimit, setVisibleLimit] = useState({ stations: 24, units: 24, earnings: 24, works: 24, reports: 24, commercial: 24 });
   const [amenityTab, setAmenityTab] = useState("summary");
   const [contractTab, setContractTab] = useState("active");
+  const [contractFamily, setContractFamily] = useState("catering");
+  const [publicityStatus, setPublicityStatus] = useState("all");
   const [workTab, setWorkTab] = useState("all");
   const [workSummaryTab, setWorkSummaryTab] = useState("summary");
   const [workSummarySheet, setWorkSummarySheet] = useState({ open: false, title: "", rows: [] });
@@ -1061,6 +1063,14 @@ export default function Page() {
     };
   }, [units, earnings, search.contracts]);
 
+  const filteredPublicityContracts = useMemo(() => {
+    const q = search.contracts || "";
+    return registryContracts.filter((row) => {
+      const statusOk = publicityStatus === "all" || normalizeText(row.status) === normalizeText(publicityStatus);
+      return statusOk && matchesQuery(row, ["contract_number", "contract_name", "category", "policy_code", (item) => item.contractor?.legal_name, (item) => item.assets?.map((asset) => `${asset.station_code || ""} ${asset.train_number || ""} ${asset.asset_name || ""}`).join(" ")], q);
+    });
+  }, [registryContracts, publicityStatus, search.contracts]);
+
   const filteredCommercialContracts = useMemo(() => {
     const q = search.commercial || "";
     return commercialContracts.filter((row) => {
@@ -1297,7 +1307,7 @@ export default function Page() {
   ];
 
   const amenityCount = filteredAmenities[amenityTab]?.length || 0;
-  const contractCount = filteredContracts[contractTab]?.length || 0;
+  const contractCount = contractFamily === "publicity" ? filteredPublicityContracts.length : (filteredContracts[contractTab]?.length || 0);
   const aiRows = Array.isArray(aiResult?.rows) ? aiResult.rows : [];
   const activeWorkRows = filteredWorks[workTab] || [];
   const workSummaryRows = workMonitoring?.items || works;
@@ -1362,6 +1372,16 @@ export default function Page() {
     { key: "financial_progress", label: "Financial progress" },
     { key: "allocation", label: "Allocation" },
     { key: "remarks", label: "Remarks", render: (row) => <div className="max-w-md line-clamp-3">{pretty(row.remarks)}</div> },
+  ];
+  const publicityColumns = [
+    { key: "contract_name", label: "Contract", value: (row) => pretty(row.contract_name), render: (row) => <span className="font-black text-blue">{pretty(row.contract_name)}</span> },
+    { key: "contract_number", label: "Reference", value: (row) => pretty(row.contract_number) },
+    { key: "contractor", label: "Contractor", value: (row) => pretty(row.contractor?.legal_name) },
+    { key: "asset", label: "Station / Train / Other", value: (row) => pretty(row.assets?.map((asset) => asset.station_code || asset.train_number || asset.asset_name || asset.raw_asset_value).filter(Boolean).join(", ")), render: (row) => <span>{pretty(row.assets?.map((asset) => asset.station_code || asset.train_number || asset.asset_name || asset.raw_asset_value).filter(Boolean).join(", "))}</span> },
+    { key: "policy_code", label: "Policy / Category", value: (row) => `${pretty(row.policy_code)} ${pretty(row.category)}` },
+    { key: "period", label: "Period", value: (row) => `${pretty(row.period?.start)} to ${pretty(row.period?.end)}` },
+    { key: "status", label: "Status", value: (row) => pretty(row.status), render: (row) => <Badge tone={/running|active/i.test(pretty(row.status)) ? "accent" : "neutral"}>{pretty(row.status)}</Badge> },
+    { key: "value", label: "Value", value: (row) => row.financials?.total_contract_value || row.financials?.annual_license_fee || 0, render: (row) => money(row.financials?.total_contract_value || row.financials?.annual_license_fee) },
   ];
   const reportWorkColumns = [
     { key: "sl_no", label: "Sl.no" },
@@ -2585,6 +2605,31 @@ export default function Page() {
 
           {view === "contracts" ? (
             <div className="space-y-4">
+              <Tabs
+                tabs={[{ value: "catering", label: "Catering", icon: Wallet }, { value: "publicity", label: `Publicity (${registryContracts.length})`, icon: Megaphone }]}
+                value={contractFamily}
+                onChange={(value) => { setContractFamily(value); if (value === "catering") setPublicityStatus("all"); }}
+              />
+              {contractFamily === "publicity" ? (
+                <>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    {["all", "running", "completed", "cancelled"].map((status) => <button key={status} type="button" onClick={() => setPublicityStatus(status)} className={cx("soft-raised rounded-xl border p-3 text-left transition hover:border-accent", publicityStatus === status ? "border-accent bg-accentSoft" : "border-line")}><div className="text-xs font-black uppercase tracking-[0.12em] text-muted">{status === "all" ? "All publicity" : pretty(status)}</div><div className="mt-1 text-xl font-black text-ink">{status === "all" ? registryContracts.length : registryContracts.filter((row) => normalizeText(row.status) === status).length}</div></button>)}
+                  </div>
+                  <Panel title="Publicity Contracts" subtitle="Station, train, audio, advertising, and other policy-based contracts from the registry." action={<Button size="sm" variant="secondary" onClick={() => setView("settings")}><SettingsIcon size={14} /> Manage in Settings</Button>}>
+                    <div className="mb-3 flex flex-wrap gap-2 text-xs font-bold text-muted"><span>{filteredPublicityContracts.length} records</span><span>·</span><span>Loaded from PostgreSQL contract registry</span></div>
+                    <DataTable
+                      columns={publicityColumns}
+                      rows={filteredPublicityContracts}
+                      getKey={(row) => row.contract_id}
+                      onRowClick={openPublicity}
+                      onView={openPublicity}
+                      emptyTitle="No publicity contracts match the current search or status."
+                      fileName="publicity-contracts.csv"
+                    />
+                  </Panel>
+                </>
+              ) : (
+              <>
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                 <Card icon={CheckCircle2} label="Running / Active" value={filteredContracts.active.length} subtext="Awarded units currently active" />
                 <Card icon={CircleAlert} label="Unawarded / Other" value={filteredContracts.other.length} subtext="No offer, tender, or other status" />
@@ -2623,6 +2668,8 @@ export default function Page() {
                   />
                 </div>
               </Panel>
+              </>
+              )}
             </div>
           ) : null}
 
