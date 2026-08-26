@@ -660,7 +660,11 @@ export default function Page() {
     loadFromDb,
     loadData,
   } = useRailDashboardData();
-  const [view, setView] = useState("dashboard");
+  const [view, setView] = useState(() => {
+    if (typeof window === "undefined") return "dashboard";
+    const requestedView = new URLSearchParams(window.location.search).get("view");
+    return ["dashboard", "stations", "contracts", "commercial", "units", "earnings", "works", "amenities", "reports", "ai", "settings"].includes(requestedView) ? requestedView : "dashboard";
+  });
   const [theme, setTheme] = useState("light");
   const [search, setSearch] = useState({ dashboard: "", stations: "", contracts: "", commercial: "", units: "", earnings: "", works: "", amenities: "", reports: "", ai: "", settings: "" });
   const [visibleLimit, setVisibleLimit] = useState({ stations: 24, units: 24, earnings: 24, works: 24, reports: 24, commercial: 24 });
