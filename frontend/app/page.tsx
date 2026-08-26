@@ -665,6 +665,7 @@ export default function Page() {
   const [contractTab, setContractTab] = useState("active");
   const [workTab, setWorkTab] = useState("all");
   const [workSummaryTab, setWorkSummaryTab] = useState("summary");
+  const [workSummarySheet, setWorkSummarySheet] = useState({ open: false, title: "", rows: [] });
   const [stationModalTab, setStationModalTab] = useState("overview");
   const [reportTab, setReportTab] = useState("overview");
   const [contractExpiryWindow, setContractExpiryWindow] = useState(30);
@@ -1301,6 +1302,15 @@ export default function Page() {
     const grouped = (key) => Array.from(workSummaryRows.reduce((map, row) => { const keyValue = keyFor(row, key); map.set(keyValue, (map.get(keyValue) || 0) + 1); return map; }, new Map()).entries()).map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
     return { srden: grouped("sr_den"), year: grouped("year_of_sanction"), allocation: grouped("allocation") };
   }, [workSummaryRows]);
+  const openWorkSummary = (dimension, label) => {
+    if (dimension === "summary") {
+      const rows = label === "Completed" ? workSummaryRows.filter((row) => row.completed) : label === "Open / attention" ? workSummaryRows.filter((row) => !row.completed) : workSummaryRows;
+      setWorkSummarySheet({ open: true, title: `${label} works`, rows });
+      return;
+    }
+    const field = { srden: "sr_den", year: "year_of_sanction", allocation: "allocation" }[dimension];
+    setWorkSummarySheet({ open: true, title: `${label} · ${dimension === "srden" ? "Sr.DEN" : dimension}`, rows: workSummaryRows.filter((row) => pretty(row[field]) === label) });
+  };
   const dashboardCount = view === "stations" ? filteredStations.length : view === "contracts" ? contractCount : view === "commercial" ? filteredCommercialContracts.length : view === "units" ? filteredUnits.length : view === "earnings" ? filteredEarnings.length : view === "works" ? activeWorkRows.length : view === "amenities" ? amenityCount : view === "reports" ? filteredReportAlerts.length : view === "ai" ? aiRows.length : stats?.stations ?? 0;
   const activeSearch = search[view] ?? "";
   const setActiveSearch = (value) => {
@@ -2287,6 +2297,9 @@ export default function Page() {
                   })}
                 </div>
               </Panel>
+              <Panel title="Action Centre" subtitle="Review flagged records here instead of on the dashboard.">
+                {reportActionRows.length ? <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">{reportActionRows.slice(0, 8).map((row, index) => <button key={`${row.action_type}-${row.action_key}-${index}`} type="button" onClick={() => openActionRecord(row)} className="soft-raised rounded-lg border border-line p-3 text-left hover:border-accent"><div className="flex items-start justify-between gap-2"><span className="rounded-full border border-amber-300 bg-amber-500/10 px-2 py-1 text-[10px] font-black uppercase tracking-[0.1em] text-amber-700">{pretty(row.action_type)}</span><CircleAlert size={16} className="text-amber-600" /></div><div className="mt-3 truncate text-sm font-black text-ink">{pretty(row.action_key)}</div><div className="mt-1 truncate text-xs text-muted">{pretty(row.problem)}</div></button>)}</div> : <EmptyState title="No immediate actions" description="Nothing currently needs review." />}
+              </Panel>
               <Panel title="Manual imports" subtitle="Use these for workbook or CSV-based source updates when required.">
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                   <Button variant="secondary" onClick={importCommercialContractsWorkbook} disabled={loading} className="min-h-16 justify-start text-accent"><UploadCloud size={17} /><span><span className="block font-black">Import contracts XLSX</span><span className="text-xs font-medium opacity-75">Commercial contract registry</span></span></Button>
@@ -2427,7 +2440,7 @@ export default function Page() {
                   </div>
                 ) : null}
               </Panel> : null}
-              <Panel
+              {false ? <Panel
                 title="Action Centre"
                 subtitle="The next records that need attention across contracts, receipts, works, and station links."
                 action={
@@ -2459,7 +2472,7 @@ export default function Page() {
                 ) : (
                   <EmptyState title="No immediate actions" description="Contracts, receipts, works, and data links currently have no flagged items." />
                 )}
-              </Panel>
+              </Panel> : null}
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {dashboardCards.map((card) => (
                   <Card
@@ -3309,13 +3322,11 @@ export default function Page() {
                   />
                   {workSummaryTab === "summary" ? (
                     <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                      <Card icon={Wrench} label="Total register" value={workSummaryRows.length} subtext="Must tally with source sheet" />
-                      <Card icon={CheckCircle2} label="Completed" value={workMonitoring?.completed ?? 0} subtext="Effective completed status" />
-                      <Card icon={CircleAlert} label="Open / attention" value={workMonitoring?.open ?? 0} subtext="Not completed or needs review" />
+                      {[ ["Total register", workSummaryRows.length, "Must tally with source sheet", Wrench], ["Completed", workMonitoring?.completed ?? 0, "Effective completed status", CheckCircle2], ["Open / attention", workMonitoring?.open ?? 0, "Not completed or needs review", CircleAlert] ].map(([label, value, subtext, Icon]) => <button key={label} type="button" onClick={() => openWorkSummary("summary", label === "Total register" ? "Total register" : label)} className="text-left"><Card icon={Icon} label={label} value={value} subtext={subtext} /></button>)}
                     </div>
                   ) : (
                     <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                      {(workSummaryGroups[workSummaryTab] || []).map((item) => <button key={item.label} type="button" onClick={() => setSearch((current) => ({ ...current, works: item.label }))} className="soft-raised flex items-center justify-between rounded-lg border border-line p-3 text-left hover:border-accent"><span className="truncate text-sm font-semibold text-ink">{item.label}</span><Badge tone="accent">{item.value}</Badge></button>)}
+                      {(workSummaryGroups[workSummaryTab] || []).map((item) => <button key={item.label} type="button" onClick={() => openWorkSummary(workSummaryTab, item.label)} className="soft-raised flex items-center justify-between rounded-lg border border-line p-3 text-left hover:border-accent"><span className="truncate text-sm font-semibold text-ink">{item.label}</span><Badge tone="accent">{item.value}</Badge></button>)}
                     </div>
                   )}
                 </Panel>
@@ -3359,6 +3370,17 @@ export default function Page() {
           onOpenDetail={openStationDetailFromSheet}
           money={money}
         />
+      </BottomSheet>
+
+      <BottomSheet
+        open={workSummarySheet.open}
+        title={workSummarySheet.title}
+        subtitle={`${workSummarySheet.rows.length} works · select one to open its detail dialog`}
+        onClose={() => setWorkSummarySheet({ open: false, title: "", rows: [] })}
+      >
+        <div className="space-y-2">
+          {workSummarySheet.rows.map((row, index) => <button key={`${row.project_id}-${index}`} type="button" onClick={() => openWork(row)} className="soft-raised flex w-full items-start justify-between gap-3 rounded-lg border border-line p-3 text-left hover:border-accent"><div className="min-w-0"><div className="truncate text-sm font-black text-ink">{pretty(row.source_project_id || row.project_id)}</div><div className="mt-1 line-clamp-2 text-xs text-muted">{pretty(row.short_name_of_work)}</div></div><Badge tone="accent">{pretty(row.status)}</Badge></button>)}
+        </div>
       </BottomSheet>
 
       <Modal
