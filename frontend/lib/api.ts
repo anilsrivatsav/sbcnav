@@ -98,7 +98,9 @@ export async function loadRailDashboardData() {
     stations: stationsData.items || [],
     units: unitsData.items || [],
     earnings: earningsData.items || [],
-    works: worksData.items || [],
+    // The monitoring projection is the complete 152-row sanctioned register;
+    // the basic works endpoint may only contain station-linked rows in older deployments.
+    works: workMonitoringData.items?.length ? workMonitoringData.items : (worksData.items || []),
     workMonitoring: workMonitoringData,
     commercialContracts: commercialContractsData.items || [],
     commercialContractReports: commercialContractReportsData,
