@@ -122,6 +122,36 @@ function StationMetricsReport() {
   const totals = visible.reduce((sum, row) => ({ footfall: sum.footfall + Number(row.passenger_footfall || 0), tickets: sum.tickets + Number(row.tickets_issued || 0), earnings: sum.earnings + Number(row.earnings || 0) }), { footfall: 0, tickets: 0, earnings: 0 });
   return <Panel title="Station monthly metrics" subtitle="Latest month by default. Switch to a year or month to compare station inputs."><div className="flex flex-wrap items-end gap-3"><label className="space-y-1"><span className="text-[11px] font-black uppercase tracking-[0.16em] text-muted">Period</span><select value={period} onChange={(event) => setPeriod(event.target.value)} className="soft-inset h-11 rounded-lg border border-line px-3 text-sm"><option value="latest">Latest month</option>{years.map((year) => <optgroup key={year} label={year}>{Array.from({ length: 12 }, (_, index) => { const month = `${year}-${String(index + 1).padStart(2, "0")}`; return <option key={month} value={month}>{month}</option>; })}</optgroup>)}</select></label><Badge tone="accent">{visible.length} station entries</Badge></div><div className="mt-4 grid gap-3 sm:grid-cols-3"><Card icon={Users} label="Footfall" value={totals.footfall.toLocaleString("en-IN")} subtext="Selected period" /><Card icon={FileText} label="Tickets" value={totals.tickets.toLocaleString("en-IN")} subtext="Selected period" /><Card icon={Wallet} label="Earnings" value={money(totals.earnings)} subtext="Selected period" /></div></Panel>;
 }
+
+function StationMetricsBulkUpload({ stations, onActivity }) {
+  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [csvText, setCsvText] = useState("");
+  const [fileName, setFileName] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [result, setResult] = useState(null);
+  const template = useMemo(() => ["station_code,station_name,month,passenger_footfall,tickets_issued,earnings,remarks", ...stations.map((station) => `${station.station_code || ""},${String(station.station_name || "").replaceAll(",", " ")},${month},,,,`)].join("\n"), [stations, month]);
+  const parseCsv = (text) => {
+    const lines = String(text || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    if (lines.length < 2) return [];
+    const headers = lines[0].split(",").map((header) => header.trim().toLowerCase().replaceAll(" ", "_"));
+    return lines.slice(1).map((line) => {
+      const values = line.split(",");
+      return headers.reduce((row, header, index) => ({ ...row, [header]: values[index]?.trim() || "" }), {});
+    }).filter((row) => row.station_code);
+  };
+  const loadFile = async (file) => { if (!file) return; setFileName(file.name); setCsvText(await file.text()); setResult(null); };
+  const upload = async () => {
+    const rows = parseCsv(csvText);
+    if (!rows.length) { setResult({ error: "Choose a CSV containing station_code rows." }); return; }
+    setSaving(true); setResult(null);
+    try {
+      const response = await fetchJson(`${API_URL}/api/station-metrics/bulk`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ month, rows: rows.map((row) => ({ ...row, month: row.month || month, passenger_footfall: row.passenger_footfall === "" ? null : Number(row.passenger_footfall), tickets_issued: row.tickets_issued === "" ? null : Number(row.tickets_issued), earnings: row.earnings === "" ? null : Number(row.earnings) })) }) });
+      setResult(response); onActivity?.(`Monthly metrics uploaded: ${response.processed} station rows`);
+    } catch (error) { setResult({ error: error.message || "Bulk upload failed" }); }
+    finally { setSaving(false); }
+  };
+  return <Panel title="Bulk monthly metrics" subtitle="Upload one CSV for the selected month and update all station records in one PostgreSQL transaction." action={<Badge tone="accent">{stations.length} stations</Badge>}><div className="grid gap-3 lg:grid-cols-[180px_minmax(0,1fr)]"><label className="space-y-1"><span className="text-[11px] font-black uppercase tracking-[0.16em] text-muted">Month</span><input type="month" value={month} onChange={(event) => setMonth(event.target.value)} className="soft-inset h-10 w-full rounded-lg border border-line px-3 text-sm" /></label><div className="flex flex-wrap items-end gap-2"><Button variant="secondary" size="sm" onClick={() => { setCsvText(template); setFileName("all-stations-template.csv"); setResult(null); }}><Download size={14} />Create all-station template</Button><label className="soft-control inline-flex h-8 cursor-pointer items-center gap-2 rounded-md border border-line px-2.5 text-[11px] font-extrabold text-ink"><UploadCloud size={14} />Choose CSV<input type="file" accept=".csv,text/csv" className="hidden" onChange={(event) => loadFile(event.target.files?.[0])} /></label><Button size="sm" onClick={upload} disabled={saving || !csvText}>{saving ? "Uploading…" : "Upload all stations"}</Button></div></div><div className="mt-3 grid gap-3 lg:grid-cols-2"><div><div className="mb-1 text-[11px] font-black uppercase tracking-[0.16em] text-muted">CSV preview {fileName ? `· ${fileName}` : ""}</div><textarea value={csvText} onChange={(event) => { setCsvText(event.target.value); setResult(null); }} placeholder="station_code,station_name,month,passenger_footfall,tickets_issued,earnings,remarks" className="soft-inset min-h-52 w-full rounded-lg border border-line p-3 font-mono text-xs text-ink outline-none focus:border-accent" /></div><div className="soft-inset rounded-lg border border-line p-3 text-sm text-muted"><div className="font-black text-ink">Required format</div><p className="mt-2">Use one row per station. The template already contains every station. Fill the monthly values, keep the month as YYYY-MM, then upload once.</p><p className="mt-2">Existing station/month records are updated; missing records are created. Invalid station codes are rejected before anything is written.</p>{result?.error ? <div className="mt-4 rounded-lg border border-red-300 bg-red-500/10 p-3 text-red-700">{result.error}</div> : result ? <div className="mt-4 rounded-lg border border-emerald-300 bg-emerald-500/10 p-3 text-emerald-700">Processed {result.processed}: {result.created} created, {result.updated} updated.</div> : null}</div></div></Panel>;
+}
 const workReportType = (row) => {
   const text = normalizeText(`${row.short_name_of_work || ""} ${row.work_name || ""} ${row.remarks || ""} ${row.category || ""} ${row.parent_work || ""} ${row.block_section_station || ""} ${row.scope_type || ""} ${row.scope_value || ""} ${row.match_status || ""} ${row.section || ""}`);
   const scope = normalizeText(`${row.scope_type || ""} ${row.scope_value || ""} ${row.match_status || ""} ${row.block_section_station || ""}`);
@@ -663,7 +693,7 @@ export default function Page() {
   const [view, setView] = useState(() => {
     if (typeof window === "undefined") return "dashboard";
     const requestedView = new URLSearchParams(window.location.search).get("view");
-    return ["dashboard", "stations", "contracts", "commercial", "units", "earnings", "works", "amenities", "reports", "ai", "settings"].includes(requestedView) ? requestedView : "dashboard";
+    return ["dashboard", "stations", "contracts", "commercial", "units", "earnings", "works", "amenities", "masters", "reports", "ai", "settings"].includes(requestedView) ? requestedView : "dashboard";
   });
   const [theme, setTheme] = useState("light");
   const [search, setSearch] = useState({ dashboard: "", stations: "", contracts: "", commercial: "", units: "", earnings: "", works: "", amenities: "", reports: "", ai: "", settings: "" });
@@ -1737,6 +1767,9 @@ export default function Page() {
         filters: [],
       };
     }
+    if (view === "masters") {
+      return { title: "Masters", subtitle: "Station master data and bulk monthly operating metrics.", filters: [] };
+    }
     if (view === "settings") {
       return {
         title: "Settings",
@@ -2320,7 +2353,8 @@ export default function Page() {
           <div className="soft-scroll mt-4 flex w-full min-w-0 max-w-full gap-2 overflow-x-auto pb-2 lg:block lg:space-y-2 lg:overflow-visible lg:pb-0">
             <NavButton active={view === "dashboard"} icon={BarChart3} label="Dashboard" hint="KPI cards and charts" onClick={() => setView("dashboard")} />
             <NavButton active={view === "stations"} icon={TrainFront} label="Stations" hint="Station master and search" onClick={() => setView("stations")} />
-            <NavButton active={view === "contracts"} icon={Wallet} label="Contracts" hint="Catering and publicity contracts" onClick={() => window.location.assign("/contracts")} />
+            <NavButton active={view === "contracts"} icon={Wallet} label="Contracts" hint="Catering and publicity contracts" onClick={() => setView("contracts")} />
+            <NavButton active={view === "masters"} icon={Database} label="Masters" hint="Station masters and monthly bulk upload" onClick={() => setView("masters")} />
             <div className="hidden pt-2 text-[11px] font-black uppercase tracking-[0.2em] text-muted lg:block">Passenger Amenities</div>
             <NavButton active={view === "amenities"} icon={TrainFront} label="Amenity Infra" hint="Norms, platforms, wheel chairs, trolley paths" onClick={() => setView("amenities")} />
             <NavButton active={view === "works"} icon={Wrench} label="Sanctioned Works" hint="PA sanctioned works and station links" onClick={() => setView("works")} />
@@ -2361,6 +2395,16 @@ export default function Page() {
               </div>
             ) : null}
           </div>
+
+          {view === "masters" ? (
+            <div className="space-y-4">
+              <Panel title="Station master" subtitle="The station registry used by contracts, works, amenities, and monthly metrics.">
+                <div className="flex flex-wrap items-center gap-2"><Badge tone="accent">{stations.length} stations</Badge><span className="text-xs text-muted">Use the bulk monthly metrics tab below to update every station for one month.</span></div>
+              </Panel>
+              <StationMetricsBulkUpload stations={stations} onActivity={setActivityStatus} />
+              <StationMetricsReport />
+            </div>
+          ) : null}
 
           {view === "settings" ? (
             <div className="space-y-4">

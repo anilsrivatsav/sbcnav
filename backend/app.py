@@ -1531,6 +1531,52 @@ def station_metrics(station_code: str | None = None, year: int | None = None, mo
         session.close()
 
 
+@app.post("/api/station-metrics/bulk")
+def bulk_station_metrics(payload: dict):
+    """Upsert one month of metrics for many stations in one transaction."""
+    default_month = payload.get("month")
+    rows = payload.get("rows") or []
+    if not isinstance(rows, list) or not rows:
+        raise HTTPException(status_code=422, detail="rows must contain at least one station metric")
+    session = SessionLocal()
+    try:
+        station_codes = {code for (code,) in session.query(Station.station_code).all()}
+        errors = []
+        prepared = []
+        for index, item in enumerate(rows, start=2):
+            item = item or {}
+            code = str(item.get("station_code") or "").strip().upper()
+            month_value = item.get("month") or item.get("metric_month") or default_month
+            if not code or code not in station_codes:
+                errors.append({"row": index, "station_code": code, "error": "Station code not found"})
+                continue
+            try:
+                metric_month = _metric_month(str(month_value))
+            except HTTPException as exc:
+                errors.append({"row": index, "station_code": code, "error": exc.detail})
+                continue
+            prepared.append((code, metric_month, item))
+        if errors:
+            raise HTTPException(status_code=422, detail={"message": "Bulk upload contains invalid rows", "errors": errors})
+        created = 0
+        updated = 0
+        with session.begin():
+            for code, metric_month, item in prepared:
+                row = session.query(StationMonthlyMetric).filter_by(station_code=code, metric_month=metric_month).one_or_none()
+                if row is None:
+                    row = StationMonthlyMetric(station_code=code, metric_month=metric_month)
+                    session.add(row)
+                    created += 1
+                else:
+                    updated += 1
+                for field in ("passenger_footfall", "tickets_issued", "earnings", "source", "remarks"):
+                    if field in item and item[field] != "":
+                        setattr(row, field, item[field])
+        return envelope({"created": created, "updated": updated, "processed": len(prepared)}, "station metrics bulk upload complete")
+    finally:
+        session.close()
+
+
 @app.put("/api/stations/{station_code}/metrics/{month_value}")
 def save_station_metric(station_code: str, month_value: str, payload: dict):
     code = station_code.strip().upper()
