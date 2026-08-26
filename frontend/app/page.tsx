@@ -2276,7 +2276,7 @@ export default function Page() {
             </div>
           ) : null}
 
-          {view === "dashboard" ? (
+          {view === "dashboard" && false ? (
             <>
               <Panel
                 title="Data Centre"
