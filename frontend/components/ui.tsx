@@ -209,6 +209,8 @@ export function DataTable({ columns, rows, getKey, onRowClick, onView, onEdit, o
 
   useEffect(() => {
     setPage(1);
+    setFilters({});
+    setExpandedKey(null);
   }, [rows]);
 
   const filteredRows = useMemo(() => {
