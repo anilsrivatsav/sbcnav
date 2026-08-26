@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ChevronRight, Eye, Pencil, Plus, Search, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Eye, Pencil, Plus, Search, X } from "lucide-react";
 
 export const cx = (...classes) => classes.filter(Boolean).join(" ");
 
@@ -198,13 +198,14 @@ const csvEscape = (value) => {
   return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 };
 
-export function DataTable({ columns, rows, getKey, onRowClick, onView, onEdit, onAdd, emptyTitle = "No records found", fileName = "export.csv", pageSizeOptions = [10, 25, 50, 100], enableColumnFilters = true }: any) {
-  const hasActions = Boolean(onView || onEdit || onRowClick);
+export function DataTable({ columns, rows, getKey, onRowClick, onView, onEdit, onAdd, renderExpanded, emptyTitle = "No records found", fileName = "export.csv", pageSizeOptions = [10, 25, 50, 100], enableColumnFilters = true }: any) {
+  const hasActions = Boolean(onView || onEdit || onRowClick || renderExpanded);
   const [filters, setFilters] = useState({});
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(pageSizeOptions[1] || 25);
   const [compact, setCompact] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
+  const [expandedKey, setExpandedKey] = useState(null);
 
   useEffect(() => {
     setPage(1);
@@ -282,32 +283,36 @@ export function DataTable({ columns, rows, getKey, onRowClick, onView, onEdit, o
           </thead>
           <tbody>
             {visibleRows.map((row, index) => (
-              <tr
-                key={getKey(row, index)}
-                onClick={() => onRowClick?.(row)}
-                onKeyDown={(event) => {
-                  if (onRowClick && (event.key === "Enter" || event.key === " ")) {
-                    event.preventDefault();
-                    onRowClick(row);
-                  }
-                }}
-                tabIndex={onRowClick ? 0 : undefined}
-                className={cx("border-b border-line/70 transition last:border-0", onRowClick ? "cursor-pointer hover:bg-accentSoft/60 focus:bg-accentSoft/60 focus:outline-none" : "")}
-              >
-                {columns.map((column) => (
-                  <td key={column.key} className={cx("align-top text-ink", compact ? "px-3 py-2 text-xs" : "px-4 py-4 text-sm")}>
-                    {column.render ? column.render(row) : cellValue(column, row)}
-                  </td>
-                ))}
-                {hasActions ? (
-                  <td className={cx("align-top text-right", compact ? "px-3 py-2" : "px-4 py-4")}>
-                    <div className="flex justify-end gap-1">
-                      {(onView || onRowClick) ? <Button variant="ghost" size="sm" title="View" aria-label="View" onClick={(event) => { event.stopPropagation(); (onView || onRowClick)(row); }}><Eye size={14} /></Button> : null}
-                      {onEdit ? <Button variant="ghost" size="sm" title="Edit" aria-label="Edit" onClick={(event) => { event.stopPropagation(); onEdit(row); }}><Pencil size={14} /></Button> : null}
-                    </div>
-                  </td>
-                ) : null}
-              </tr>
+              <>
+                <tr
+                  key={getKey(row, index)}
+                  onClick={() => onRowClick?.(row)}
+                  onKeyDown={(event) => {
+                    if (onRowClick && (event.key === "Enter" || event.key === " ")) {
+                      event.preventDefault();
+                      onRowClick(row);
+                    }
+                  }}
+                  tabIndex={onRowClick ? 0 : undefined}
+                  className={cx("border-b border-line/70 transition last:border-0", onRowClick ? "cursor-pointer hover:bg-accentSoft/60 focus:bg-accentSoft/60 focus:outline-none" : "")}
+                >
+                  {columns.map((column) => (
+                    <td key={column.key} className={cx("align-top text-ink", compact ? "px-3 py-2 text-xs" : "px-4 py-4 text-sm")}>
+                      {column.render ? column.render(row) : cellValue(column, row)}
+                    </td>
+                  ))}
+                  {hasActions ? (
+                    <td className={cx("align-top text-right", compact ? "px-3 py-2" : "px-4 py-4")}>
+                      <div className="flex justify-end gap-1">
+                        {renderExpanded ? <Button variant="ghost" size="sm" title={expandedKey === getKey(row, index) ? "Collapse payments" : "Expand payments"} aria-label={expandedKey === getKey(row, index) ? "Collapse payments" : "Expand payments"} onClick={(event) => { event.stopPropagation(); setExpandedKey((current) => current === getKey(row, index) ? null : getKey(row, index)); }}><ChevronDown size={14} className={cx("transition", expandedKey === getKey(row, index) ? "rotate-180" : "")} /></Button> : null}
+                        {(onView || onRowClick) ? <Button variant="ghost" size="sm" title="View" aria-label="View" onClick={(event) => { event.stopPropagation(); (onView || onRowClick)(row); }}><Eye size={14} /></Button> : null}
+                        {onEdit ? <Button variant="ghost" size="sm" title="Edit" aria-label="Edit" onClick={(event) => { event.stopPropagation(); onEdit(row); }}><Pencil size={14} /></Button> : null}
+                      </div>
+                    </td>
+                  ) : null}
+                </tr>
+                {renderExpanded && expandedKey === getKey(row, index) ? <tr key={`${getKey(row, index)}-expanded`} className="border-b border-line/70 bg-accentSoft/20"><td colSpan={columns.length + (hasActions ? 1 : 0)} className="px-4 py-3">{renderExpanded(row)}</td></tr> : null}
+              </>
             ))}
           </tbody>
         </table>
