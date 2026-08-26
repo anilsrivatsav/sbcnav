@@ -970,7 +970,10 @@ export default function Page() {
 
   const completedWorks = useMemo(() => works.filter((work) => /complete|done/i.test(String(work.status || ""))).length, [works]);
   const pendingWorks = useMemo(() => works.filter((work) => !/complete|done/i.test(String(work.status || ""))).length, [works]);
-  const publicityContracts = useMemo(() => registryContracts.filter((contract) => /advert|publicity|audio|announcement|out.?of.?home|ooh/i.test(`${contract.category || ""} ${contract.contract_name || ""} ${contract.policy_code || ""}`)), [registryContracts]);
+  // The contract registry is the authoritative E-auction/Publicity source. Do not
+  // infer publicity from keywords: valid station, train, parking, audio, mobile,
+  // and miscellaneous policy rows may not contain an advertising keyword.
+  const publicityContracts = useMemo(() => registryContracts.filter((contract) => contract.source?.system === "e_auction" || !contract.source?.system), [registryContracts]);
   const runningPublicityContracts = useMemo(() => publicityContracts.filter((contract) => /running|active/i.test(String(contract.status || ""))), [publicityContracts]);
   const paidEarnings = useMemo(() => earnings.filter((entry) => /paid|received/i.test(String(entry.receipt_type || ""))).length, [earnings]);
   const pendingEarnings = useMemo(() => earnings.filter((entry) => /pending/i.test(String(entry.receipt_type || ""))).length, [earnings]);
@@ -1070,7 +1073,7 @@ export default function Page() {
       const statusOk = publicityStatus === "all" || normalizeText(row.status) === normalizeText(publicityStatus);
       const policyOk = sameFilterValue(row.policy_code, publicityPolicy);
       const categoryOk = sameFilterValue(row.category, publicityCategory);
-      const stationOk = publicityStation === "all" || row.assets?.some((asset) => normalizeText(asset.station_code) === normalizeText(publicityStation));
+      const stationOk = publicityStation === "all" || row.assets?.some((asset) => normalizeText(asset.station_code || asset.asset_name || asset.raw_asset_value) === normalizeText(publicityStation));
       return statusOk && policyOk && categoryOk && stationOk && matchesQuery(row, ["contract_number", "contract_name", "category", "policy_code", (item) => item.contractor?.legal_name, (item) => item.assets?.map((asset) => `${asset.station_code || ""} ${asset.train_number || ""} ${asset.asset_name || ""}`).join(" ")], q);
     });
   }, [registryContracts, publicityStatus, publicityPolicy, publicityCategory, publicityStation, search.contracts]);
@@ -1510,7 +1513,7 @@ export default function Page() {
     : { rows: filteredContracts[contractTab] || filteredContracts.active, columns: unitColumns, fileName: `catering-${contractTab}.csv` };
   const publicityPolicies = ["all", ...Array.from(new Set(publicityContracts.map((row) => pretty(row.policy_code)).filter((value) => value !== "NA"))).sort()];
   const publicityCategories = ["all", ...Array.from(new Set(publicityContracts.map((row) => pretty(row.category)).filter((value) => value !== "NA"))).sort()];
-  const publicityStations = ["all", ...Array.from(new Set(publicityContracts.flatMap((row) => (row.assets || []).map((asset) => pretty(asset.station_code)).filter((value) => value !== "NA")))).sort()];
+  const publicityStations = ["all", ...Array.from(new Set(publicityContracts.flatMap((row) => (row.assets || []).map((asset) => pretty(asset.station_code || asset.asset_name || asset.raw_asset_value)).filter((value) => value !== "NA")))).sort()];
   const contractStations = ["all", ...Array.from(new Set(units.map((row) => pretty(row.station_code)).filter((value) => value !== "NA"))).sort()];
   const activeAmenity = (() => {
     if (amenityTab === "infra") return { rows: filteredAmenities.infra, columns: infraColumns, fileName: "pa-infra.csv" };
@@ -2618,7 +2621,7 @@ export default function Page() {
           {view === "contracts" ? (
             <div className="space-y-4">
               <Tabs
-                tabs={[{ value: "catering", label: "Catering", icon: Wallet }, { value: "publicity", label: `Publicity (${registryContracts.length})`, icon: Megaphone }]}
+                tabs={[{ value: "catering", label: "Catering", icon: Wallet }, { value: "publicity", label: `Publicity (${publicityContracts.length})`, icon: Megaphone }]}
                 value={contractFamily}
                 onChange={(value) => { setContractFamily(value); if (value === "catering") setPublicityStatus("all"); }}
               />
