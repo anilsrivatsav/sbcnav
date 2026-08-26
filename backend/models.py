@@ -72,6 +72,12 @@ class StationMonthlyMetric(Base):
     station_code: Mapped[str] = mapped_column(String(64), ForeignKey("stations.station_code", ondelete="CASCADE"), index=True)
     metric_month: Mapped[datetime] = mapped_column(Date, index=True)
     passenger_footfall: Mapped[int | None] = mapped_column(Integer)
+    uts_tickets: Mapped[int | None] = mapped_column(Integer)
+    uts_earnings: Mapped[float | None] = mapped_column(Numeric(14, 2))
+    prs_tickets: Mapped[int | None] = mapped_column(Integer)
+    prs_earnings: Mapped[float | None] = mapped_column(Numeric(14, 2))
+    # Retained for backward compatibility with records created by the original
+    # generic monthly-metrics screen.
     tickets_issued: Mapped[int | None] = mapped_column(Integer)
     earnings: Mapped[float | None] = mapped_column(Numeric(14, 2))
     source: Mapped[str | None] = mapped_column(Text)

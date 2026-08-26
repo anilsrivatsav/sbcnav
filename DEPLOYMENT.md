@@ -33,7 +33,7 @@ BACKEND_WORKERS=2
 LOG_LEVEL=info
 ```
 
-The migration head is `0027_contract_registry`.
+The migration head is `0029_uts_prs_station_metrics`.
 
 ## One-time production contract import
 

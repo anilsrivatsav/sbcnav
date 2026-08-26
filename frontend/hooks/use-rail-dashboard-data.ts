@@ -99,7 +99,9 @@ async function writeIndexedSnapshot(snapshot) {
 }
 
 export function useRailDashboardData() {
-  const [initialSnapshot] = useState(readSnapshot);
+  // Keep the server and first client render identical. Browser snapshots are
+  // applied immediately after hydration to avoid React text mismatches.
+  const [initialSnapshot] = useState(null);
   const [stats, setStats] = useState(() => initialSnapshot?.stats || null);
   const [dataCentre, setDataCentre] = useState(() => initialSnapshot?.dataCentre || null);
   const [actionCentre, setActionCentre] = useState(() => initialSnapshot?.actionCentre || null);
@@ -197,8 +199,12 @@ export function useRailDashboardData() {
   useEffect(() => {
     let active = true;
     try { window.localStorage.removeItem(oldCacheKey); } catch { /* Ignore storage cleanup failures. */ }
-    if (initialSnapshot?.stats) setActivityStatus("Showing last PostgreSQL snapshot; checking latest data...");
     (async () => {
+      const localSnapshot = readSnapshot();
+      if (active && localSnapshot?.stats) {
+        applyData(localSnapshot);
+        setActivityStatus("Showing last PostgreSQL snapshot; checking latest data...");
+      }
       const cached = await readIndexedSnapshot();
       if (active && cached?.stats) {
         applyData(cached);

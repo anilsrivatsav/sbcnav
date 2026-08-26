@@ -1535,6 +1535,8 @@ def station_metrics(station_code: str | None = None, year: int | None = None, mo
 def bulk_station_metrics(payload: dict):
     """Upsert one month of metrics for many stations in one transaction."""
     default_month = payload.get("month")
+    require_complete = bool(payload.get("require_complete"))
+    required_metric_fields = ("passenger_footfall", "uts_tickets", "uts_earnings", "prs_tickets", "prs_earnings")
     rows = payload.get("rows") or []
     if not isinstance(rows, list) or not rows:
         raise HTTPException(status_code=422, detail="rows must contain at least one station metric")
@@ -1543,6 +1545,7 @@ def bulk_station_metrics(payload: dict):
         station_codes = {code for (code,) in session.query(Station.station_code).all()}
         errors = []
         prepared = []
+        seen_codes = set()
         for index, item in enumerate(rows, start=2):
             item = item or {}
             code = str(item.get("station_code") or "").strip().upper()
@@ -1550,6 +1553,10 @@ def bulk_station_metrics(payload: dict):
             if not code or code not in station_codes:
                 errors.append({"row": index, "station_code": code, "error": "Station code not found"})
                 continue
+            if code in seen_codes:
+                errors.append({"row": index, "station_code": code, "error": "Duplicate station code"})
+                continue
+            seen_codes.add(code)
             if not month_value:
                 errors.append({"row": index, "station_code": code, "error": "Month is required as YYYY-MM"})
                 continue
@@ -1558,23 +1565,50 @@ def bulk_station_metrics(payload: dict):
             except HTTPException as exc:
                 errors.append({"row": index, "station_code": code, "error": exc.detail})
                 continue
+            if require_complete and default_month and metric_month != _metric_month(str(default_month)):
+                errors.append({"row": index, "station_code": code, "error": "Every row must use the selected reporting month"})
+                continue
+            if require_complete and any(item.get(field) in (None, "") for field in required_metric_fields):
+                errors.append({"row": index, "station_code": code, "error": "Footfall and all UTS/PRS ticket and earnings values are required"})
+                continue
+            invalid_fields = []
+            for field in required_metric_fields:
+                if item.get(field) in (None, ""):
+                    continue
+                try:
+                    value = float(item[field])
+                    if value < 0 or (field in ("passenger_footfall", "uts_tickets", "prs_tickets") and not value.is_integer()):
+                        invalid_fields.append(field)
+                except (TypeError, ValueError):
+                    invalid_fields.append(field)
+            if invalid_fields:
+                errors.append({"row": index, "station_code": code, "error": f"Invalid non-negative numeric value: {', '.join(invalid_fields)}"})
+                continue
             prepared.append((code, metric_month, item))
+        if require_complete:
+            missing_codes = sorted(station_codes - seen_codes)
+            if missing_codes:
+                errors.append({"row": None, "station_code": None, "error": f"Monthly master is missing {len(missing_codes)} station(s)", "missing_station_codes": missing_codes})
         if errors:
             raise HTTPException(status_code=422, detail={"message": "Bulk upload contains invalid rows", "errors": errors})
         created = 0
         updated = 0
-        with session.begin():
-            for code, metric_month, item in prepared:
-                row = session.query(StationMonthlyMetric).filter_by(station_code=code, metric_month=metric_month).one_or_none()
-                if row is None:
-                    row = StationMonthlyMetric(station_code=code, metric_month=metric_month)
-                    session.add(row)
-                    created += 1
-                else:
-                    updated += 1
-                for field in ("passenger_footfall", "tickets_issued", "earnings", "source", "remarks"):
-                    if field in item and item[field] != "":
-                        setattr(row, field, item[field])
+        for code, metric_month, item in prepared:
+            row = session.query(StationMonthlyMetric).filter_by(station_code=code, metric_month=metric_month).one_or_none()
+            if row is None:
+                row = StationMonthlyMetric(station_code=code, metric_month=metric_month)
+                session.add(row)
+                created += 1
+            else:
+                updated += 1
+            for field in (
+                "passenger_footfall", "uts_tickets", "uts_earnings",
+                "prs_tickets", "prs_earnings", "tickets_issued", "earnings",
+                "source", "remarks",
+            ):
+                if field in item and item[field] != "":
+                    setattr(row, field, item[field])
+        session.commit()
         return envelope({"created": created, "updated": updated, "processed": len(prepared)}, "station metrics bulk upload complete")
     finally:
         session.close()
@@ -1593,7 +1627,11 @@ def save_station_metric(station_code: str, month_value: str, payload: dict):
             if not row:
                 row = StationMonthlyMetric(station_code=code, metric_month=metric_month)
                 session.add(row)
-            for field in ("passenger_footfall", "tickets_issued", "earnings", "source", "remarks"):
+            for field in (
+                "passenger_footfall", "uts_tickets", "uts_earnings",
+                "prs_tickets", "prs_earnings", "tickets_issued", "earnings",
+                "source", "remarks",
+            ):
                 if field in payload:
                     setattr(row, field, payload[field])
         return envelope(row_to_dict(row), "station monthly metric saved")

@@ -25,7 +25,7 @@ export async function fetchJson(url: string, options?: RequestInit) {
   }
 
   if (!response.ok || json.success === false) {
-    const detail = typeof json.detail === "string" ? json.detail : json.message;
+    const detail = typeof json.detail === "string" ? json.detail : json.detail?.message || json.message;
     throw new Error(detail || `Request failed: ${response.status}`);
   }
   return json.data;

@@ -14,6 +14,7 @@ import {
   Download,
   FileText,
   Home,
+  Menu,
   Megaphone,
   Moon,
   Pencil,
@@ -36,6 +37,7 @@ import {
 import { BottomSheet, DataTable } from "../components/ui";
 import { Station360 } from "../components/station-360";
 import { StationQuickView } from "../components/station-quick-view";
+import { StationMetricsMaster } from "../components/station-metrics-master";
 import { ReportTemplatesPanel } from "../components/reports/report-templates-panel";
 import { API_URL, aiQueryUrl, amenityFindingsUrl, cateringSyncUrl, commercialContractDetailUrl, commercialContractStatementUrl, contractRegistryDetailUrl, fetchJson, importCommercialContractsUrl, importPassengerAmenitiesUrl, importPfExtensionUrl, importSanctionedWorksUrl, previewPassengerAmenitiesUrl, previewSanctionedWorksUrl, reportPresetRunUrl, reportPresetsUrl, stationDetailUrl, workExpenditureUrl, workProgressUrl } from "../lib/api";
 import { reportTemplates, templateFilterState, templatePreset } from "../lib/report-templates";
@@ -113,45 +115,6 @@ const isActiveCateringUnit = (unit = {}) => {
   return !/no offers|scheduled|tender|under process|cancelled|not awarded|no train service/.test(status);
 };
 
-function StationMetricsReport() {
-  const [rows, setRows] = useState([]);
-  const [period, setPeriod] = useState("latest");
-  useEffect(() => { fetchJson(`${API_URL}/api/station-metrics`).then((data) => setRows(data.items || [])).catch(() => setRows([])); }, []);
-  const years = [...new Set(rows.map((row) => String(row.metric_month || "").slice(0, 4)).filter(Boolean))].sort().reverse();
-  const visible = rows.filter((row) => period === "latest" ? row.metric_month === rows[0]?.metric_month : String(row.metric_month || "").startsWith(period));
-  const totals = visible.reduce((sum, row) => ({ footfall: sum.footfall + Number(row.passenger_footfall || 0), tickets: sum.tickets + Number(row.tickets_issued || 0), earnings: sum.earnings + Number(row.earnings || 0) }), { footfall: 0, tickets: 0, earnings: 0 });
-  return <Panel title="Station monthly metrics" subtitle="Latest month by default. Switch to a year or month to compare station inputs."><div className="flex flex-wrap items-end gap-3"><label className="space-y-1"><span className="text-[11px] font-black uppercase tracking-[0.16em] text-muted">Period</span><select value={period} onChange={(event) => setPeriod(event.target.value)} className="soft-inset h-11 rounded-lg border border-line px-3 text-sm"><option value="latest">Latest month</option>{years.map((year) => <optgroup key={year} label={year}>{Array.from({ length: 12 }, (_, index) => { const month = `${year}-${String(index + 1).padStart(2, "0")}`; return <option key={month} value={month}>{month}</option>; })}</optgroup>)}</select></label><Badge tone="accent">{visible.length} station entries</Badge></div><div className="mt-4 grid gap-3 sm:grid-cols-3"><Card icon={Users} label="Footfall" value={totals.footfall.toLocaleString("en-IN")} subtext="Selected period" /><Card icon={FileText} label="Tickets" value={totals.tickets.toLocaleString("en-IN")} subtext="Selected period" /><Card icon={Wallet} label="Earnings" value={money(totals.earnings)} subtext="Selected period" /></div></Panel>;
-}
-
-function StationMetricsBulkUpload({ stations, onActivity }) {
-  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
-  const [csvText, setCsvText] = useState("");
-  const [fileName, setFileName] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [result, setResult] = useState(null);
-  const template = useMemo(() => ["station_code,station_name,month,passenger_footfall,tickets_issued,earnings,remarks", ...stations.map((station) => `${station.station_code || ""},${String(station.station_name || "").replaceAll(",", " ")},${month},,,,`)].join("\n"), [stations, month]);
-  const parseCsv = (text) => {
-    const lines = String(text || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-    if (lines.length < 2) return [];
-    const headers = lines[0].split(",").map((header) => header.trim().toLowerCase().replaceAll(" ", "_"));
-    return lines.slice(1).map((line) => {
-      const values = line.split(",");
-      return headers.reduce((row, header, index) => ({ ...row, [header]: values[index]?.trim() || "" }), {});
-    }).filter((row) => row.station_code);
-  };
-  const loadFile = async (file) => { if (!file) return; setFileName(file.name); setCsvText(await file.text()); setResult(null); };
-  const upload = async () => {
-    const rows = parseCsv(csvText);
-    if (!rows.length) { setResult({ error: "Choose a CSV containing station_code rows." }); return; }
-    setSaving(true); setResult(null);
-    try {
-      const response = await fetchJson(`${API_URL}/api/station-metrics/bulk`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ month, rows: rows.map((row) => ({ ...row, month: row.month || month, passenger_footfall: row.passenger_footfall === "" ? null : Number(row.passenger_footfall), tickets_issued: row.tickets_issued === "" ? null : Number(row.tickets_issued), earnings: row.earnings === "" ? null : Number(row.earnings) })) }) });
-      setResult(response); onActivity?.(`Monthly metrics uploaded: ${response.processed} station rows`);
-    } catch (error) { setResult({ error: error.message || "Bulk upload failed" }); }
-    finally { setSaving(false); }
-  };
-  return <Panel title="Bulk monthly metrics" subtitle="Upload one CSV for the selected month and update all station records in one PostgreSQL transaction." action={<Badge tone="accent">{stations.length} stations</Badge>}><div className="grid gap-3 lg:grid-cols-[180px_minmax(0,1fr)]"><label className="space-y-1"><span className="text-[11px] font-black uppercase tracking-[0.16em] text-muted">Month</span><input type="month" value={month} onChange={(event) => setMonth(event.target.value)} className="soft-inset h-10 w-full rounded-lg border border-line px-3 text-sm" /></label><div className="flex flex-wrap items-end gap-2"><Button variant="secondary" size="sm" onClick={() => { setCsvText(template); setFileName("all-stations-template.csv"); setResult(null); }}><Download size={14} />Create all-station template</Button><label className="soft-control inline-flex h-8 cursor-pointer items-center gap-2 rounded-md border border-line px-2.5 text-[11px] font-extrabold text-ink"><UploadCloud size={14} />Choose CSV<input type="file" accept=".csv,text/csv" className="hidden" onChange={(event) => loadFile(event.target.files?.[0])} /></label><Button size="sm" onClick={upload} disabled={saving || !csvText}>{saving ? "Uploading…" : "Upload all stations"}</Button></div></div><div className="mt-3 grid gap-3 lg:grid-cols-2"><div><div className="mb-1 text-[11px] font-black uppercase tracking-[0.16em] text-muted">CSV preview {fileName ? `· ${fileName}` : ""}</div><textarea value={csvText} onChange={(event) => { setCsvText(event.target.value); setResult(null); }} placeholder="station_code,station_name,month,passenger_footfall,tickets_issued,earnings,remarks" className="soft-inset min-h-52 w-full rounded-lg border border-line p-3 font-mono text-xs text-ink outline-none focus:border-accent" /></div><div className="soft-inset rounded-lg border border-line p-3 text-sm text-muted"><div className="font-black text-ink">Required format</div><p className="mt-2">Use one row per station. The template already contains every station. Fill the monthly values, keep the month as YYYY-MM, then upload once.</p><p className="mt-2">Existing station/month records are updated; missing records are created. Invalid station codes are rejected before anything is written.</p>{result?.error ? <div className="mt-4 rounded-lg border border-red-300 bg-red-500/10 p-3 text-red-700">{result.error}</div> : result ? <div className="mt-4 rounded-lg border border-emerald-300 bg-emerald-500/10 p-3 text-emerald-700">Processed {result.processed}: {result.created} created, {result.updated} updated.</div> : null}</div></div></Panel>;
-}
 const workReportType = (row) => {
   const text = normalizeText(`${row.short_name_of_work || ""} ${row.work_name || ""} ${row.remarks || ""} ${row.category || ""} ${row.parent_work || ""} ${row.block_section_station || ""} ${row.scope_type || ""} ${row.scope_value || ""} ${row.match_status || ""} ${row.section || ""}`);
   const scope = normalizeText(`${row.scope_type || ""} ${row.scope_value || ""} ${row.match_status || ""} ${row.block_section_station || ""}`);
@@ -413,10 +376,11 @@ function NavButton({ active, icon: Icon, label, hint, onClick }) {
       type="button"
       onClick={() => startTransition(onClick)}
       title={hint}
-      className={`focus-ring flex min-w-[184px] items-start gap-2 rounded-lg border px-2.5 py-2 text-left transition lg:w-full lg:min-w-0 ${active ? "border-blue-200 bg-blue-50 text-blue-700 shadow-none" : "border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-950"
+      aria-current={active ? "page" : undefined}
+      className={`focus-ring flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition ${active ? "border-accent/30 bg-accentSoft text-accentStrong shadow-none" : "border-transparent text-muted hover:border-line hover:bg-surfaceStrong hover:text-ink"
         }`}
     >
-      <span className={`rounded-lg p-1.5 ${active ? "bg-white text-blue-600" : "bg-slate-100 text-slate-500"}`}>
+      <span className={`rounded-lg p-1.5 ${active ? "bg-surface text-accentStrong" : "bg-surfaceStrong text-muted"}`}>
         <Icon size={16} className="shrink-0" />
       </span>
       <span className="min-w-0">
@@ -690,11 +654,9 @@ export default function Page() {
     loadFromDb,
     loadData,
   } = useRailDashboardData();
-  const [view, setView] = useState(() => {
-    if (typeof window === "undefined") return "dashboard";
-    const requestedView = new URLSearchParams(window.location.search).get("view");
-    return ["dashboard", "stations", "contracts", "commercial", "units", "earnings", "works", "amenities", "masters", "reports", "ai", "settings"].includes(requestedView) ? requestedView : "dashboard";
-  });
+  const [view, setView] = useState("dashboard");
+  const [viewReady, setViewReady] = useState(false);
+  const [navigationOpen, setNavigationOpen] = useState(false);
   const [theme, setTheme] = useState("light");
   const [search, setSearch] = useState({ dashboard: "", stations: "", contracts: "", commercial: "", units: "", earnings: "", works: "", amenities: "", reports: "", ai: "", settings: "" });
   const [visibleLimit, setVisibleLimit] = useState({ stations: 24, units: 24, earnings: 24, works: 24, reports: 24, commercial: 24 });
@@ -758,6 +720,23 @@ export default function Page() {
   const [aiResult, setAiResult] = useState(null);
   const [aiError, setAiError] = useState("");
   const [cateringSyncResult, setCateringSyncResult] = useState(null);
+
+  useEffect(() => {
+    const requestedView = new URLSearchParams(window.location.search).get("view");
+    if (["dashboard", "stations", "contracts", "commercial", "units", "earnings", "works", "amenities", "masters", "reports", "ai", "settings"].includes(requestedView)) {
+      setView(requestedView);
+    }
+    setViewReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!viewReady) return;
+    const url = new URL(window.location.href);
+    if (view === "dashboard") url.searchParams.delete("view");
+    else url.searchParams.set("view", view);
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+    setNavigationOpen(false);
+  }, [view, viewReady]);
 
   const aiSuggestions = [
     "Tell me everything about KSM",
@@ -1768,7 +1747,7 @@ export default function Page() {
       };
     }
     if (view === "masters") {
-      return { title: "Masters", subtitle: "Station master data and bulk monthly operating metrics.", filters: [] };
+      return { title: "Monthly Station Master", subtitle: "Footfall, UTS tickets and earnings, and PRS tickets and earnings for all 132 stations.", filters: [] };
     }
     if (view === "settings") {
       return {
@@ -2339,30 +2318,29 @@ export default function Page() {
   return (
     <main className="min-h-screen bg-[var(--page-background)] text-ink">
       <section className="mx-auto grid min-w-0 max-w-[1680px] grid-cols-[minmax(0,1fr)] lg:h-screen lg:grid-cols-[248px_minmax(0,1fr)]">
-        <aside className="soft-surface soft-scroll min-w-0 max-w-full rounded-none border-y-0 border-l-0 border-r p-4 sm:p-5 lg:sticky lg:top-0 lg:h-screen lg:overflow-auto">
+        {navigationOpen ? <button type="button" aria-label="Dismiss navigation" onClick={() => setNavigationOpen(false)} className="fixed inset-0 z-40 bg-slate-950/45 backdrop-blur-[2px] lg:hidden" /> : null}
+        <aside className={cx("soft-surface soft-scroll fixed inset-y-0 left-0 z-50 w-[min(88vw,320px)] min-w-0 overflow-y-auto rounded-none border-y-0 border-l-0 border-r p-5 transition-transform duration-200 lg:sticky lg:top-0 lg:z-auto lg:h-screen lg:w-auto lg:translate-x-0", navigationOpen ? "translate-x-0" : "-translate-x-full")}>
           <div className="flex items-start justify-between gap-3">
             <div>
-              <div className="text-xs font-black uppercase tracking-[0.22em] text-accent">Rail dashboard</div>
-              <div className="mt-2 text-xl font-black text-ink">Navigation</div>
-              <p className="mt-1 hidden text-sm text-muted sm:block">Stations, catering units, earnings, and passenger amenities.</p>
+              <div className="text-xs font-black uppercase tracking-[0.22em] text-accent">SBC Division</div>
+              <div className="mt-2 text-xl font-black text-ink">Rail Operations</div>
+              <p className="mt-1 text-sm text-muted">Stations, contracts, works and passenger amenities.</p>
             </div>
-            <div className="soft-raised rounded-lg border border-line p-2 text-accent">
-              <Database size={18} />
-            </div>
+            <button type="button" aria-label="Close navigation" onClick={() => setNavigationOpen(false)} className="focus-ring rounded-lg border border-line p-2 text-muted lg:hidden"><X size={18} /></button>
           </div>
-          <div className="soft-scroll mt-4 flex w-full min-w-0 max-w-full gap-2 overflow-x-auto pb-2 lg:block lg:space-y-2 lg:overflow-visible lg:pb-0">
+          <nav aria-label="Primary navigation" className="mt-6 space-y-1.5">
             <NavButton active={view === "dashboard"} icon={BarChart3} label="Dashboard" hint="KPI cards and charts" onClick={() => setView("dashboard")} />
             <NavButton active={view === "stations"} icon={TrainFront} label="Stations" hint="Station master and search" onClick={() => setView("stations")} />
             <NavButton active={view === "contracts"} icon={Wallet} label="Contracts" hint="Catering and publicity contracts" onClick={() => setView("contracts")} />
-            <NavButton active={view === "masters"} icon={Database} label="Masters" hint="Station masters and monthly bulk upload" onClick={() => setView("masters")} />
-            <div className="hidden pt-2 text-[11px] font-black uppercase tracking-[0.2em] text-muted lg:block">Passenger Amenities</div>
+            <NavButton active={view === "masters"} icon={Database} label="Monthly Master" hint="Station master and monthly bulk upload" onClick={() => setView("masters")} />
+            <div className="pt-4 text-[11px] font-black uppercase tracking-[0.2em] text-muted">Operations</div>
             <NavButton active={view === "amenities"} icon={TrainFront} label="Amenity Infra" hint="Norms, platforms, wheel chairs, trolley paths" onClick={() => setView("amenities")} />
             <NavButton active={view === "works"} icon={Wrench} label="Sanctioned Works" hint="PA sanctioned works and station links" onClick={() => setView("works")} />
             <NavButton active={view === "reports"} icon={FileText} label="Reports" hint="License fee and unit alerts" onClick={() => setView("reports")} />
             <NavButton active={view === "ai"} icon={Bot} label="Ask AI" hint="Talk to any table safely" onClick={() => setView("ai")} />
             <NavButton active={view === "settings"} icon={SettingsIcon} label="Settings" hint="Fetch, sync, import, and database controls" onClick={() => setView("settings")} />
-          </div>
-          <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:mt-5 lg:grid-cols-1">
+          </nav>
+          <div className="mt-5 grid gap-2">
             <ThemeToggle theme={theme} onToggle={toggleTheme} />
           </div>
           <div className="soft-inset mt-3 rounded-lg border border-line p-3 lg:mt-4">
@@ -2375,17 +2353,20 @@ export default function Page() {
         <section className="soft-scroll min-w-0 space-y-4 px-3 py-3 sm:px-5 sm:py-4 lg:h-full lg:overflow-auto lg:px-8 lg:py-6">
           <div className="soft-surface sticky top-0 z-30 rounded-xl border p-3 sm:p-4">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-              <div>
-                <Breadcrumbs title={viewConfig.title} />
-                <h1 className="mt-1 text-2xl font-black tracking-tight text-ink sm:text-3xl">{viewConfig.title}</h1>
-                <p className="mt-1 max-w-3xl text-sm text-muted">{viewConfig.subtitle}</p>
+              <div className="flex min-w-0 items-start gap-3">
+                <button type="button" aria-label="Open navigation" onClick={() => setNavigationOpen(true)} className="focus-ring soft-control mt-0.5 shrink-0 rounded-lg p-2.5 text-ink lg:hidden"><Menu size={20} /></button>
+                <div className="min-w-0">
+                  <Breadcrumbs title={viewConfig.title} />
+                  <h1 className="mt-1 truncate text-2xl font-black tracking-tight text-ink sm:text-3xl">{viewConfig.title}</h1>
+                  <p className="mt-1 max-w-3xl text-sm text-muted">{viewConfig.subtitle}</p>
+                </div>
               </div>
-              <div className="flex w-full flex-col gap-2 sm:w-[360px]">
+              {!['dashboard', 'masters', 'settings'].includes(view) ? <div className="flex w-full flex-col gap-2 sm:w-[360px]">
                 <SearchInput value={activeSearch} onChange={setActiveSearch} placeholder={`Search ${viewConfig.title.toLowerCase()}`} />
                 <div className="text-right text-[11px] font-bold uppercase tracking-[0.14em] text-muted">
                   {view === "dashboard" ? "Overview" : `${dashboardCount} records`}
                 </div>
-              </div>
+              </div> : null}
             </div>
             {viewConfig.filters.length ? (
               <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -2397,13 +2378,7 @@ export default function Page() {
           </div>
 
           {view === "masters" ? (
-            <div className="space-y-4">
-              <Panel title="Station master" subtitle="The station registry used by contracts, works, amenities, and monthly metrics.">
-                <div className="flex flex-wrap items-center gap-2"><Badge tone="accent">{stations.length} stations</Badge><span className="text-xs text-muted">Use the bulk monthly metrics tab below to update every station for one month.</span></div>
-              </Panel>
-              <StationMetricsBulkUpload stations={stations} onActivity={setActivityStatus} />
-              <StationMetricsReport />
-            </div>
+            <StationMetricsMaster stations={stations} onActivity={setActivityStatus} />
           ) : null}
 
           {view === "settings" ? (
@@ -2836,7 +2811,6 @@ export default function Page() {
 
           {view === "reports" ? (
             <div className="space-y-4">
-              <StationMetricsReport />
               <Tabs tabs={reportTabs} value={reportTab} onChange={setReportTab} />
               <ReportTemplatesPanel templates={reportTemplates} onApply={applyReportTemplate} />
               <Panel
@@ -3386,7 +3360,7 @@ export default function Page() {
             </div>
           ) : null}
 
-          {view !== "dashboard" && view !== "reports" && view !== "amenities" && view !== "contracts" && view !== "commercial" && view !== "ai" && view !== "settings" ? (
+          {view !== "dashboard" && view !== "reports" && view !== "amenities" && view !== "contracts" && view !== "commercial" && view !== "masters" && view !== "ai" && view !== "settings" ? (
           <Panel
             title={viewConfig.title}
             subtitle={view === "stations" ? "Station master with filtering and search." : view === "units" ? "Catering units linked to stations." : view === "earnings" ? "Earnings linked to units and station codes." : view === "works" ? "Sanctioned works with scope and status." : view === "reports" ? "License fee pending and contract expiry alert list." : "Dashboard summary"}
