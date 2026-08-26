@@ -1356,6 +1356,7 @@ export default function Page() {
     setWorkSummarySheet({ open: true, title: `${label} · ${dimension === "srden" ? "Sr.DEN" : dimension}`, rows: workSummaryRows.filter((row) => pretty(row[field]) === label) });
   };
   const dashboardCount = view === "stations" ? filteredStations.length : view === "contracts" ? contractCount : view === "commercial" ? filteredCommercialContracts.length : view === "units" ? filteredUnits.length : view === "earnings" ? filteredEarnings.length : view === "works" ? activeWorkRows.length : view === "amenities" ? amenityCount : view === "reports" ? filteredReportAlerts.length : view === "ai" ? aiRows.length : stats?.stations ?? 0;
+  const dataUnavailable = /network error|refresh failed|unable to load|failed to fetch/i.test(activityStatus);
   const activeSearch = search[view] ?? "";
   const setActiveSearch = (value) => {
     setSearch((prev) => ({ ...prev, [view]: value }));
@@ -2364,7 +2365,7 @@ export default function Page() {
               {!['dashboard', 'masters', 'settings'].includes(view) ? <div className="flex w-full flex-col gap-2 sm:w-[360px]">
                 <SearchInput value={activeSearch} onChange={setActiveSearch} placeholder={`Search ${viewConfig.title.toLowerCase()}`} />
                 <div className="text-right text-[11px] font-bold uppercase tracking-[0.14em] text-muted">
-                  {view === "dashboard" ? "Overview" : `${dashboardCount} records`}
+                  {dataUnavailable ? "Data unavailable" : loading && !stats ? "Loading…" : view === "dashboard" ? "Overview" : `${dashboardCount} records`}
                 </div>
               </div> : null}
             </div>
@@ -2375,6 +2376,7 @@ export default function Page() {
                 ))}
               </div>
             ) : null}
+            {dataUnavailable ? <div className="mt-3 flex flex-col gap-3 rounded-xl border border-red-300 bg-red-500/10 p-3 text-sm sm:flex-row sm:items-center sm:justify-between"><div><div className="font-black text-red-700">Dashboard data is unavailable</div><div className="mt-0.5 text-red-700/80">{activityStatus}. The counts below are not database totals.</div></div><Button size="sm" variant="secondary" onClick={loadData} disabled={loading}><RefreshCw size={14} className={loading ? "animate-spin" : ""} />Retry</Button></div> : null}
           </div>
 
           {view === "masters" ? (
