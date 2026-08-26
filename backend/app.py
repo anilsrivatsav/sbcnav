@@ -250,7 +250,7 @@ async def shutdown() -> None:
 
 @app.get("/api/health")
 def health() -> dict[str, object]:
-    return envelope({"status": "ok"}, "ok")
+    return envelope({"status": "ok", "schema_version": "0029_uts_prs_station_metrics"}, "ok")
 
 
 @app.get("/api/activity")
