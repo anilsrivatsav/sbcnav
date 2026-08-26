@@ -1909,11 +1909,11 @@ export default function Page() {
       return;
     }
     if (key === "units") {
-      setDashboardSheet({ open: true, title: "Catering contracts", subtitle: `${units.length} stalls and vending units · grouped by type/category`, groups: groupRows(units, (row) => row.type_of_unit || row.station_category) });
+      window.location.assign("/contracts");
       return;
     }
     if (key === "publicityRunning") {
-      setDashboardSheet({ open: true, title: "Running publicity contracts", subtitle: `${runningPublicityContracts.length} running contracts · grouped by publicity type/category`, groups: groupRows(runningPublicityContracts, (row) => row.category || row.policy_code) });
+      window.location.assign("/contracts");
       return;
     }
     const rows = key === "completedWorks" ? works.filter((row) => /complete|done/i.test(String(row.status || ""))) : key === "pendingWorks" ? works.filter((row) => !/complete|done/i.test(String(row.status || ""))) : works;
@@ -2316,7 +2316,7 @@ export default function Page() {
           <div className="soft-scroll mt-4 flex w-full min-w-0 max-w-full gap-2 overflow-x-auto pb-2 lg:block lg:space-y-2 lg:overflow-visible lg:pb-0">
             <NavButton active={view === "dashboard"} icon={BarChart3} label="Dashboard" hint="KPI cards and charts" onClick={() => setView("dashboard")} />
             <NavButton active={view === "stations"} icon={TrainFront} label="Stations" hint="Station master and search" onClick={() => setView("stations")} />
-            <NavButton active={view === "contracts"} icon={Wallet} label="Contracts" hint="Catering and publicity contracts" onClick={() => setView("contracts")} />
+            <NavButton active={view === "contracts"} icon={Wallet} label="Contracts" hint="Catering and publicity contracts" onClick={() => window.location.assign("/contracts")} />
             <div className="hidden pt-2 text-[11px] font-black uppercase tracking-[0.2em] text-muted lg:block">Passenger Amenities</div>
             <NavButton active={view === "amenities"} icon={TrainFront} label="Amenity Infra" hint="Norms, platforms, wheel chairs, trolley paths" onClick={() => setView("amenities")} />
             <NavButton active={view === "works"} icon={Wrench} label="Sanctioned Works" hint="PA sanctioned works and station links" onClick={() => setView("works")} />
