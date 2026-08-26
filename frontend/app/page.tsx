@@ -669,7 +669,6 @@ export default function Page() {
   const [contractFamily, setContractFamily] = useState("catering");
   const [publicityStatus, setPublicityStatus] = useState("all");
   const [publicityPolicy, setPublicityPolicy] = useState("all");
-  const [publicityCategory, setPublicityCategory] = useState("all");
   const [publicityStation, setPublicityStation] = useState("all");
   const [cateringStation, setCateringStation] = useState("all");
   const [cateringType, setCateringType] = useState("all");
@@ -974,7 +973,7 @@ export default function Page() {
   // The contract registry is the authoritative E-auction/Publicity source. Do not
   // infer publicity from keywords: valid station, train, parking, audio, mobile,
   // and miscellaneous policy rows may not contain an advertising keyword.
-  const publicityContracts = useMemo(() => registryContracts.filter((contract) => contract.source?.system === "e_auction" || !contract.source?.system), [registryContracts]);
+  const publicityContracts = useMemo(() => registryContracts.filter((contract) => (contract.source?.system === "e_auction" || !contract.source?.system) && String(contract.policy_code || "").trim()), [registryContracts]);
   const runningPublicityContracts = useMemo(() => publicityContracts.filter((contract) => /running|active/i.test(String(contract.status || ""))), [publicityContracts]);
   const paidEarnings = useMemo(() => earnings.filter((entry) => /paid|received/i.test(String(entry.receipt_type || ""))).length, [earnings]);
   const pendingEarnings = useMemo(() => earnings.filter((entry) => /pending/i.test(String(entry.receipt_type || ""))).length, [earnings]);
@@ -1072,15 +1071,15 @@ export default function Page() {
 
   const filteredPublicityContracts = useMemo(() => {
     const q = search.contracts || "";
-    return registryContracts.filter((row) => {
+    const sourceRows = publicityStatus === "running" ? runningPublicityContracts : publicityContracts;
+    return sourceRows.filter((row) => {
       const statusOk = publicityStatus === "all" || normalizeText(row.status) === normalizeText(publicityStatus);
       const policyOk = publicityPolicy === "all"
         || (publicityPolicy === "__missing__" ? !String(row.policy_code || "").trim() : normalizeText(row.policy_code) === normalizeText(publicityPolicy));
-      const categoryOk = sameFilterValue(row.category, publicityCategory);
       const stationOk = publicityStation === "all" || row.assets?.some((asset) => normalizeText(asset.station_code || asset.asset_name || asset.raw_asset_value) === normalizeText(publicityStation));
-      return statusOk && policyOk && categoryOk && stationOk && matchesQuery(row, ["contract_number", "contract_name", "category", "policy_code", (item) => item.contractor?.legal_name, (item) => item.assets?.map((asset) => `${asset.station_code || ""} ${asset.train_number || ""} ${asset.asset_name || ""}`).join(" ")], q);
+      return statusOk && policyOk && stationOk && matchesQuery(row, ["contract_number", "contract_name", "category", "policy_code", (item) => item.contractor?.legal_name, (item) => item.assets?.map((asset) => `${asset.station_code || ""} ${asset.train_number || ""} ${asset.asset_name || ""}`).join(" ")], q);
     });
-  }, [registryContracts, publicityStatus, publicityPolicy, publicityCategory, publicityStation, search.contracts]);
+  }, [publicityContracts, runningPublicityContracts, publicityStatus, publicityPolicy, publicityStation, search.contracts]);
 
   const filteredCommercialContracts = useMemo(() => {
     const q = search.commercial || "";
@@ -1515,9 +1514,7 @@ export default function Page() {
   const publicityPolicyChips = [
     { value: "all", label: "All running policies", count: runningPolicyContracts.length },
     ...publicityPolicies.map((policy) => ({ value: policy, label: policy, count: runningPolicyContracts.filter((row) => normalizeText(row.policy_code) === normalizeText(policy)).length })),
-    ...(runningPolicyContracts.some((row) => !String(row.policy_code || "").trim()) ? [{ value: "__missing__", label: "Policy not recorded", count: runningPolicyContracts.filter((row) => !String(row.policy_code || "").trim()).length }] : []),
   ];
-  const publicityCategories = ["all", ...Array.from(new Set(publicityContracts.map((row) => pretty(row.category)).filter((value) => value !== "NA"))).sort()];
   const publicityStations = ["all", ...Array.from(new Set(publicityContracts.flatMap((row) => (row.assets || []).map((asset) => pretty(asset.station_code || asset.asset_name || asset.raw_asset_value)).filter((value) => value !== "NA")))).sort()];
   const contractStations = ["all", ...Array.from(new Set(units.map((row) => pretty(row.station_code)).filter((value) => value !== "NA"))).sort()];
   const cateringTypes = Array.from(new Set(units.map((row) => String(row.type_of_unit || "").trim()).filter(Boolean))).sort();
@@ -2656,14 +2653,10 @@ export default function Page() {
               />
               {contractFamily === "publicity" ? (
                 <>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {["all", "running", "completed", "cancelled"].map((status) => <button key={status} type="button" onClick={() => { setPublicityStatus(status); setPublicityPolicy("all"); }} className={cx("rounded-full border px-3 py-1.5 text-xs font-black transition hover:border-accent", publicityStatus === status ? "border-accent bg-accent text-white" : "soft-control text-ink")}>
-                      {status === "all" ? "All" : pretty(status)} <span className="ml-1 opacity-75">{status === "all" ? publicityContracts.length : publicityContracts.filter((row) => normalizeText(row.status) === status).length}</span>
-                    </button>)}
-                    {publicityStatus === "running" ? publicityPolicyChips.map((chip) => <button key={chip.value} type="button" onClick={() => setPublicityPolicy(chip.value)} className={cx("rounded-full border px-3 py-1.5 text-xs font-black transition hover:border-accent", publicityPolicy === chip.value ? "border-accent bg-accent text-white" : "soft-control text-ink")}>{chip.label} <span className="ml-1 opacity-75">{chip.count}</span></button>) : null}
-                    {[['Category', publicityCategory, setPublicityCategory, publicityCategories], ['Station', publicityStation, setPublicityStation, publicityStations]].map(([label, value, setter, options]) => (
-                      <label key={label} className="flex items-center gap-1.5 text-xs font-black text-muted"><span>{label}</span><select value={value} onChange={(event) => setter(event.target.value)} className="soft-inset h-8 max-w-48 rounded-full border border-line px-2.5 text-xs font-bold text-ink outline-none focus:border-accent">{options.map((option) => <option key={option} value={option}>{option === "all" ? `All ${label.toLowerCase()}` : option}</option>)}</select></label>
-                    ))}
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-1.5"><span className="mr-1 text-[11px] font-black uppercase tracking-[0.14em] text-muted">Status</span>{["all", "running", "completed", "cancelled"].map((status) => <button key={status} type="button" onClick={() => { setPublicityStatus(status); setPublicityPolicy("all"); }} className={cx("rounded-full border px-3 py-1.5 text-xs font-black transition hover:border-accent", publicityStatus === status ? "border-accent bg-accent text-white" : "soft-control text-ink")}>{status === "all" ? "All" : pretty(status)} <span className="ml-1 opacity-75">{status === "all" ? publicityContracts.length : publicityContracts.filter((row) => normalizeText(row.status) === status).length}</span></button>)}</div>
+                    {publicityStatus === "running" ? <div className="flex flex-wrap items-center gap-1.5"><span className="mr-1 text-[11px] font-black uppercase tracking-[0.14em] text-muted">Policy</span>{publicityPolicyChips.map((chip) => <button key={chip.value} type="button" onClick={() => { setPublicityStatus("running"); setPublicityPolicy(chip.value); }} className={cx("rounded-full border px-3 py-1.5 text-xs font-black transition hover:border-accent", publicityPolicy === chip.value ? "border-accent bg-accent text-white" : "soft-control text-ink")}>{chip.label} <span className="ml-1 opacity-75">{chip.count}</span></button>)}</div> : null}
+                    <label className="flex items-center gap-1.5 text-xs font-black text-muted"><span className="text-[11px] uppercase tracking-[0.14em]">Station</span><select value={publicityStation} onChange={(event) => setPublicityStation(event.target.value)} className="soft-inset h-8 max-w-48 rounded-full border border-line px-2.5 text-xs font-bold text-ink outline-none focus:border-accent">{publicityStations.map((option) => <option key={option} value={option}>{option === "all" ? "All stations" : option}</option>)}</select></label>
                   </div>
                   <Panel title="Publicity Contracts" subtitle="Station, train, audio, advertising, and other policy-based contracts from the registry." action={<Button size="sm" variant="secondary" onClick={() => setView("settings")}><SettingsIcon size={14} /> Manage in Settings</Button>}>
                     <div className="mb-3 flex flex-wrap gap-2 text-xs font-bold text-muted"><span>{filteredPublicityContracts.length} records</span><span>·</span><span>Loaded from PostgreSQL contract registry</span></div>
