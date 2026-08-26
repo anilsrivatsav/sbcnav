@@ -57,7 +57,7 @@ const matchesQuery = (row, fields, query) => {
   if (!q) return true;
   return fields.some((field) => normalizeText(typeof field === "function" ? field(row) : row[field]).includes(q));
 };
-const sameFilterValue = (value, filterValue) => filterValue === "All" || normalizeText(value) === normalizeText(filterValue);
+const sameFilterValue = (value, filterValue) => normalizeText(filterValue) === "all" || normalizeText(value) === normalizeText(filterValue);
 const compactDate = (value) => {
   if (!value) return "";
   const date = new Date(value);
@@ -1515,9 +1515,18 @@ export default function Page() {
   const publicityCategories = ["all", ...Array.from(new Set(publicityContracts.map((row) => pretty(row.category)).filter((value) => value !== "NA"))).sort()];
   const publicityStations = ["all", ...Array.from(new Set(publicityContracts.flatMap((row) => (row.assets || []).map((asset) => pretty(asset.station_code || asset.asset_name || asset.raw_asset_value)).filter((value) => value !== "NA")))).sort()];
   const contractStations = ["all", ...Array.from(new Set(units.map((row) => pretty(row.station_code)).filter((value) => value !== "NA"))).sort()];
+  const earningsByUnit = useMemo(() => {
+    const grouped = new Map();
+    earnings.forEach((item) => {
+      const key = pretty(item.unit_no);
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push(item);
+    });
+    return grouped;
+  }, [earnings]);
   const renderContractPayments = (row, family) => {
     if (family === "catering") {
-      const linked = earnings.filter((item) => pretty(item.unit_no) === pretty(row.unit_no));
+      const linked = earningsByUnit.get(pretty(row.unit_no)) || [];
       return <div className="space-y-2"><div className="flex flex-wrap gap-2 text-xs font-black text-muted"><span>{linked.length} receipts</span><span>·</span><span>Total paid {money(linked.reduce((sum, item) => sum + Number(item.amount || 0), 0))}</span></div>{linked.length ? <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">{linked.slice(0, 12).map((item, index) => <div key={item.earning_key || `${item.unit_no}-${item.date_of_receipt}-${index}`} className="rounded-md border border-line bg-surface px-3 py-2 text-xs"><div className="flex justify-between gap-2 font-black text-ink"><span>{pretty(item.date_of_receipt)}</span><span>{money(item.amount)}</span></div><div className="mt-1 text-muted">{pretty(item.payment_head)} · {pretty(item.receipt_type)}{item.mr_no ? ` · MR ${item.mr_no}` : ""}</div></div>)}</div> : <div className="text-xs text-muted">No receipts linked to this catering contract.</div>}{linked.length > 12 ? <div className="text-xs text-muted">Showing first 12 receipts. Open View for the complete payment list.</div> : null}</div>;
     }
     const payments = row.payments || [];
