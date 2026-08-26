@@ -15,7 +15,7 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.exceptions import RequestValidationError
-from sqlalchemy import Integer
+from sqlalchemy import Integer, extract
 from ai_service import query_ai
 from database import SessionLocal, engine, is_sqlite_fallback
 from models import (
@@ -1419,7 +1419,7 @@ def station_metrics(station_code: str | None = None, year: int | None = None, mo
         if month:
             if month < 1 or month > 12:
                 raise HTTPException(status_code=422, detail="month must be between 1 and 12")
-            query = query.filter(StationMonthlyMetric.metric_month.month == month)
+            query = query.filter(extract("month", StationMonthlyMetric.metric_month) == month)
         rows = query.order_by(StationMonthlyMetric.metric_month.desc(), StationMonthlyMetric.station_code).all()
         return envelope({"items": [row_to_dict(row) for row in rows], "years": sorted({row.metric_month.year for row in rows}, reverse=True)}, "ok")
     finally:
