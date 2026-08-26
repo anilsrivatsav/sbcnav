@@ -2271,12 +2271,12 @@ export default function Page() {
                   </Button>
                 </div>
               </Panel>
-              <Panel title="Data Centre" subtitle="PostgreSQL freshness, source reconciliation, and mobile cache health are managed here in Settings.">
+              {false ? <Panel title="Data Centre" subtitle="PostgreSQL freshness, source reconciliation, and mobile cache health are managed here in Settings.">
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                   {Object.entries(dataCentre?.modules || {}).map(([key, module]) => <div key={key} className="soft-raised rounded-lg border border-line p-3"><div className="text-[11px] font-black uppercase tracking-[0.14em] text-muted">{key}</div><div className="mt-2 text-xl font-black text-ink">{module.count ?? 0}</div><div className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted">PostgreSQL records</div><div className="mt-1 text-[11px] text-muted">{module.last_updated_at ? `Updated ${compactDate(module.last_updated_at)}` : "No update recorded"}</div></div>)}
                 </div>
                 <div className="mt-3 flex flex-wrap gap-3 rounded-lg border border-line bg-surfaceStrong p-3 text-sm"><span className="font-semibold text-ink">Status: {dataCentre?.status === "ready" ? "Ready" : "Needs attention"}</span><span className="text-muted">Last activity: {dataCentre?.last_sync_at ? compactDate(dataCentre.last_sync_at) : "Not available"}</span><span className="text-muted">Quality exceptions: {dataCentre?.quality?.total ?? 0}</span></div>
-              </Panel>
+              </Panel> : null}
               <Panel title="Source health" subtitle="Green means the source is connected and its row count matches PostgreSQL. Amber means it needs a refresh or has no source snapshot.">
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                   {Object.entries(dataCentre?.modules || {}).map(([key, module]) => {
