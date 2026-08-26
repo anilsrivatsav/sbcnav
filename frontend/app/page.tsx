@@ -1056,18 +1056,23 @@ export default function Page() {
     return earnings.filter((row) => matchesQuery(row, ["unit_no", "station_code", "licensee_name", "payment_head", "payment_sub_head", "receipt_type", "mr_no", "amount"], q));
   }, [earnings, search.earnings]);
 
-  const filteredContracts = useMemo(() => {
+  const cateringScopedUnits = useMemo(() => {
     const q = search.contracts || "";
     const stationOk = (row) => sameFilterValue(row.station_code, cateringStation);
+    return units.filter((row) => stationOk(row) && matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "unit_status", "remarks", "station_category", "type_of_unit", "pf_no"], q));
+  }, [units, search.contracts, cateringStation]);
+
+  const filteredContracts = useMemo(() => {
+    const q = search.contracts || "";
     const typeOk = (row) => cateringType === "__missing__" ? !String(row.type_of_unit || "").trim() : sameFilterValue(row.type_of_unit, cateringType);
     const typeByUnit = new Map(units.map((row) => [pretty(row.unit_no), row.type_of_unit]));
     return {
-      units: units.filter((row) => stationOk(row) && typeOk(row) && matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "unit_status", "remarks", "station_category", "type_of_unit", "pf_no"], q)),
-      active: units.filter((row) => stationOk(row) && typeOk(row) && isActiveCateringUnit(row) && matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "unit_status", "remarks", "station_category", "type_of_unit", "pf_no"], q)),
-      other: units.filter((row) => stationOk(row) && typeOk(row) && !isActiveCateringUnit(row) && matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "unit_status", "remarks", "station_category", "type_of_unit", "pf_no"], q)),
+      units: cateringScopedUnits.filter(typeOk),
+      active: cateringScopedUnits.filter((row) => typeOk(row) && isActiveCateringUnit(row)),
+      other: cateringScopedUnits.filter((row) => typeOk(row) && !isActiveCateringUnit(row)),
       earnings: earnings.filter((row) => sameFilterValue(row.station_code, cateringStation) && (cateringType === "__missing__" ? !String(typeByUnit.get(pretty(row.unit_no)) || "").trim() : sameFilterValue(typeByUnit.get(pretty(row.unit_no)), cateringType)) && matchesQuery(row, ["unit_no", "station_code", "licensee_name", "payment_head", "payment_sub_head", "receipt_type", "mr_no", "amount"], q)),
     };
-  }, [units, earnings, search.contracts, cateringStation, cateringType]);
+  }, [cateringScopedUnits, units, earnings, search.contracts, cateringStation, cateringType]);
 
   const filteredPublicityContracts = useMemo(() => {
     const q = search.contracts || "";
@@ -1523,7 +1528,7 @@ export default function Page() {
   const publicityStations = ["all", ...Array.from(new Set(publicityContracts.flatMap((row) => (row.assets || []).map((asset) => pretty(asset.station_code || asset.asset_name || asset.raw_asset_value)).filter((value) => value !== "NA")))).sort()];
   const contractStations = ["all", ...Array.from(new Set(units.map((row) => pretty(row.station_code)).filter((value) => value !== "NA"))).sort()];
   const cateringTypes = Array.from(new Set(units.map((row) => String(row.type_of_unit || "").trim()).filter(Boolean))).sort();
-  const cateringTypeRows = contractTab === "active" ? units.filter(isActiveCateringUnit) : contractTab === "other" ? units.filter((row) => !isActiveCateringUnit(row)) : earnings;
+  const cateringTypeRows = contractTab === "active" ? cateringScopedUnits.filter(isActiveCateringUnit) : contractTab === "other" ? cateringScopedUnits.filter((row) => !isActiveCateringUnit(row)) : earnings;
   const cateringUnitTypeByNo = new Map(units.map((row) => [pretty(row.unit_no), row.type_of_unit]));
   const cateringTypeChips = [
     { value: "all", label: "All types", count: cateringTypeRows.length },
@@ -2673,7 +2678,7 @@ export default function Page() {
                 <>
                   <div className="space-y-2">
                     <div className="flex flex-wrap items-center gap-1.5"><span className="mr-1 text-[11px] font-black uppercase tracking-[0.14em] text-muted">Status</span>{["all", "running", "completed", "cancelled"].map((status) => <button key={status} type="button" onClick={() => { setPublicityStatus(status); setPublicityPolicy("all"); setPublicityStation("all"); }} className={cx("rounded-full border px-3 py-1.5 text-xs font-black transition hover:border-accent", publicityStatus === status ? "border-accent bg-accent text-white" : "soft-control text-ink")}>{status === "all" ? "All" : pretty(status)} <span className="ml-1 opacity-75">{status === "all" ? publicityContracts.length : publicityContracts.filter((row) => normalizeText(row.status) === status).length}</span></button>)}</div>
-                    {publicityStatus === "running" ? <div className="flex flex-wrap items-center gap-1.5"><span className="mr-1 text-[11px] font-black uppercase tracking-[0.14em] text-muted">Policy</span>{publicityPolicyChips.map((chip) => <button key={chip.value} type="button" onClick={() => { setPublicityStatus("running"); setPublicityPolicy(chip.value); setPublicityStation("all"); }} className={cx("rounded-full border px-3 py-1.5 text-xs font-black transition hover:border-accent", publicityPolicy === chip.value ? "border-accent bg-accent text-white" : "soft-control text-ink")}>{chip.label} <span className="ml-1 opacity-75">{chip.count}</span></button>)}</div> : null}
+                    {publicityStatus === "running" && publicityStation === "all" ? <div className="flex flex-wrap items-center gap-1.5"><span className="mr-1 text-[11px] font-black uppercase tracking-[0.14em] text-muted">Policy</span>{publicityPolicyChips.map((chip) => <button key={chip.value} type="button" onClick={() => { setPublicityStatus("running"); setPublicityPolicy(chip.value); setPublicityStation("all"); }} className={cx("rounded-full border px-3 py-1.5 text-xs font-black transition hover:border-accent", publicityPolicy === chip.value ? "border-accent bg-accent text-white" : "soft-control text-ink")}>{chip.label} <span className="ml-1 opacity-75">{chip.count}</span></button>)}</div> : null}
                     <label className="flex items-center gap-1.5 text-xs font-black text-muted"><span className="text-[11px] uppercase tracking-[0.14em]">Station</span><select value={publicityStation} onChange={(event) => { setPublicityStation(event.target.value); setPublicityPolicy("all"); }} className="soft-inset h-8 max-w-48 rounded-full border border-line px-2.5 text-xs font-bold text-ink outline-none focus:border-accent">{publicityStations.map((option) => <option key={option} value={option}>{option === "all" ? "All stations" : option}</option>)}</select></label>
                   </div>
                   <Panel title="Publicity Contracts" subtitle="Station, train, audio, advertising, and other policy-based contracts from the registry." action={<Button size="sm" variant="secondary" onClick={() => setView("settings")}><SettingsIcon size={14} /> Manage in Settings</Button>}>
@@ -2695,7 +2700,7 @@ export default function Page() {
               <>
               <div className="space-y-2">
                 <div className="flex flex-wrap items-center gap-1.5"><span className="mr-1 text-[11px] font-black uppercase tracking-[0.14em] text-muted">Status</span><button type="button" onClick={() => { setContractTab("active"); setCateringType("all"); setCateringStation("all"); }} className={cx("rounded-full border px-3 py-1.5 text-xs font-black transition hover:border-accent", contractTab === "active" ? "border-accent bg-accent text-white" : "soft-control text-ink")}>Running / Active <b className="ml-1 opacity-75">{filteredContracts.active.length}</b></button><button type="button" onClick={() => { setContractTab("other"); setCateringType("all"); setCateringStation("all"); }} className={cx("rounded-full border px-3 py-1.5 text-xs font-black transition hover:border-accent", contractTab === "other" ? "border-accent bg-accent text-white" : "soft-control text-ink")}>Unawarded / Other <b className="ml-1 opacity-75">{filteredContracts.other.length}</b></button><button type="button" onClick={() => { setContractTab("earnings"); setCateringType("all"); setCateringStation("all"); }} className={cx("rounded-full border px-3 py-1.5 text-xs font-black transition hover:border-accent", contractTab === "earnings" ? "border-accent bg-accent text-white" : "soft-control text-ink")}>Payments <b className="ml-1 opacity-75">{filteredContracts.earnings.length}</b></button></div>
-                {contractTab === "active" ? <div className="flex flex-wrap items-center gap-1.5"><span className="mr-1 text-[11px] font-black uppercase tracking-[0.14em] text-muted">Type</span>{cateringTypeChips.map((chip) => <button key={chip.value} type="button" onClick={() => { setCateringType(chip.value); setCateringStation("all"); }} className={cx("rounded-full border px-3 py-1.5 text-xs font-black transition hover:border-accent", cateringType === chip.value ? "border-accent bg-accent text-white" : "soft-control text-ink")}>{chip.label} <span className="ml-1 opacity-75">{chip.count}</span></button>)}</div> : null}
+                {contractTab === "active" && cateringStation === "all" ? <div className="flex flex-wrap items-center gap-1.5"><span className="mr-1 text-[11px] font-black uppercase tracking-[0.14em] text-muted">Type</span>{cateringTypeChips.map((chip) => <button key={chip.value} type="button" onClick={() => { setCateringType(chip.value); setCateringStation("all"); }} className={cx("rounded-full border px-3 py-1.5 text-xs font-black transition hover:border-accent", cateringType === chip.value ? "border-accent bg-accent text-white" : "soft-control text-ink")}>{chip.label} <span className="ml-1 opacity-75">{chip.count}</span></button>)}</div> : null}
                 <label className="flex items-center gap-1.5 text-xs font-black text-muted"><span className="text-[11px] uppercase tracking-[0.14em]">Station</span><select value={cateringStation} onChange={(event) => { setCateringStation(event.target.value); setCateringType("all"); }} className="soft-inset h-8 max-w-48 rounded-full border border-line px-2.5 text-xs font-bold text-ink outline-none focus:border-accent">{contractStations.map((option) => <option key={option} value={option}>{option === "all" ? "All stations" : option}</option>)}</select></label>
               </div>
               <Panel
