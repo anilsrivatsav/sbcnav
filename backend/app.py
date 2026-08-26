@@ -1550,6 +1550,9 @@ def bulk_station_metrics(payload: dict):
             if not code or code not in station_codes:
                 errors.append({"row": index, "station_code": code, "error": "Station code not found"})
                 continue
+            if not month_value:
+                errors.append({"row": index, "station_code": code, "error": "Month is required as YYYY-MM"})
+                continue
             try:
                 metric_month = _metric_month(str(month_value))
             except HTTPException as exc:
