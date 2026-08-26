@@ -9,6 +9,7 @@ const numberValue = (value) => Number(String(value ?? 0).replace(/[₹,\s]/g, ""
 const money = (value) => `₹${numberValue(value).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
 const date = (value) => value ? new Date(value).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 const titleCase = (value) => String(value || "").replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+const cacheKey = "sbcnav-contracts-workspace-v1";
 const categories = [
   ["all", "All contracts", Layers3, "Every contract family"],
   ["publicity", "Publicity", Megaphone, "Station, train, audio and other publicity"],
@@ -38,26 +39,49 @@ export default function ContractsPage() {
 
   const load = async () => {
     setLoading(true); setError("");
-    try {
-      const [publicity, totals, catering] = await Promise.all([
-        fetchJson(contractsUrl({ status, search: "", pageSize: 5000 })),
-        fetchJson(contractSummaryUrl()),
-        fetchJson(`${API_URL}/api/units?page=1&page_size=5000`),
-      ]);
-      setDatasets({ publicity: normalizeRows("publicity", publicity), catering: normalizeRows("catering", catering) });
+    let payload;
+    let lastError;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        payload = await Promise.all([
+          fetchJson(contractsUrl({ status: "all", search: "", pageSize: 5000 })),
+          fetchJson(contractSummaryUrl()),
+          fetchJson(`${API_URL}/api/units?page=1&page_size=5000`),
+        ]);
+        break;
+      } catch (err) {
+        lastError = err;
+        if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 1200 * (attempt + 1)));
+      }
+    }
+    if (!payload) { setError(lastError?.message || "Could not load contracts"); }
+    else {
+      const [publicity, totals, catering] = payload;
+      const nextDatasets = { publicity: normalizeRows("publicity", publicity), catering: normalizeRows("catering", catering) };
+      setDatasets(nextDatasets);
       setSummary(totals || { counts: {} });
-    } catch (err) { setError(err?.message || "Could not load contracts"); }
-    finally { setLoading(false); }
+      try { window.localStorage.setItem(cacheKey, JSON.stringify({ datasets: nextDatasets, summary: totals || { counts: {} } })); } catch { /* Ignore cache quota errors. */ }
+    }
+    setLoading(false);
   };
 
-  useEffect(() => { load(); }, [status]);
+  useEffect(() => {
+    try {
+      const cached = JSON.parse(window.localStorage.getItem(cacheKey) || "null");
+      if (cached?.datasets) { setDatasets(cached.datasets); setSummary(cached.summary || { counts: {} }); setLoading(false); }
+    } catch { /* Ignore stale or unavailable browser cache. */ }
+    load();
+  }, []);
 
   const counts = { all: datasets.publicity.length + datasets.catering.length, publicity: datasets.publicity.length, catering: datasets.catering.length };
   const rows = category === "all" ? [...datasets.publicity, ...datasets.catering] : datasets[category] || [];
   const visibleRows = useMemo(() => {
     const needle = search.trim().toLowerCase();
-    return rows.filter((row) => !needle || JSON.stringify(row).toLowerCase().includes(needle));
-  }, [rows, search]);
+    return rows.filter((row) => {
+      const statusOk = category !== "publicity" || status === "all" || String(row.status || "").toLowerCase() === status;
+      return statusOk && (!needle || JSON.stringify(row).toLowerCase().includes(needle));
+    });
+  }, [rows, search, category, status]);
   const statCards = [["Awarded", "awarded", FileCheck2], ["Running", "running", Clock3], ["Completed", "completed", CheckCircle2], ["Cancelled", "cancelled", XCircle]];
   const openDetail = async (row) => {
     if (row.contract_family !== "publicity") { setSelected(row); return; }
