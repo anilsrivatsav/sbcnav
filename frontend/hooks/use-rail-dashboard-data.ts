@@ -26,8 +26,8 @@ export function useRailDashboardData() {
   const [paNorms, setPaNorms] = useState([]);
   const [paReports, setPaReports] = useState(null);
   const [reports, setReports] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [activityStatus, setActivityStatus] = useState("Ready");
+  const [loading, setLoading] = useState(true);
+  const [activityStatus, setActivityStatus] = useState("Loading PostgreSQL data...");
   const [lastRefreshAt, setLastRefreshAt] = useState(null);
 
   const applyData = (data) => {
@@ -77,20 +77,8 @@ export function useRailDashboardData() {
     }
   };
 
-  // Render may need a few seconds to wake the API. Retry automatically when
-  // the first load has warnings so users do not have to press Refresh DB.
   useEffect(() => {
-    let retryTimer;
-    let cancelled = false;
-    const loadWithRetry = async () => {
-      const errors = await loadData();
-      if (!cancelled && errors?.length) retryTimer = window.setTimeout(loadWithRetry, 5000);
-    };
-    loadWithRetry();
-    return () => {
-      cancelled = true;
-      if (retryTimer) window.clearTimeout(retryTimer);
-    };
+    loadData();
   }, []);
 
   return {

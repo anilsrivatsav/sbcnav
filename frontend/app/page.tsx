@@ -149,8 +149,8 @@ function Button({ children, variant = "primary", size = "md", className = "", ..
     <button
       type="button"
       className={cx(
-        "focus-ring inline-flex items-center justify-center gap-2 rounded-lg font-extrabold transition disabled:cursor-not-allowed disabled:opacity-60",
-        size === "sm" ? "h-9 px-3 text-xs" : "h-11 px-4 text-sm",
+        "focus-ring inline-flex items-center justify-center gap-2 rounded-md font-extrabold transition disabled:cursor-not-allowed disabled:opacity-60",
+        size === "sm" ? "h-8 px-2.5 text-[11px]" : "h-10 px-3 text-sm",
         buttonClasses[variant],
         className,
       )}
@@ -208,7 +208,7 @@ function ListFooter({ shown, total, onMore, onLess }) {
 
 function Tabs({ tabs, value, onChange }) {
   return (
-    <div className="soft-inset soft-scroll flex gap-2 overflow-x-auto rounded-lg border border-line p-1.5">
+    <div className="soft-inset soft-scroll flex gap-1 overflow-x-auto rounded-lg border border-line p-1">
       {tabs.map((tab) => {
         const Icon = tab.icon;
         const active = value === tab.value;
@@ -218,7 +218,7 @@ function Tabs({ tabs, value, onChange }) {
             type="button"
             onClick={() => onChange(tab.value)}
             className={cx(
-              "focus-ring inline-flex h-10 shrink-0 items-center gap-2 rounded-md px-3 text-xs font-black uppercase tracking-[0.12em] transition",
+              "focus-ring inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[11px] font-black uppercase tracking-[0.08em] transition",
               active ? "bg-accent text-white shadow-raised" : "text-muted hover:bg-surfaceStrong hover:text-ink",
             )}
           >
@@ -233,17 +233,17 @@ function Tabs({ tabs, value, onChange }) {
 
 function Card({ icon: Icon, label, value, subtext, onClick }) {
   const content = (
-    <div className={cx("soft-surface min-w-0 rounded-xl border p-3 transition sm:p-4", onClick ? "hover:-translate-y-0.5 hover:border-accent/50" : "hover:-translate-y-0.5 hover:border-accent/40")}>
+    <div className={cx("soft-surface min-w-0 rounded-lg border p-2.5 transition sm:p-3", onClick ? "hover:-translate-y-0.5 hover:border-accent/50" : "hover:-translate-y-0.5 hover:border-accent/40")}>
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="text-xs font-semibold text-muted">{label}</div>
-          <div className="mt-1 truncate text-xl font-black text-ink sm:text-2xl">{value}</div>
+          <div className="mt-0.5 truncate text-lg font-black text-ink sm:text-xl">{value}</div>
         </div>
-        <div className="soft-raised rounded-lg border border-accent/20 bg-accentSoft p-2 text-accentStrong">
-          <Icon size={16} />
+        <div className="soft-raised rounded-md border border-accent/20 bg-accentSoft p-1.5 text-accentStrong">
+          <Icon size={15} />
         </div>
       </div>
-      <div className="mt-2 line-clamp-2 text-xs font-semibold text-muted">{subtext}</div>
+      <div className="mt-1 line-clamp-1 text-[11px] font-semibold text-muted">{subtext}</div>
     </div>
   );
   return onClick ? <button type="button" onClick={onClick} className="block w-full text-left focus-ring">{content}</button> : content;
@@ -251,7 +251,7 @@ function Card({ icon: Icon, label, value, subtext, onClick }) {
 
 function Panel({ title, subtitle, action, children }) {
   return (
-    <section className="soft-surface rounded-xl border p-5">
+    <section className="soft-surface rounded-lg border p-3 sm:p-4">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-base font-bold tracking-tight text-ink">{title}</h2>
@@ -259,7 +259,7 @@ function Panel({ title, subtitle, action, children }) {
         </div>
         {action}
       </div>
-      <div className="mt-4">{children}</div>
+      <div className="mt-3">{children}</div>
     </section>
   );
 }
@@ -383,7 +383,7 @@ function NavButton({ active, icon: Icon, label, hint, onClick }) {
       type="button"
       onClick={onClick}
       title={hint}
-      className={`focus-ring flex min-w-[184px] items-start gap-3 rounded-xl border px-3 py-3 text-left transition lg:w-full lg:min-w-0 ${active ? "border-blue-200 bg-blue-50 text-blue-700 shadow-none" : "border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-950"
+      className={`focus-ring flex min-w-[184px] items-start gap-2 rounded-lg border px-2.5 py-2 text-left transition lg:w-full lg:min-w-0 ${active ? "border-blue-200 bg-blue-50 text-blue-700 shadow-none" : "border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-950"
         }`}
     >
       <span className={`rounded-lg p-1.5 ${active ? "bg-white text-blue-600" : "bg-slate-100 text-slate-500"}`}>
@@ -404,7 +404,7 @@ function SearchInput({ value, onChange, placeholder = "Search current view" }) {
       <input
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="soft-inset h-11 w-full rounded-lg border border-line pl-10 pr-3 text-sm outline-none placeholder:text-muted focus:border-accent"
+        className="soft-inset h-9 w-full rounded-md border border-line pl-10 pr-3 text-sm outline-none placeholder:text-muted focus:border-accent"
         placeholder={placeholder}
       />
     </label>
@@ -2535,7 +2535,7 @@ export default function Page() {
                     key={card.key}
                     icon={card.icon}
                     label={card.label}
-                    value={card.key === "completedWorks" ? completedWorks : card.key === "pendingWorks" ? pendingWorks : card.key === "publicityRunning" ? runningPublicityContracts.length : stats?.[card.key] ?? 0}
+                    value={loading && !stats ? "…" : card.key === "completedWorks" ? completedWorks : card.key === "pendingWorks" ? pendingWorks : card.key === "publicityRunning" ? runningPublicityContracts.length : stats?.[card.key] ?? "—"}
                     subtext={card.subtext}
                     onClick={() => openDashboardDrilldown(card.key)}
                   />
