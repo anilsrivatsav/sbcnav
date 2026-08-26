@@ -3,36 +3,82 @@
 import { useEffect, useState } from "react";
 import { loadRailDashboardData } from "../lib/api";
 
+const cacheKey = "sbcnav-postgres-dashboard-snapshot-v2";
+const oldCacheKey = "sbcnav-postgres-read-model-v1";
+
+const rows = (value) => Array.isArray(value) ? value : (value?.items || []);
+
+function readSnapshot() {
+  if (typeof window === "undefined") return null;
+  try {
+    return JSON.parse(window.localStorage.getItem(cacheKey) || "null");
+  } catch {
+    return null;
+  }
+}
+
+function snapshotOf(data) {
+  const amenities = data.passengerAmenities || {};
+  return {
+    stats: data.stats,
+    dataCentre: data.dataCentre,
+    actionCentre: data.actionCentre,
+    stations: rows(data.stations),
+    units: rows(data.units),
+    earnings: rows(data.earnings),
+    works: rows(data.works),
+    workMonitoring: data.workMonitoring ? {
+      ...data.workMonitoring,
+      items: rows(data.workMonitoring.items),
+    } : null,
+    commercialContracts: rows(data.commercialContracts),
+    commercialContractReports: data.commercialContractReports,
+    contractAlerts: data.contractAlerts,
+    registryContracts: rows(data.registryContracts),
+    reports: data.reports,
+    passengerAmenities: {
+      summary: rows(amenities.summary),
+      infra: rows(amenities.infra),
+      platforms: rows(amenities.platforms),
+      wheelchairs: rows(amenities.wheelchairs),
+      trolley: rows(amenities.trolley),
+      works: rows(amenities.works),
+      pfExtension: rows(amenities.pfExtension),
+      norms: rows(amenities.norms),
+      reports: amenities.reports || null,
+    },
+  };
+}
+
 export function useRailDashboardData() {
-  const cacheKey = "sbcnav-postgres-read-model-v1";
-  const [stats, setStats] = useState(null);
-  const [dataCentre, setDataCentre] = useState(null);
-  const [actionCentre, setActionCentre] = useState(null);
-  const [stations, setStations] = useState([]);
-  const [units, setUnits] = useState([]);
-  const [earnings, setEarnings] = useState([]);
-  const [works, setWorks] = useState([]);
-  const [workMonitoring, setWorkMonitoring] = useState(null);
-  const [commercialContracts, setCommercialContracts] = useState([]);
-  const [commercialContractReports, setCommercialContractReports] = useState(null);
-  const [contractAlerts, setContractAlerts] = useState(null);
-  const [registryContracts, setRegistryContracts] = useState([]);
-  const [paSummary, setPaSummary] = useState([]);
-  const [paInfra, setPaInfra] = useState([]);
-  const [paPlatforms, setPaPlatforms] = useState([]);
-  const [paWheelchairs, setPaWheelchairs] = useState([]);
-  const [paTrolley, setPaTrolley] = useState([]);
-  const [paWorks, setPaWorks] = useState([]);
-  const [paPfExtension, setPaPfExtension] = useState([]);
-  const [paNorms, setPaNorms] = useState([]);
-  const [paReports, setPaReports] = useState(null);
-  const [reports, setReports] = useState(null);
+  const [initialSnapshot] = useState(readSnapshot);
+  const [stats, setStats] = useState(() => initialSnapshot?.stats || null);
+  const [dataCentre, setDataCentre] = useState(() => initialSnapshot?.dataCentre || null);
+  const [actionCentre, setActionCentre] = useState(() => initialSnapshot?.actionCentre || null);
+  const [stations, setStations] = useState(() => initialSnapshot?.stations || []);
+  const [units, setUnits] = useState(() => initialSnapshot?.units || []);
+  const [earnings, setEarnings] = useState(() => initialSnapshot?.earnings || []);
+  const [works, setWorks] = useState(() => initialSnapshot?.works || []);
+  const [workMonitoring, setWorkMonitoring] = useState(() => initialSnapshot?.workMonitoring || null);
+  const [commercialContracts, setCommercialContracts] = useState(() => initialSnapshot?.commercialContracts || []);
+  const [commercialContractReports, setCommercialContractReports] = useState(() => initialSnapshot?.commercialContractReports || null);
+  const [contractAlerts, setContractAlerts] = useState(() => initialSnapshot?.contractAlerts || null);
+  const [registryContracts, setRegistryContracts] = useState(() => initialSnapshot?.registryContracts || []);
+  const [paSummary, setPaSummary] = useState(() => initialSnapshot?.passengerAmenities?.summary || []);
+  const [paInfra, setPaInfra] = useState(() => initialSnapshot?.passengerAmenities?.infra || []);
+  const [paPlatforms, setPaPlatforms] = useState(() => initialSnapshot?.passengerAmenities?.platforms || []);
+  const [paWheelchairs, setPaWheelchairs] = useState(() => initialSnapshot?.passengerAmenities?.wheelchairs || []);
+  const [paTrolley, setPaTrolley] = useState(() => initialSnapshot?.passengerAmenities?.trolley || []);
+  const [paWorks, setPaWorks] = useState(() => initialSnapshot?.passengerAmenities?.works || []);
+  const [paPfExtension, setPaPfExtension] = useState(() => initialSnapshot?.passengerAmenities?.pfExtension || []);
+  const [paNorms, setPaNorms] = useState(() => initialSnapshot?.passengerAmenities?.norms || []);
+  const [paReports, setPaReports] = useState(() => initialSnapshot?.passengerAmenities?.reports || null);
+  const [reports, setReports] = useState(() => initialSnapshot?.reports || null);
   const [loading, setLoading] = useState(true);
   const [activityStatus, setActivityStatus] = useState("Loading PostgreSQL data...");
   const [lastRefreshAt, setLastRefreshAt] = useState(null);
 
   const applyData = (data) => {
-    const rows = (value) => Array.isArray(value) ? value : (value?.items || []);
     setStats(data.stats);
     setDataCentre(data.dataCentre);
     setActionCentre(data.actionCentre);
@@ -46,15 +92,16 @@ export function useRailDashboardData() {
     setContractAlerts(data.contractAlerts);
     setRegistryContracts(rows(data.registryContracts));
     setReports(data.reports);
-    setPaSummary(rows(data.passengerAmenities.summary));
-    setPaInfra(rows(data.passengerAmenities.infra));
-    setPaPlatforms(rows(data.passengerAmenities.platforms));
-    setPaWheelchairs(rows(data.passengerAmenities.wheelchairs));
-    setPaTrolley(rows(data.passengerAmenities.trolley));
-    setPaWorks(rows(data.passengerAmenities.works));
-    setPaPfExtension(rows(data.passengerAmenities.pfExtension));
-    setPaNorms(rows(data.passengerAmenities.norms));
-    setPaReports(data.passengerAmenities.reports);
+    const amenities = data.passengerAmenities || {};
+    setPaSummary(rows(amenities.summary));
+    setPaInfra(rows(amenities.infra));
+    setPaPlatforms(rows(amenities.platforms));
+    setPaWheelchairs(rows(amenities.wheelchairs));
+    setPaTrolley(rows(amenities.trolley));
+    setPaWorks(rows(amenities.works));
+    setPaPfExtension(rows(amenities.pfExtension));
+    setPaNorms(rows(amenities.norms));
+    setPaReports(amenities.reports);
     setLastRefreshAt(new Date().toLocaleString());
   };
 
@@ -62,7 +109,7 @@ export function useRailDashboardData() {
     const data = await loadRailDashboardData();
     applyData(data);
     try {
-      window.localStorage.setItem(cacheKey, JSON.stringify(data));
+      window.localStorage.setItem(cacheKey, JSON.stringify(snapshotOf(data)));
     } catch {
       // A browser storage limit must not prevent the live PostgreSQL refresh.
     }
@@ -85,17 +132,10 @@ export function useRailDashboardData() {
   };
 
   useEffect(() => {
-    try {
-      const cached = JSON.parse(window.localStorage.getItem(cacheKey) || "null");
-      if (cached?.stats && cached?.passengerAmenities) {
-        applyData(cached);
-        setActivityStatus("Showing last PostgreSQL snapshot; checking latest data...");
-      }
-    } catch {
-      // Ignore an unavailable or invalid local snapshot.
-    }
+    try { window.localStorage.removeItem(oldCacheKey); } catch { /* Ignore storage cleanup failures. */ }
+    if (initialSnapshot?.stats) setActivityStatus("Showing last PostgreSQL snapshot; checking latest data...");
     loadData();
-  }, []);
+  }, [initialSnapshot]);
 
   return {
     stats,
