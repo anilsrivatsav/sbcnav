@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { loadRailDashboardData } from "../lib/api";
 
 export function useRailDashboardData() {
+  const cacheKey = "sbcnav-dashboard-cache-v2";
   const [stats, setStats] = useState(null);
   const [dataCentre, setDataCentre] = useState(null);
   const [actionCentre, setActionCentre] = useState(null);
@@ -30,8 +31,7 @@ export function useRailDashboardData() {
   const [activityStatus, setActivityStatus] = useState("Ready");
   const [lastRefreshAt, setLastRefreshAt] = useState(null);
 
-  const loadFromDb = async () => {
-    const data = await loadRailDashboardData();
+  const applyData = (data) => {
     setStats(data.stats);
     setDataCentre(data.dataCentre);
     setActionCentre(data.actionCentre);
@@ -55,6 +55,16 @@ export function useRailDashboardData() {
     setPaNorms(data.passengerAmenities.norms);
     setPaReports(data.passengerAmenities.reports);
     setLastRefreshAt(new Date().toLocaleString());
+  };
+
+  const loadFromDb = async () => {
+    const data = await loadRailDashboardData();
+    applyData(data);
+    try {
+      window.localStorage.setItem(cacheKey, JSON.stringify(data));
+    } catch {
+      // Cached data is an enhancement; quota/private-mode failures are harmless.
+    }
     return data.errors || [];
   };
 
@@ -78,6 +88,15 @@ export function useRailDashboardData() {
   useEffect(() => {
     let retryTimer;
     let cancelled = false;
+    try {
+      const cached = JSON.parse(window.localStorage.getItem(cacheKey) || "null");
+      if (cached?.stats || cached?.stations?.length || cached?.works?.length) {
+        applyData(cached);
+        setActivityStatus("Showing last saved data while refreshing...");
+      }
+    } catch {
+      // Ignore invalid or unavailable browser cache.
+    }
     const loadWithRetry = async () => {
       const errors = await loadData();
       if (!cancelled && errors?.length) retryTimer = window.setTimeout(loadWithRetry, 5000);

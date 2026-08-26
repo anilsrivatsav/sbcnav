@@ -233,17 +233,17 @@ function Tabs({ tabs, value, onChange }) {
 
 function Card({ icon: Icon, label, value, subtext, onClick }) {
   const content = (
-    <div className={cx("soft-surface rounded-xl border p-5 transition", onClick ? "hover:-translate-y-0.5 hover:border-accent/50" : "hover:-translate-y-0.5 hover:border-accent/40")}>
+    <div className={cx("soft-surface min-w-0 rounded-xl border p-3 transition sm:p-4", onClick ? "hover:-translate-y-0.5 hover:border-accent/50" : "hover:-translate-y-0.5 hover:border-accent/40")}>
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="text-xs font-semibold text-muted">{label}</div>
-          <div className="mt-2 text-2xl font-black text-ink">{value}</div>
+          <div className="mt-1 truncate text-xl font-black text-ink sm:text-2xl">{value}</div>
         </div>
-        <div className="soft-raised rounded-lg border border-accent/20 bg-accentSoft p-3 text-accentStrong">
-          <Icon size={18} />
+        <div className="soft-raised rounded-lg border border-accent/20 bg-accentSoft p-2 text-accentStrong">
+          <Icon size={16} />
         </div>
       </div>
-      <div className="mt-3 text-xs font-semibold text-muted">{subtext}</div>
+      <div className="mt-2 line-clamp-2 text-xs font-semibold text-muted">{subtext}</div>
     </div>
   );
   return onClick ? <button type="button" onClick={onClick} className="block w-full text-left focus-ring">{content}</button> : content;
@@ -2265,12 +2265,12 @@ export default function Page() {
         </aside>
 
         <section className="soft-scroll min-w-0 space-y-4 lg:h-full lg:overflow-auto lg:pr-2">
-          <div className="soft-surface sticky top-0 z-30 rounded-lg border p-4 sm:p-5">
+          <div className="soft-surface sticky top-0 z-30 rounded-lg border p-3 sm:p-4">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <Breadcrumbs title={viewConfig.title} />
-                <h1 className="mt-2 text-3xl font-black tracking-tight text-ink sm:text-4xl">{viewConfig.title}</h1>
-                <p className="mt-2 max-w-3xl text-sm text-muted">{viewConfig.subtitle}</p>
+                <h1 className="mt-1 text-2xl font-black tracking-tight text-ink sm:text-3xl">{viewConfig.title}</h1>
+                <p className="mt-1 max-w-3xl text-sm text-muted">{viewConfig.subtitle}</p>
               </div>
               <div className="flex w-full flex-col gap-2 sm:w-[360px]">
                 <SearchInput value={activeSearch} onChange={setActiveSearch} placeholder={`Search ${viewConfig.title.toLowerCase()}`} />
@@ -2509,7 +2509,7 @@ export default function Page() {
                   <EmptyState title="No immediate actions" description="Contracts, receipts, works, and data links currently have no flagged items." />
                 )}
               </Panel> : null}
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 {dashboardCards.map((card) => (
                   <Card
                     key={card.key}
@@ -3340,33 +3340,14 @@ export default function Page() {
               </div>
             ) : view === "works" ? (
               <div className="space-y-4">
-                <div className="grid gap-3 sm:grid-cols-4">
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   <Card icon={Wrench} label="Works" value={workMonitoring?.total ?? works.length} subtext="Unique sanctioned works" />
-                  <Card icon={CircleAlert} label="Exceptions" value={workMonitoring?.exceptions ?? 0} subtext="Contradictions or TDC attention" />
-                  <Card icon={Timer} label="TDC overdue" value={workMonitoring?.tdc_overdue ?? 0} subtext="Open works past target date" />
-                  <Card icon={TrendingUp} label="Expenditure updates" value={(workMonitoring?.items || []).reduce((sum, row) => sum + Number(row.expenditure_update_count || 0), 0)} subtext="Historical ledger entries" />
+                  <Card icon={CheckCircle2} label="Completed" value={workMonitoring?.completed ?? completedWorks} subtext="Works marked complete" />
+                  <Card icon={CircleAlert} label="Work in Progress" value={workMonitoring?.open ?? pendingWorks} subtext="Open or unfinished works" />
                 </div>
-                <Panel title="Works summary" subtitle={`Tally: ${workSummaryRows.length} sanctioned works from the latest register.`}>
-                  <Tabs
-                    tabs={[
-                      { value: "summary", label: "Summary", icon: BarChart3 },
-                      { value: "srden", label: "Sr.DEN wise", icon: Users },
-                      { value: "year", label: "Year wise", icon: CalendarDays },
-                      { value: "allocation", label: "Allocation wise", icon: Wallet },
-                    ]}
-                    value={workSummaryTab}
-                    onChange={setWorkSummaryTab}
-                  />
-                  {workSummaryTab === "summary" ? (
-                    <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                      {[ ["Total register", workSummaryRows.length, "Must tally with source sheet", Wrench], ["Completed", workMonitoring?.completed ?? 0, "Effective completed status", CheckCircle2], ["Open / attention", workMonitoring?.open ?? 0, "Not completed or needs review", CircleAlert] ].map(([label, value, subtext, Icon]) => <button key={label} type="button" onClick={() => openWorkSummary("summary", label === "Total register" ? "Total register" : label)} className="text-left"><Card icon={Icon} label={label} value={value} subtext={subtext} /></button>)}
-                    </div>
-                  ) : (
-                    <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                      {(workSummaryGroups[workSummaryTab] || []).map((item) => <button key={item.label} type="button" onClick={() => openWorkSummary(workSummaryTab, item.label)} className="soft-raised flex items-center justify-between rounded-lg border border-line p-3 text-left hover:border-accent"><span className="truncate text-sm font-semibold text-ink">{item.label}</span><Badge tone="accent">{item.value}</Badge></button>)}
-                    </div>
-                  )}
-                </Panel>
+                <button type="button" onClick={() => setWorkSummarySheet({ open: true, title: "Works summary", rows: workSummaryRows })} className="soft-raised flex w-full items-center justify-between gap-3 rounded-xl border border-line p-3 text-left transition hover:border-accent sm:p-4">
+                  <span className="flex min-w-0 items-center gap-3"><span className="rounded-lg bg-accentSoft p-2 text-accentStrong"><BarChart3 size={17} /></span><span className="min-w-0"><span className="block text-sm font-black text-ink">Works summary</span><span className="block truncate text-xs font-semibold text-muted">{workSummaryRows.length} sanctioned works from the latest register · open grouped list</span></span></span><ChevronRight size={18} className="shrink-0 text-muted" />
+                </button>
                 <Tabs
                   tabs={[
                     { value: "all", label: `All sanctioned works (${filteredWorks.all.length})`, icon: Wrench },
