@@ -50,13 +50,13 @@ export function Surface({ children, className = "" }: any) {
 
 export function KpiCard({ icon: Icon, label, value, subtext }: any) {
   return (
-    <div className="soft-surface rounded-lg border p-5 transition hover:-translate-y-0.5">
+    <div className="soft-surface rounded-lg border border-line border-t-2 border-t-accent/45 p-5 transition hover:-translate-y-0.5 hover:shadow-lg">
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="text-[11px] font-black uppercase tracking-[0.18em] text-muted">{label}</div>
           <div className="mt-2 text-2xl font-black text-ink">{value}</div>
         </div>
-        <div className="soft-raised rounded-lg border border-accent/20 bg-accentSoft p-3 text-accentStrong">
+        <div className="soft-raised rounded-full border border-accent/20 bg-accentSoft p-3 text-accentStrong shadow-sm">
           <Icon size={18} />
         </div>
       </div>
@@ -67,7 +67,7 @@ export function KpiCard({ icon: Icon, label, value, subtext }: any) {
 
 export function Panel({ title, subtitle, action, children, className = "" }: any) {
   return (
-    <section className={cx("soft-surface rounded-lg border p-5", className)}>
+    <section className={cx("soft-surface rounded-lg border border-line p-5 shadow-sm", className)}>
       <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-sm font-black uppercase tracking-[0.18em] text-ink">{title}</h2>
