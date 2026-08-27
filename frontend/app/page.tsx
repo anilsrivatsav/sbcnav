@@ -1365,6 +1365,17 @@ export default function Page() {
     }
   };
   const currentLimit = visibleLimit[view] || 24;
+  const cateringPaymentSummary = useMemo(() => {
+    const grouped = new Map();
+    earnings.forEach((item) => {
+      const key = pretty(item.unit_no);
+      const current = grouped.get(key) || { count: 0, total: 0 };
+      current.count += 1;
+      current.total += Number(item.amount || 0);
+      grouped.set(key, current);
+    });
+    return grouped;
+  }, [earnings]);
   const stationColumns = [
     { key: "station_code", label: "Code", value: (row) => pretty(row.station_code), render: (row) => <span className="font-black text-blue">{pretty(row.station_code)}</span> },
     { key: "station_name", label: "Station", value: (row) => pretty(row.station_name), render: (row) => <span className="font-semibold text-ink">{pretty(row.station_name)}</span> },
@@ -1381,6 +1392,7 @@ export default function Page() {
     { key: "type_of_unit", label: "Type" },
     { key: "station_category", label: "Category" },
     { key: "license_fee", label: "Fee" },
+    { key: "payments", label: "Payments", value: (row) => cateringPaymentSummary.get(pretty(row.unit_no))?.count || 0, render: (row) => { const summary = cateringPaymentSummary.get(pretty(row.unit_no)) || { count: 0, total: 0 }; return <span className="text-xs font-bold text-muted">{summary.count} receipts · {money(summary.total)}</span>; } },
     { key: "paid_upto", label: "Paid Upto" },
     { key: "contract_to", label: "Validity Risk", value: (row) => isAvailableUnit(row) ? "Not allotted" : contractRisk(row.valid_to || row.contract_to).label, render: (row) => { if (isAvailableUnit(row)) return <Badge tone="neutral">Not allotted</Badge>; const risk = contractRisk(row.valid_to || row.contract_to); return <Badge tone={risk.tone}>{risk.label}</Badge>; } },
     { key: "unit_status", label: "Status", value: (row) => isAvailableUnit(row) ? "Available" : pretty(row.unit_status), render: (row) => <Badge tone={isAvailableUnit(row) || /active/i.test(pretty(row.unit_status)) ? "accent" : "neutral"}>{isAvailableUnit(row) ? "Available" : pretty(row.unit_status)}</Badge> },
@@ -2733,14 +2745,14 @@ export default function Page() {
               ) : (
               <>
               <div className="soft-surface grid gap-3 rounded-xl border border-line p-3 md:grid-cols-4 md:items-end">
-                <label className="grid gap-1 text-xs font-black text-muted"><span className="text-[11px] uppercase tracking-[0.14em]">View</span><select value={contractTab} onChange={(event) => { setContractTab(event.target.value); setCateringType("all"); setCateringStation("all"); }} className="soft-inset h-10 rounded-lg border border-line px-3 text-sm font-bold text-ink outline-none focus:border-accent"><option value="active">Running / active ({filteredContracts.active.length})</option><option value="other">Other / unawarded ({filteredContracts.other.length})</option><option value="earnings">Payments ({filteredContracts.earnings.length})</option></select></label>
+                <label className="grid gap-1 text-xs font-black text-muted"><span className="text-[11px] uppercase tracking-[0.14em]">View</span><select value={contractTab} onChange={(event) => { setContractTab(event.target.value); setCateringType("all"); setCateringStation("all"); }} className="soft-inset h-10 rounded-lg border border-line px-3 text-sm font-bold text-ink outline-none focus:border-accent"><option value="active">Running / active ({filteredContracts.active.length})</option><option value="other">Other / unawarded ({filteredContracts.other.length})</option></select></label>
                 <label className="grid gap-1 text-xs font-black text-muted"><span className="text-[11px] uppercase tracking-[0.14em]">Type</span><select value={cateringType} onChange={(event) => { setCateringType(event.target.value); setCateringStation("all"); }} className="soft-inset h-10 rounded-lg border border-line px-3 text-sm font-bold text-ink outline-none focus:border-accent"><option value="all">All types</option>{cateringTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
                 <label className="grid gap-1 text-xs font-black text-muted"><span className="text-[11px] uppercase tracking-[0.14em]">Station</span><select value={cateringStation} onChange={(event) => { setCateringStation(event.target.value); setCateringType("all"); }} className="soft-inset h-10 rounded-lg border border-line px-3 text-sm font-bold text-ink outline-none focus:border-accent">{contractStations.map((option) => <option key={option} value={option}>{option === "all" ? "All stations" : option}</option>)}</select></label>
                 <div className="flex h-10 items-center text-xs font-bold text-muted"><span className="font-black text-ink">{filteredContracts[contractTab]?.length || 0} matching records</span><span className="ml-2">· PostgreSQL</span></div>
               </div>
               <Panel
                 title="Contracts Workspace"
-                subtitle="Catering units are the contract records. Payments and earnings are reviewed inside the unit/contract context."
+                subtitle="Catering units are the contract records; payment receipts and totals stay attached to each row."
                 action={
                   <div className="flex flex-wrap gap-2">
                     <Button size="sm" onClick={() => openCreate("units")}><Plus size={15} /> Add catering contract</Button>
@@ -2762,11 +2774,11 @@ export default function Page() {
                     columns={activeContract.columns}
                     rows={activeContract.rows}
                     getKey={(row, index) => `${pretty(row.unit_no || row.receipt_key || row.earning_key)}-${index}`}
-                    onRowClick={contractTab === "earnings" ? openEarning : openUnit}
-                    onView={contractTab === "earnings" ? openEarning : openUnit}
-                    onEdit={contractTab === "earnings" ? (row) => openEdit("earnings", row) : (row) => openEdit("units", row)}
-                    onAdd={() => openCreate(contractTab === "earnings" ? "earnings" : "units")}
-                    renderExpanded={contractTab === "earnings" ? undefined : (row) => renderContractPayments(row, "catering")}
+                    onRowClick={openUnit}
+                    onView={openUnit}
+                    onEdit={(row) => openEdit("units", row)}
+                    onAdd={() => openCreate("units")}
+                    renderExpanded={(row) => renderContractPayments(row, "catering")}
                     emptyTitle="No contract records match the current search."
                     fileName={activeContract.fileName}
                   />
