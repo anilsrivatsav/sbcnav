@@ -7,13 +7,16 @@
   --color-ink: 15 23 42;
   --color-muted: 100 116 139;
   --color-line: 226 232 240;
-  --color-page: 248 250 252;
-  --color-surface: 255 255 255;
-  --color-surface-strong: 248 250 252;
-  --color-accent: 37 99 235;
-  --color-accent-soft: 239 246 255;
-  --color-accent-strong: 29 78 216;
-  --color-blue: 37 99 235;
+  --color-page: 247 248 253;
+  --color-surface: 255 254 252;
+  --color-surface-strong: 244 247 252;
+  --color-accent: 79 96 190;
+  --color-accent-soft: 235 239 255;
+  --color-accent-strong: 55 67 145;
+  --color-blue: 79 96 190;
+  --color-pastel-mint: 232 247 242;
+  --color-pastel-peach: 255 242 232;
+  --color-pastel-lilac: 243 238 255;
   --shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.04), 0 10px 30px rgba(15, 23, 42, 0.05);
   --shadow-raised: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 14px rgba(15, 23, 42, 0.06);
   --shadow-pressed: inset 0 0 0 1px rgba(148, 163, 184, 0.12), 0 1px 2px rgba(15, 23, 42, 0.03);
@@ -33,6 +36,9 @@
   --color-accent-soft: 30 58 138;
   --color-accent-strong: 147 197 253;
   --color-blue: 96 165 250;
+  --color-pastel-mint: 25 67 60;
+  --color-pastel-peach: 76 48 34;
+  --color-pastel-lilac: 58 48 86;
   --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.2), 0 10px 30px rgba(0, 0, 0, 0.12);
   --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.2), 0 4px 14px rgba(0, 0, 0, 0.16);
   --shadow-pressed: inset 0 0 0 1px rgba(148, 163, 184, 0.14), 0 1px 2px rgba(0, 0, 0, 0.12);
@@ -47,7 +53,7 @@ body {
 
 body {
   margin: 0;
-  background: var(--page-background);
+  background: linear-gradient(135deg, rgb(var(--color-page)) 0%, rgb(var(--color-surface-strong)) 52%, rgb(var(--color-page)) 100%);
   color: rgb(var(--color-ink));
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
