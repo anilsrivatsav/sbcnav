@@ -1385,17 +1385,6 @@ export default function Page() {
     }
   };
   const currentLimit = visibleLimit[view] || 24;
-  const cateringPaymentSummary = useMemo(() => {
-    const grouped = new Map();
-    earnings.forEach((item) => {
-      const key = pretty(item.unit_no);
-      const current = grouped.get(key) || { count: 0, total: 0 };
-      current.count += 1;
-      current.total += Number(item.amount || 0);
-      grouped.set(key, current);
-    });
-    return grouped;
-  }, [earnings]);
   const stationColumns = [
     { key: "station_code", label: "Code", value: (row) => pretty(row.station_code), render: (row) => <span className="font-black text-blue">{pretty(row.station_code)}</span> },
     { key: "station_name", label: "Station", value: (row) => pretty(row.station_name), render: (row) => <span className="font-semibold text-ink">{pretty(row.station_name)}</span> },
@@ -1410,13 +1399,9 @@ export default function Page() {
     { key: "licensee_name", label: "Licensee", value: (row) => isAvailableUnit(row) ? "Available unit" : pretty(row.licensee_name), render: (row) => <span className="font-semibold text-ink">{isAvailableUnit(row) ? "Available unit" : pretty(row.licensee_name)}</span> },
     { key: "station_code", label: "Station" },
     { key: "type_of_unit", label: "Type" },
-    { key: "station_category", label: "Category" },
     { key: "license_fee", label: "Fee" },
-    { key: "payments", label: "Payments", value: (row) => cateringPaymentSummary.get(pretty(row.unit_no))?.count || 0, render: (row) => { const summary = cateringPaymentSummary.get(pretty(row.unit_no)) || { count: 0, total: 0 }; return <span className="text-xs font-bold text-muted">{summary.count} receipts · {money(summary.total)}</span>; } },
-    { key: "paid_upto", label: "Paid Upto" },
     { key: "contract_to", label: "Validity Risk", value: (row) => isAvailableUnit(row) ? "Not allotted" : contractRisk(row.valid_to || row.contract_to).label, render: (row) => { if (isAvailableUnit(row)) return <Badge tone="neutral">Not allotted</Badge>; const risk = contractRisk(row.valid_to || row.contract_to); return <Badge tone={risk.tone}>{risk.label}</Badge>; } },
     { key: "unit_status", label: "Status", value: (row) => isAvailableUnit(row) ? "Available" : pretty(row.unit_status), render: (row) => <Badge tone={isAvailableUnit(row) || /active/i.test(pretty(row.unit_status)) ? "accent" : "neutral"}>{isAvailableUnit(row) ? "Available" : pretty(row.unit_status)}</Badge> },
-    { key: "remarks", label: "Remarks", value: (row) => pretty(row.remarks), render: (row) => <span className="text-sm text-muted">{pretty(row.remarks)}</span> },
   ];
   const earningColumns = [
     { key: "unit_no", label: "Unit", value: (row) => pretty(row.unit_no), render: (row) => <span className="font-black text-blue">{pretty(row.unit_no)}</span> },
@@ -2392,7 +2377,7 @@ export default function Page() {
                 <button type="button" aria-label="Open navigation" onClick={() => setNavigationOpen(true)} className="focus-ring soft-control mt-0.5 shrink-0 rounded-lg p-2.5 text-ink lg:hidden"><Menu size={20} /></button>
                 <div className="min-w-0">
                   <Breadcrumbs title={viewConfig.title} />
-                  <h1 className="mt-1 truncate text-2xl font-black tracking-tight text-ink sm:text-3xl">{viewConfig.title}</h1>
+                  <h1 className="mt-1 truncate text-xl font-black tracking-tight text-ink sm:text-2xl">{viewConfig.title}</h1>
                   <p className="mt-1 max-w-3xl text-sm text-muted">{viewConfig.subtitle}</p>
                 </div>
               </div>

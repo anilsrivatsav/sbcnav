@@ -92,7 +92,7 @@ export function Tabs({ tabs, value, onChange }: any) {
             type="button"
             onClick={() => onChange(tab.value)}
             className={cx(
-              "focus-ring inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[11px] font-black uppercase tracking-[0.1em] transition",
+              "focus-ring inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-[10px] font-bold uppercase tracking-[0.08em] transition",
               active ? "bg-accent text-white shadow-raised" : "text-muted hover:bg-surfaceStrong hover:text-ink",
             )}
           >
