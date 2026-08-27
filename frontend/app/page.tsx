@@ -1089,6 +1089,7 @@ export default function Page() {
 
   const filteredPublicityContracts = useMemo(() => {
     const q = search.contracts || "";
+    if (publicityStatus === "all" && publicityPolicy === "all" && publicityStation === "all" && !q) return publicityContracts;
     const sourceRows = publicityStatus === "all"
       ? publicityContracts
       : publicityContracts.filter((row) => normalizeText(row.status) === normalizeText(publicityStatus));
