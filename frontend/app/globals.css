@@ -69,9 +69,17 @@ html {
 }
 
 .soft-surface {
-  background: rgb(var(--color-surface));
+  background: linear-gradient(145deg, rgb(var(--color-surface)) 0%, rgb(var(--color-surface-strong) / 0.62) 100%);
   border-color: rgb(var(--color-line));
   box-shadow: var(--shadow-soft);
+}
+
+.creative-sidebar {
+  background: linear-gradient(180deg, rgb(var(--color-pastel-lilac) / 0.72) 0%, rgb(var(--color-surface)) 48%, rgb(var(--color-pastel-mint) / 0.46) 100%);
+}
+
+.creative-hero {
+  background: linear-gradient(120deg, rgb(var(--color-accent-soft) / 0.8), rgb(var(--color-surface)) 58%, rgb(var(--color-pastel-peach) / 0.34));
 }
 
 .soft-raised {

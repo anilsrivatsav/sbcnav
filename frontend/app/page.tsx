@@ -2339,7 +2339,7 @@ export default function Page() {
     <main className="min-h-screen bg-[var(--page-background)] text-ink">
       <section className="mx-auto grid min-w-0 max-w-[1680px] grid-cols-[minmax(0,1fr)] lg:h-screen lg:grid-cols-[248px_minmax(0,1fr)]">
         {navigationOpen ? <button type="button" aria-label="Dismiss navigation" onClick={() => setNavigationOpen(false)} className="fixed inset-0 z-40 bg-slate-950/45 backdrop-blur-[2px] lg:hidden" /> : null}
-        <aside className={cx("soft-surface soft-scroll fixed inset-y-0 left-0 z-50 w-[min(88vw,320px)] min-w-0 overflow-y-auto rounded-none border-y-0 border-l-0 border-r p-5 transition-transform duration-200 lg:sticky lg:top-0 lg:z-auto lg:h-screen lg:w-auto lg:translate-x-0", navigationOpen ? "translate-x-0" : "-translate-x-full")}>
+        <aside className={cx("creative-sidebar soft-surface soft-scroll fixed inset-y-0 left-0 z-50 w-[min(88vw,320px)] min-w-0 overflow-y-auto rounded-none border-y-0 border-l-0 border-r p-5 transition-transform duration-200 lg:sticky lg:top-0 lg:z-auto lg:h-screen lg:w-auto lg:translate-x-0", navigationOpen ? "translate-x-0" : "-translate-x-full")}>
           <div className="flex items-start justify-between gap-3">
             <div>
               <div className="text-xs font-black uppercase tracking-[0.22em] text-accent">SBC Division</div>
@@ -2371,7 +2371,7 @@ export default function Page() {
         </aside>
 
         <section className="soft-scroll min-w-0 space-y-4 px-3 py-3 sm:px-5 sm:py-4 lg:h-full lg:overflow-auto lg:px-8 lg:py-6">
-          <div className="soft-surface rounded-xl border p-2.5 sm:p-3">
+          <div className="creative-hero soft-surface rounded-xl border p-2.5 sm:p-3">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div className="flex min-w-0 items-start gap-3">
                 <button type="button" aria-label="Open navigation" onClick={() => setNavigationOpen(true)} className="focus-ring soft-control mt-0.5 shrink-0 rounded-lg p-2.5 text-ink lg:hidden"><Menu size={20} /></button>
