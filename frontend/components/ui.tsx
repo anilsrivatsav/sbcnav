@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, Eye, Pencil, Plus, Search, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Download, Eye, FileDown, Pencil, Plus, Search, X } from "lucide-react";
 
 export const cx = (...classes) => classes.filter(Boolean).join(" ");
 
@@ -38,7 +38,7 @@ export function Badge({ children, tone = "neutral" }: any) {
     success: "border-emerald-300/70 bg-emerald-500/10 text-emerald-700",
   };
   return (
-    <span className={cx("inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-black uppercase tracking-[0.12em]", tones[tone])}>
+    <span className={cx("inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.1em]", tones[tone])}>
       {children}
     </span>
   );
@@ -92,7 +92,7 @@ export function Tabs({ tabs, value, onChange }: any) {
             type="button"
             onClick={() => onChange(tab.value)}
             className={cx(
-              "focus-ring inline-flex h-10 shrink-0 items-center gap-2 rounded-md px-3 text-xs font-black uppercase tracking-[0.12em] transition",
+              "focus-ring inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[11px] font-black uppercase tracking-[0.1em] transition",
               active ? "bg-accent text-white shadow-raised" : "text-muted hover:bg-surfaceStrong hover:text-ink",
             )}
           >
@@ -239,6 +239,22 @@ export function DataTable({ columns, rows, getKey, onRowClick, onView, onEdit, o
     URL.revokeObjectURL(url);
   };
 
+  const exportExcel = () => {
+    const escape = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
+    const header = columns.map((column) => `<th>${escape(column.label)}</th>`).join("");
+    const body = displayRows.map((row) => `<tr>${columns.map((column) => `<td>${escape(cellValue(column, row))}</td>`).join("")}</tr>`).join("");
+    const blob = new Blob([`<table><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table>`], { type: "application/vnd.ms-excel;charset=utf-8" });
+    const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = fileName.replace(/\.[^.]+$/, "") + ".xls"; link.click(); URL.revokeObjectURL(url);
+  };
+
+  const exportPdf = () => {
+    const escape = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
+    const header = columns.map((column) => `<th>${escape(column.label)}</th>`).join("");
+    const body = displayRows.map((row) => `<tr>${columns.map((column) => `<td>${escape(cellValue(column, row))}</td>`).join("")}</tr>`).join("");
+    const report = window.open("", "_blank"); if (!report) return;
+    report.document.write(`<html><head><title>${escape(fileName)}</title><style>body{font:12px Arial;padding:20px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #bbb;padding:6px;text-align:left}th{background:#eef2f7}</style></head><body><h2>${escape(fileName)}</h2><table><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table><script>window.onload=()=>window.print()<\/script></body></html>`); report.document.close();
+  };
+
   if (!rows.length) return <div className="space-y-3"><EmptyState title={emptyTitle} />{onAdd ? <Button size="sm" onClick={onAdd}><Plus size={14} /> Add</Button> : null}</div>;
   return (
     <div className="space-y-3">
@@ -253,6 +269,8 @@ export function DataTable({ columns, rows, getKey, onRowClick, onView, onEdit, o
           <Button variant="secondary" size="sm" onClick={exportVisible}>
             Export visible
           </Button>
+          <Button variant="secondary" size="sm" onClick={exportExcel}><Download size={14} />Excel</Button>
+          <Button variant="secondary" size="sm" onClick={exportPdf}><FileDown size={14} />PDF</Button>
           <select value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }} className="soft-inset h-9 rounded-lg border border-line px-2 text-xs font-bold outline-none">
             {pageSizeOptions.map((option) => <option key={option} value={option}>{option} rows</option>)}
           </select>

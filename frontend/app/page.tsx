@@ -2386,7 +2386,7 @@ export default function Page() {
         </aside>
 
         <section className="soft-scroll min-w-0 space-y-4 px-3 py-3 sm:px-5 sm:py-4 lg:h-full lg:overflow-auto lg:px-8 lg:py-6">
-          <div className="soft-surface sticky top-0 z-30 rounded-xl border p-3 sm:p-4">
+          <div className="soft-surface rounded-xl border p-2.5 sm:p-3">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div className="flex min-w-0 items-start gap-3">
                 <button type="button" aria-label="Open navigation" onClick={() => setNavigationOpen(true)} className="focus-ring soft-control mt-0.5 shrink-0 rounded-lg p-2.5 text-ink lg:hidden"><Menu size={20} /></button>
@@ -2758,7 +2758,7 @@ export default function Page() {
                       emptyTitle="No publicity contracts match the current search or status."
                       fileName="publicity-contracts.csv"
                       pageSizeOptions={[25, 50, 100, 250]}
-                      defaultPageSize={250}
+                      defaultPageSize={25}
                     />
                   </Panel>
                 </>
@@ -2801,6 +2801,8 @@ export default function Page() {
                     renderExpanded={(row) => renderContractPayments(row, "catering")}
                     emptyTitle="No contract records match the current search."
                     fileName={activeContract.fileName}
+                    pageSizeOptions={[10, 25, 50, 100]}
+                    defaultPageSize={25}
                   />
                 </div>
               </Panel>
