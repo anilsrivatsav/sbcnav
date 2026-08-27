@@ -344,7 +344,7 @@ export function KeyValueGrid({ rows }: any) {
   );
 }
 
-export function Modal({ open, title, subtitle, onClose, children }: any) {
+export function Modal({ open, title, subtitle, onClose, children, side = false }: any) {
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (event) => event.key === "Escape" && onClose();
@@ -359,8 +359,8 @@ export function Modal({ open, title, subtitle, onClose, children }: any) {
 
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-3">
-      <div role="dialog" aria-modal="true" aria-label={title} className="max-h-[92vh] w-full max-w-5xl overflow-hidden rounded-lg border border-line bg-surface shadow-overlay">
+    <div className={cx("fixed inset-0 z-50 flex bg-slate-950/55", side ? "items-stretch justify-end" : "items-center justify-center p-3")}>
+      <div role="dialog" aria-modal="true" aria-label={title} className={cx("overflow-hidden border border-line bg-surface shadow-overlay", side ? "h-full w-full max-w-2xl rounded-l-2xl border-y-0 border-r-0" : "max-h-[92vh] w-full max-w-5xl rounded-lg")}>
         <div className="flex items-start justify-between gap-4 border-b border-line bg-surfaceStrong px-4 py-4">
           <div>
             <div className="text-[11px] font-black uppercase tracking-[0.2em] text-accent">Workspace</div>
@@ -371,7 +371,7 @@ export function Modal({ open, title, subtitle, onClose, children }: any) {
             <X size={18} />
           </button>
         </div>
-        <div className="soft-scroll max-h-[calc(92vh-88px)] overflow-auto p-4">{children}</div>
+        <div className={cx("soft-scroll overflow-auto p-4", side ? "h-[calc(100dvh-88px)]" : "max-h-[calc(92vh-88px)]")}>{children}</div>
       </div>
     </div>
   );
