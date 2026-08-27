@@ -9,10 +9,15 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("station_monthly_metrics", sa.Column("uts_tickets", sa.Integer()))
-    op.add_column("station_monthly_metrics", sa.Column("uts_earnings", sa.Numeric(14, 2)))
-    op.add_column("station_monthly_metrics", sa.Column("prs_tickets", sa.Integer()))
-    op.add_column("station_monthly_metrics", sa.Column("prs_earnings", sa.Numeric(14, 2)))
+    columns = {column["name"] for column in sa.inspect(op.get_bind()).get_columns("station_monthly_metrics")}
+    if "uts_tickets" not in columns:
+        op.add_column("station_monthly_metrics", sa.Column("uts_tickets", sa.Integer()))
+    if "uts_earnings" not in columns:
+        op.add_column("station_monthly_metrics", sa.Column("uts_earnings", sa.Numeric(14, 2)))
+    if "prs_tickets" not in columns:
+        op.add_column("station_monthly_metrics", sa.Column("prs_tickets", sa.Integer()))
+    if "prs_earnings" not in columns:
+        op.add_column("station_monthly_metrics", sa.Column("prs_earnings", sa.Numeric(14, 2)))
 
 
 def downgrade() -> None:
