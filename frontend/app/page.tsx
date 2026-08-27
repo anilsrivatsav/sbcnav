@@ -1000,6 +1000,24 @@ export default function Page() {
     return Array.from(counts.entries()).map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value).slice(0, 8);
   }, [works]);
 
+  const contractsByPolicy = useMemo(() => {
+    const counts = new Map();
+    publicityContracts.forEach((contract) => {
+      const key = pretty(contract.policy_code || contract.category || "Unclassified");
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    return Array.from(counts.entries()).map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
+  }, [publicityContracts]);
+
+  const contractsByType = useMemo(() => {
+    const counts = new Map();
+    units.forEach((unit) => {
+      const key = pretty(unit.type_of_unit || "Unclassified");
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    return Array.from(counts.entries()).map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
+  }, [units]);
+
   const worksByCategory = useMemo(() => {
     const counts = new Map();
     works.forEach((work) => {
@@ -2340,7 +2358,7 @@ export default function Page() {
           <div className="flex items-start justify-between gap-3">
             <div>
               <div className="text-xs font-black uppercase tracking-[0.22em] text-accent">SBC Division</div>
-              <div className="mt-2 text-xl font-black text-ink">Rail Operations</div>
+              <div className="mt-2 text-xl font-black text-ink">Commercial Branch</div>
               <p className="mt-1 text-sm text-muted">Stations, contracts, works and passenger amenities.</p>
             </div>
             <button type="button" aria-label="Close navigation" onClick={() => setNavigationOpen(false)} className="focus-ring rounded-lg border border-line p-2 text-muted lg:hidden"><X size={18} /></button>
@@ -2633,16 +2651,16 @@ export default function Page() {
                 ))}
               </div>
               <div className="grid gap-4 lg:grid-cols-2">
-                <Panel title="Works by Station" subtitle="Top stations by work volume">
-                  <SparkBars data={worksByStation} />
+                <Panel title="Contracts by Policy" subtitle="Publicity contract families grouped by policy">
+                  <Donut series={contractsByPolicy.map((item, index) => ({ ...item, color: ["#0f766e", "#2563eb", "#8b5cf6", "#f59e0b", "#ef4444", "#14b8a6"][index % 6] }))} totalLabel="Publicity policy split" />
                 </Panel>
-                <Panel title="Works by Category" subtitle="Distribution of scope categories">
-                  <Donut series={worksByCategory.map((item, index) => ({ ...item, color: ["#0f766e", "#2563eb", "#8b5cf6", "#f59e0b", "#ef4444"][index % 5] }))} totalLabel="Work category split" />
+                <Panel title="Contracts by Type" subtitle="Catering contract families grouped by unit type">
+                  <SparkBars data={contractsByType} />
                 </Panel>
               </div>
               <div className="grid gap-4 lg:grid-cols-2">
-                <Panel title="Revenue Trend" subtitle="Earnings movement across receipt dates">
-                  <TrendLine data={revenueTrend} />
+                <Panel title="Works by Category" subtitle="Distribution of scope categories">
+                  <Donut series={worksByCategory.map((item, index) => ({ ...item, color: ["#0f766e", "#2563eb", "#8b5cf6", "#f59e0b", "#ef4444"][index % 5] }))} totalLabel="Work category split" />
                 </Panel>
                 <Panel title="Status Distribution" subtitle="Current work status mix">
                   <Donut series={statusDistribution} totalLabel="Work status split" />
