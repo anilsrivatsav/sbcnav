@@ -1,7 +1,9 @@
 class AppConfig {
   static const apiBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://10.0.2.2:8000',
+    // The release APK must talk to the same PostgreSQL-backed API as the web UI.
+    // Local development can still override this with --dart-define API_BASE_URL=...
+    defaultValue: 'https://sbcnav.onrender.com',
   );
 
   static const requestTimeout = Duration(seconds: 25);

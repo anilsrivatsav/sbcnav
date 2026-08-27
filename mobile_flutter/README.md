@@ -42,7 +42,7 @@ flutter run --dart-define API_BASE_URL=http://YOUR_COMPUTER_LAN_IP:8000
 Production:
 
 ```powershell
-flutter build apk --release --dart-define API_BASE_URL=https://YOUR_API_HOST
+flutter build apk --release --target-platform android-arm64 --split-per-abi --dart-define API_BASE_URL=https://sbcnav.onrender.com
 ```
 
 ## Mobile API
