@@ -986,7 +986,7 @@ export default function Page() {
   // The contract registry is the authoritative E-auction/Publicity source. Do not
   // infer publicity from keywords: valid station, train, parking, audio, mobile,
   // and miscellaneous policy rows may not contain an advertising keyword.
-  const publicityContracts = useMemo(() => registryContracts.filter((contract) => (contract.source?.system === "e_auction" || !contract.source?.system) && String(contract.policy_code || "").trim()), [registryContracts]);
+  const publicityContracts = useMemo(() => registryContracts.filter((contract) => contract.source?.system === "e_auction"), [registryContracts]);
   const runningPublicityContracts = useMemo(() => publicityContracts.filter((contract) => normalizeText(contract.status) === "running"), [publicityContracts]);
   const paidEarnings = useMemo(() => earnings.filter((entry) => /paid|received/i.test(String(entry.receipt_type || ""))).length, [earnings]);
   const pendingEarnings = useMemo(() => earnings.filter((entry) => /pending/i.test(String(entry.receipt_type || ""))).length, [earnings]);
@@ -1562,7 +1562,8 @@ export default function Page() {
     }
     const payments = row.payments || [];
     const schedule = row.payment_schedule || [];
-    return <div className="space-y-2"><div className="flex flex-wrap gap-2 text-xs font-black text-muted"><span>{row.payment_summary?.recorded || payments.length} recorded</span><span>·</span><span>{row.payment_summary?.scheduled || schedule.length} scheduled</span><span>·</span><span>Paid {money(row.payment_summary?.amount_paid)}</span></div>{payments.length ? <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">{payments.slice(0, 12).map((item, index) => <div key={item.payment_id || `${item.payment_date}-${index}`} className="rounded-md border border-line bg-surface px-3 py-2 text-xs"><div className="flex justify-between gap-2 font-black text-ink"><span>{pretty(item.payment_date)}</span><span>{money(item.amount_paid)}</span></div><div className="mt-1 text-muted">Due {money(item.amount_due)} · {pretty(item.payment_status)}{item.payment_reference ? ` · ${item.payment_reference}` : ""}</div></div>)}</div> : <div className="text-xs text-muted">No recorded payments for this contract. Scheduled instalments: {schedule.length}.</div>}{payments.length > 12 ? <div className="text-xs text-muted">Showing first 12 payments. Open View for the complete list.</div> : null}</div>;
+    const visibleItems = payments.length ? payments : schedule;
+    return <div className="space-y-2"><div className="flex flex-wrap gap-2 text-xs font-black text-muted"><span>{row.payment_summary?.recorded || payments.length} recorded</span><span>·</span><span>{row.payment_summary?.scheduled || schedule.length} scheduled</span><span>·</span><span>Paid {money(row.payment_summary?.amount_paid)}</span></div>{visibleItems.length ? <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">{visibleItems.slice(0, 12).map((item, index) => <div key={item.payment_id || item.schedule_id || `${item.payment_date || item.due_date}-${index}`} className="rounded-md border border-line bg-surface px-3 py-2 text-xs"><div className="flex justify-between gap-2 font-black text-ink"><span>{pretty(item.payment_date || item.due_date)}</span><span>{money(payments.length ? item.amount_paid : item.expected_amount)}</span></div><div className="mt-1 text-muted">{payments.length ? `Due ${money(item.amount_due)} · ${pretty(item.payment_status)}` : `${pretty(item.period_label)} · ${pretty(item.status).replaceAll("_", " ")}`}{item.payment_reference ? ` · ${item.payment_reference}` : ""}</div></div>)}</div> : <div className="text-xs text-muted">No payment entries or installment dates are recorded for this contract.</div>}{visibleItems.length > 12 ? <div className="text-xs text-muted">Showing first 12 payment items. Open View for the complete list.</div> : null}</div>;
   };
   const activeAmenity = (() => {
     if (amenityTab === "infra") return { rows: filteredAmenities.infra, columns: infraColumns, fileName: "pa-infra.csv" };
@@ -3896,6 +3897,7 @@ export default function Page() {
                 ["Total Contract Value", money(modal.record.contract.financials?.total_contract_value)],
                 ["Payments Recorded", modal.record.contract.payment_summary?.recorded || 0],
                 ["Payments Scheduled", modal.record.contract.payment_summary?.scheduled || 0],
+                ["Scheduled Value", money(modal.record.contract.payment_summary?.scheduled_amount)],
                 ["Amount Paid", money(modal.record.contract.payment_summary?.amount_paid)],
                 ["Amount Due", money(modal.record.contract.payment_summary?.amount_due)],
               ]}

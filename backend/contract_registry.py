@@ -113,29 +113,66 @@ def parse_eauction_workbook(path_or_bytes: str | bytes) -> list[dict[str, Any]]:
     if not rows:
         return []
     headers = [_text(value) or "" for value in rows[0]]
+    normalized_headers = [_normalized(value) for value in headers]
+    # The live E Auction register no longer has the old Asset column.  Keep the
+    # legacy layout readable, but map the current sheet explicitly so a column
+    # insertion/removal cannot silently shift every field again.
+    current_layout = len(normalized_headers) >= 17 and normalized_headers[3] == "policy" and normalized_headers[4] == "contract date"
+    columns = ({
+        "sl": 1, "contractor": 2, "number": 3, "asset": None,
+        "policy": 4, "contract_date": 5, "category": 6,
+        "annual": 7, "total": 8, "additional": 9, "status": 10,
+        "quarterly": 11, "start": 12, "end": 13, "duration": 14,
+        # P is a days-to-due formula. Actual installment dates start at Q.
+        "schedule_start": 17, "schedule_end": 27,
+    } if current_layout else {
+        "sl": 1, "contractor": 2, "number": 3, "asset": 4,
+        "policy": 5, "contract_date": 6, "category": 7,
+        "annual": 8, "total": 9, "additional": 10, "status": 11,
+        "quarterly": 12, "start": 13, "end": 14, "duration": 15,
+        "schedule_start": 17, "schedule_end": 28,
+    })
     records: list[dict[str, Any]] = []
     for row_number, row in enumerate(rows[1:], start=2):
         value = lambda col: row[col - 1] if col - 1 < len(row) else None
-        number = _text(value(3))
-        contractor = _text(value(2))
-        if not number or not contractor or number.lower() in {"contract number", "total"}:
+        raw_number = value(columns["number"])
+        raw_contractor = value(columns["contractor"])
+        number = _text(raw_number)
+        contractor = _text(raw_contractor)
+        # Contract references in this register are textual (for example
+        # SBC-OOH-VB-2022). Numeric-only footer totals must not become records.
+        if not isinstance(raw_number, str) or not isinstance(raw_contractor, str) or not number or not contractor or number.lower() in {"contract number", "total"}:
             continue
-        policy, category, asset = _text(value(5)), _text(value(7)), _text(value(4))
-        status = _status(value(11))
+        asset_col = columns["asset"]
+        policy = _text(value(columns["policy"]))
+        category = _text(value(columns["category"]))
+        asset = _text(value(asset_col)) if asset_col else None
+        status = _status(value(columns["status"]))
+        annual_fee = _money(value(columns["annual"]))
+        quarterly_fee = _money(value(columns["quarterly"]))
+        if quarterly_fee is None and annual_fee is not None:
+            quarterly_fee = annual_fee / 4
         schedules = []
-        for col in range(17, min(len(row), 28) + 1):
+        for col in range(columns["schedule_start"], min(len(row), columns["schedule_end"]) + 1):
             due = _date(value(col))
             if due:
-                schedules.append({"installment_number": col - 16, "period_label": headers[col - 1], "due_date": due})
+                installment = col - columns["schedule_start"] + 1
+                schedules.append({
+                    "installment_number": installment,
+                    "period_label": f"Payment {installment}",
+                    "due_date": due,
+                    "expected_amount": quarterly_fee,
+                    "status": "past_due_date" if due < date.today() else "upcoming",
+                })
         records.append({
-            "source_sl_no": int(value(1)) if isinstance(value(1), (int, float)) else None,
+            "source_sl_no": int(value(columns["sl"])) if isinstance(value(columns["sl"]), (int, float)) else None,
             "source_sheet": sheet.title, "source_row_number": row_number,
             "contract_number": number, "contract_name": category or number,
             "contractor": contractor, "asset": asset, "policy_code": policy, "category": category,
-            "status": status, "contract_date": _date(value(6)), "period_start": _date(value(13)),
-            "period_end": _date(value(14)), "duration_value": _money(value(15)),
-            "annual_license_fee": _money(value(8)), "total_contract_value": _money(value(9)),
-            "additional_license_fee": _money(value(10)), "quarterly_license_fee": _money(value(12)),
+            "status": status, "contract_date": _date(value(columns["contract_date"])), "period_start": _date(value(columns["start"])),
+            "period_end": _date(value(columns["end"])), "duration_value": _money(value(columns["duration"])),
+            "annual_license_fee": annual_fee, "total_contract_value": _money(value(columns["total"])),
+            "additional_license_fee": _money(value(columns["additional"])), "quarterly_license_fee": quarterly_fee,
             "schedules": schedules,
         })
     return records
@@ -143,8 +180,13 @@ def parse_eauction_workbook(path_or_bytes: str | bytes) -> list[dict[str, Any]]:
 
 def import_eauction_workbook(path_or_bytes: str | bytes, source_file: str | None = None) -> dict[str, int]:
     records = parse_eauction_workbook(path_or_bytes)
+    if not records:
+        raise ValueError("E Auction sheet contains no valid contract rows")
+    numbers = [item["contract_number"] for item in records]
+    if len(numbers) != len(set(numbers)):
+        raise ValueError("E Auction sheet contains duplicate contract numbers")
     session = SessionLocal()
-    created = updated = assets = schedules = statuses = 0
+    created = updated = deleted = assets = schedules = statuses = 0
     try:
         station_codes = {row[0].upper() for row in session.query(Station.station_code).all()}
         for item in records:
@@ -161,9 +203,9 @@ def import_eauction_workbook(path_or_bytes: str | bytes, source_file: str | None
             else:
                 for key, value in payload.items(): setattr(contract, key, value)
                 updated += 1
-            session.query(ContractRegistryAsset).filter_by(contract_id=contract.contract_id).delete(synchronize_session=False)
             asset_value = item["asset"]
             if asset_value:
+                session.query(ContractRegistryAsset).filter_by(contract_id=contract.contract_id).delete(synchronize_session=False)
                 atype = _asset_type(asset_value, family)
                 station_code = asset_value.strip().upper() if asset_value.strip().upper() in station_codes else None
                 session.add(ContractRegistryAsset(contract_id=contract.contract_id, asset_type=atype, station_code=station_code, train_number=asset_value if atype == "train" else None, asset_name=asset_value, raw_asset_value=asset_value, match_status="matched" if station_code else "unmatched")); assets += 1
@@ -172,8 +214,15 @@ def import_eauction_workbook(path_or_bytes: str | bytes, source_file: str | None
                 session.add(ContractRegistryPaymentSchedule(contract_id=contract.contract_id, **schedule)); schedules += 1
             if not session.query(ContractRegistryStatusHistory).filter_by(contract_id=contract.contract_id, status=item["status"]).first():
                 session.add(ContractRegistryStatusHistory(contract_id=contract.contract_id, status=item["status"], effective_from=item["period_start"], source_reference=f"{item['source_sheet']}:{item['source_row_number']}")); statuses += 1
+        stale = session.query(ContractRegistryContract).filter(
+            ContractRegistryContract.source_system == "e_auction",
+            ContractRegistryContract.contract_number.notin_(numbers),
+        ).all()
+        for contract in stale:
+            session.delete(contract)
+            deleted += 1
         session.commit()
-        return {"records": len(records), "created": created, "updated": updated, "assets": assets, "schedules": schedules, "statuses": statuses}
+        return {"records": len(records), "created": created, "updated": updated, "deleted": deleted, "assets": assets, "schedules": schedules, "statuses": statuses}
     except Exception:
         session.rollback()
         raise
@@ -218,7 +267,7 @@ def backfill_legacy_contracts() -> dict[str, int]:
 def _contract_dict(row: ContractRegistryContract, contractor: ContractRegistryContractor | None, assets: list[ContractRegistryAsset], schedules: list[ContractRegistryPaymentSchedule], payments: list[ContractRegistryPayment] | None = None) -> dict[str, Any]:
     payment_rows = payments or []
     payment_items = [{"payment_id": item.payment_id, "schedule_id": item.schedule_id, "payment_date": item.payment_date, "amount_due": item.amount_due, "amount_paid": item.amount_paid, "interest_amount": item.interest_amount, "delay_days": item.delay_days, "payment_reference": item.payment_reference, "payment_status": item.payment_status, "source_reference": item.source_reference, "remarks": item.remarks} for item in payment_rows]
-    return {"contract_id": row.contract_id, "contract_number": row.contract_number, "contract_name": row.contract_name, "status": row.status, "contract_family": row.contract_family, "award_method": row.award_method, "policy_code": row.policy_code, "category": row.category, "period": {"loa_date": row.loa_date, "start": row.period_start, "end": row.period_end, "duration_value": row.duration_value, "duration_unit": row.duration_unit}, "financials": {"annual_license_fee": row.annual_license_fee, "quarterly_license_fee": row.quarterly_license_fee, "total_contract_value": row.total_contract_value, "additional_license_fee": row.additional_license_fee}, "contractor": {"contractor_id": contractor.contractor_id, "legal_name": contractor.legal_name} if contractor else None, "assets": [{"asset_type": item.asset_type, "station_code": item.station_code, "train_number": item.train_number, "asset_name": item.asset_name, "raw_asset_value": item.raw_asset_value, "match_status": item.match_status} for item in assets], "payment_schedule": [{"schedule_id": item.schedule_id, "installment_number": item.installment_number, "period_label": item.period_label, "due_date": item.due_date, "expected_amount": item.expected_amount, "status": item.status} for item in schedules], "payments": payment_items, "payment_summary": {"scheduled": len(schedules), "recorded": len(payment_items), "amount_due": sum(float(item.amount_due or 0) for item in payment_rows), "amount_paid": sum(float(item.amount_paid or 0) for item in payment_rows), "pending": sum(1 for item in payment_rows if str(item.payment_status or '').lower() in {'pending', 'overdue'})}, "source": {"system": row.source_system, "file": row.source_file, "sheet": row.source_sheet, "row": row.source_row_number}}
+    return {"contract_id": row.contract_id, "contract_number": row.contract_number, "contract_name": row.contract_name, "status": row.status, "contract_family": row.contract_family, "award_method": row.award_method, "policy_code": row.policy_code, "category": row.category, "period": {"loa_date": row.loa_date, "start": row.period_start, "end": row.period_end, "duration_value": row.duration_value, "duration_unit": row.duration_unit}, "financials": {"annual_license_fee": row.annual_license_fee, "quarterly_license_fee": row.quarterly_license_fee, "total_contract_value": row.total_contract_value, "additional_license_fee": row.additional_license_fee}, "contractor": {"contractor_id": contractor.contractor_id, "legal_name": contractor.legal_name} if contractor else None, "assets": [{"asset_type": item.asset_type, "station_code": item.station_code, "train_number": item.train_number, "asset_name": item.asset_name, "raw_asset_value": item.raw_asset_value, "match_status": item.match_status} for item in assets], "payment_schedule": [{"schedule_id": item.schedule_id, "installment_number": item.installment_number, "period_label": item.period_label, "due_date": item.due_date, "expected_amount": item.expected_amount, "status": item.status} for item in schedules], "payments": payment_items, "payment_summary": {"scheduled": len(schedules), "scheduled_amount": sum(float(item.expected_amount or 0) for item in schedules), "recorded": len(payment_items), "amount_due": sum(float(item.amount_due or 0) for item in payment_rows), "amount_paid": sum(float(item.amount_paid or 0) for item in payment_rows), "pending": sum(1 for item in payment_rows if str(item.payment_status or '').lower() in {'pending', 'overdue'})}, "source": {"system": row.source_system, "file": row.source_file, "sheet": row.source_sheet, "row": row.source_row_number}}
 
 
 def list_registry_contracts(status: str | None = None, search: str | None = None, asset_type: str | None = None) -> list[dict[str, Any]]:
