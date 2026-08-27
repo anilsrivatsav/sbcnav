@@ -1093,6 +1093,7 @@ export default function Page() {
     const sourceRows = publicityStatus === "all"
       ? publicityContracts
       : publicityContracts.filter((row) => normalizeText(row.status) === normalizeText(publicityStatus));
+    if (publicityPolicy === "all" && publicityStation === "all" && !q) return sourceRows;
     return sourceRows.filter((row) => {
         const statusOk = true;
       const policyOk = publicityPolicy === "all"
