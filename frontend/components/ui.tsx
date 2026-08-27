@@ -198,11 +198,11 @@ const csvEscape = (value) => {
   return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 };
 
-export function DataTable({ columns, rows, getKey, onRowClick, onView, onEdit, onAdd, renderExpanded, emptyTitle = "No records found", fileName = "export.csv", pageSizeOptions = [10, 25, 50, 100], enableColumnFilters = true }: any) {
+export function DataTable({ columns, rows, getKey, onRowClick, onView, onEdit, onAdd, renderExpanded, emptyTitle = "No records found", fileName = "export.csv", pageSizeOptions = [10, 25, 50, 100], defaultPageSize, enableColumnFilters = true }: any) {
   const hasActions = Boolean(onView || onEdit || onRowClick || renderExpanded);
   const [filters, setFilters] = useState({});
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(pageSizeOptions[1] || 25);
+  const [pageSize, setPageSize] = useState(defaultPageSize || pageSizeOptions[1] || 25);
   const [compact, setCompact] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
   const [expandedKey, setExpandedKey] = useState(null);
@@ -321,7 +321,7 @@ export function DataTable({ columns, rows, getKey, onRowClick, onView, onEdit, o
         {!visibleRows.length ? <div className="p-4"><EmptyState title="No rows match column filters" /></div> : null}
       </div>
       <div className="soft-inset flex flex-col gap-2 rounded-lg border border-line px-3 py-2 text-sm text-muted sm:flex-row sm:items-center sm:justify-between">
-        <span>Page {safePage} of {pageCount}</span>
+        <span>Showing {displayRows.length ? (safePage - 1) * pageSize + 1 : 0}–{Math.min(safePage * pageSize, displayRows.length)} of {displayRows.length} · Page {safePage} of {pageCount}</span>
         <div className="flex gap-2">
           <Button variant="secondary" size="sm" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={safePage <= 1}>Previous</Button>
           <Button variant="secondary" size="sm" onClick={() => setPage((value) => Math.min(pageCount, value + 1))} disabled={safePage >= pageCount}>Next</Button>

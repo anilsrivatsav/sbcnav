@@ -2716,6 +2716,8 @@ export default function Page() {
                       renderExpanded={(row) => renderContractPayments(row, "publicity")}
                       emptyTitle="No publicity contracts match the current search or status."
                       fileName="publicity-contracts.csv"
+                      pageSizeOptions={[25, 50, 100, 250]}
+                      defaultPageSize={250}
                     />
                   </Panel>
                 </>
