@@ -1127,7 +1127,7 @@ export default function Page() {
         || (publicityPolicy === "__missing__" ? policyCandidates.length === 0 : policyCandidates.some((value) => {
           const candidate = normalizeCode(value);
           const selected = normalizeCode(publicityPolicy);
-          return candidate === selected || candidate.startsWith(selected);
+          return candidate === selected || candidate.includes(selected);
         }));
       const stationOk = publicityStation === "all" || row.assets?.some((asset) => normalizeText(contractAssetLabel(asset)) === normalizeText(publicityStation));
       return statusOk && policyOk && stationOk && matchesQuery(row, ["contract_number", "contract_name", "category", "policy_code", (item) => item.contractor?.legal_name, (item) => item.assets?.map((asset) => `${asset.station_code || ""} ${asset.train_number || ""} ${asset.asset_name || ""}`).join(" ")], q);
