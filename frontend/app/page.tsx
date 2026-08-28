@@ -54,6 +54,7 @@ const isAvailableUnit = (unit = {}) => {
 const toNumber = (value) => Number(value || 0);
 const cx = (...classes) => classes.filter(Boolean).join(" ");
 const normalizeText = (value) => pretty(value).toLowerCase().replace(/[–—]/g, "-").replace(/\s+/g, " ").trim();
+const normalizeCode = (value) => normalizeText(value).replace(/\.0$/, "").replace(/[^a-z0-9]+/g, "");
 const matchesQuery = (row, fields, query) => {
   const q = normalizeText(query);
   if (!q) return true;
@@ -990,7 +991,7 @@ export default function Page() {
   // The contract registry is the authoritative E-auction/Publicity source. Do not
   // infer publicity from keywords: valid station, train, parking, audio, mobile,
   // and miscellaneous policy rows may not contain an advertising keyword.
-  const publicityContracts = useMemo(() => registryContracts.filter((contract) => contract.source?.system === "e_auction"), [registryContracts]);
+  const publicityContracts = useMemo(() => registryContracts.filter((contract) => normalizeCode(contract.source?.system) === "eauction"), [registryContracts]);
   const runningPublicityContracts = useMemo(() => publicityContracts.filter((contract) => normalizeText(contract.status) === "running"), [publicityContracts]);
   const paidEarnings = useMemo(() => earnings.filter((entry) => /paid|received/i.test(String(entry.receipt_type || ""))).length, [earnings]);
   const pendingEarnings = useMemo(() => earnings.filter((entry) => /pending/i.test(String(entry.receipt_type || ""))).length, [earnings]);
@@ -1118,8 +1119,9 @@ export default function Page() {
     if (publicityPolicy === "all" && publicityStation === "all" && !q) return sourceRows;
     return sourceRows.filter((row) => {
         const statusOk = true;
+      const rowPolicy = row.policy_code || row.policy || "";
       const policyOk = publicityPolicy === "all"
-        || (publicityPolicy === "__missing__" ? !String(row.policy_code || "").trim() : normalizeText(row.policy_code) === normalizeText(publicityPolicy));
+        || (publicityPolicy === "__missing__" ? !String(rowPolicy).trim() : normalizeCode(rowPolicy) === normalizeCode(publicityPolicy));
       const stationOk = publicityStation === "all" || row.assets?.some((asset) => normalizeText(contractAssetLabel(asset)) === normalizeText(publicityStation));
       return statusOk && policyOk && stationOk && matchesQuery(row, ["contract_number", "contract_name", "category", "policy_code", (item) => item.contractor?.legal_name, (item) => item.assets?.map((asset) => `${asset.station_code || ""} ${asset.train_number || ""} ${asset.asset_name || ""}`).join(" ")], q);
     });
