@@ -71,13 +71,14 @@ const filterPublicityRows = (rows, { status = "all", policy = "all", station = "
   const selectedStation = String(station).trim().toLowerCase();
   return rows.filter((row) => {
     const rowStatus = String(row.status ?? row.contract_status ?? "").trim().toLowerCase();
-    const policyText = [row.policy_code, row.policy, row.category, row.contract_name, row.contract_number]
-      .map((value) => String(value ?? "").trim().toLowerCase()).join(" ");
+    const policyValues = [row.policy_code, row.policy, row.category, row.contract_name]
+      .map((value) => String(value ?? "").trim().toLowerCase());
+    const contractPolicyTokens = String(row.contract_number ?? "").trim().toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
     const assetText = (row.assets || []).map(contractAssetLabel).join(" ").toLowerCase();
     const searchText = [row.contract_number, row.contract_name, row.category, row.policy_code, row.contractor?.legal_name, assetText]
       .map((value) => String(value ?? "").toLowerCase()).join(" ");
     return (selectedStatus === "all" || rowStatus === selectedStatus)
-      && (selectedPolicy === "all" || policyText.includes(selectedPolicy))
+      && (selectedPolicy === "all" || policyValues.includes(selectedPolicy) || contractPolicyTokens.includes(selectedPolicy))
       && (selectedStation === "all" || assetText.split(/\s+/).includes(selectedStation))
       && (!String(query).trim() || searchText.includes(String(query).trim().toLowerCase()));
   });
