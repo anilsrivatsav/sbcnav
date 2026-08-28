@@ -41,7 +41,7 @@ export async function loadRailDashboardData() {
   ]);
   // The registry endpoint is authoritative for contract assets and payments;
   // bootstrap data can legitimately be served from a short-lived cache.
-  return { ...data, registryContracts: contractPage, errors: [] };
+  return { ...data, registryContracts: contractPage?.items || contractPage, errors: [] };
 }
 
 export function dashboardBootstrapUrl({ refresh = false } = {}) {
