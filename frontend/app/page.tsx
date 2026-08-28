@@ -65,6 +65,23 @@ const contractAssetLabel = (asset = {}) => {
   const value = asset.station_code || asset.train_number || asset.asset_name || asset.raw_asset_value || "";
   return String(value).trim().replace(/\.0$/, "");
 };
+const filterPublicityRows = (rows, { status = "all", policy = "all", station = "all", query = "" } = {}) => {
+  const selectedStatus = String(status).trim().toLowerCase();
+  const selectedPolicy = String(policy).trim().toLowerCase();
+  const selectedStation = String(station).trim().toLowerCase();
+  return rows.filter((row) => {
+    const rowStatus = String(row.status ?? row.contract_status ?? "").trim().toLowerCase();
+    const policyText = [row.policy_code, row.policy, row.category, row.contract_name, row.contract_number]
+      .map((value) => String(value ?? "").trim().toLowerCase()).join(" ");
+    const assetText = (row.assets || []).map(contractAssetLabel).join(" ").toLowerCase();
+    const searchText = [row.contract_number, row.contract_name, row.category, row.policy_code, row.contractor?.legal_name, assetText]
+      .map((value) => String(value ?? "").toLowerCase()).join(" ");
+    return (selectedStatus === "all" || rowStatus === selectedStatus)
+      && (selectedPolicy === "all" || policyText.includes(selectedPolicy))
+      && (selectedStation === "all" || assetText.split(/\s+/).includes(selectedStation))
+      && (!String(query).trim() || searchText.includes(String(query).trim().toLowerCase()));
+  });
+};
 const compactDate = (value) => {
   if (!value) return "";
   const date = new Date(value);
@@ -1111,36 +1128,7 @@ export default function Page() {
   }, [cateringScopedUnits, units, earnings, search.contracts, cateringStation, cateringType]);
 
   const filteredPublicityContracts = useMemo(() => {
-    const q = search.contracts || "";
-    if (publicityStatus === "all" && publicityPolicy === "all" && publicityStation === "all" && !q) return publicityContracts;
-    const statusMatches = (row) => publicityStatus === "all"
-      || normalizeText(row.status || row.contract_status || row.status_code) === normalizeText(publicityStatus);
-    // Registry references are canonical for policy families (for example
-    // SBC-RDN-...). Use this direct token match before field-level fallbacks.
-    if (publicityPolicy !== "all" && publicityPolicy !== "__missing__") {
-      const selectedPolicy = String(publicityPolicy).trim().toLowerCase();
-      const policyRows = publicityContracts.filter((row) => [row.policy_code, row.policy, row.category, row.contract_name, row.contract_number]
-        .some((value) => String(value ?? "").trim().toLowerCase().includes(selectedPolicy)));
-      if (policyRows.length) return policyRows.filter((row) => statusMatches(row) && matchesQuery(row, ["contract_number", "contract_name", "category", "policy_code", (item) => item.contractor?.legal_name], q));
-    }
-    const sourceRows = publicityContracts.filter(statusMatches);
-    if (publicityPolicy === "all" && publicityStation === "all" && !q) return sourceRows;
-    return sourceRows.filter((row) => {
-        const statusOk = true;
-      // Some imported registry rows surface the policy in the contract name or
-      // category while policy_code is blank/serialized differently. Keep the
-      // filter aligned with the policy shown in the table.
-      const policyCandidates = [row.policy_code, row.policy, row.category, row.contract_name, row.contract_number].filter((value) => String(value ?? "").trim());
-      const policyOk = publicityPolicy === "all"
-        || (publicityPolicy === "__missing__" ? policyCandidates.length === 0 : policyCandidates.some((value) => {
-          const candidate = normalizeCode(value);
-          const selected = normalizeCode(publicityPolicy);
-          return candidate === selected || candidate.includes(selected)
-            || normalizeCode(JSON.stringify(row)).includes(selected);
-        }));
-      const stationOk = publicityStation === "all" || row.assets?.some((asset) => normalizeText(contractAssetLabel(asset)) === normalizeText(publicityStation));
-      return statusOk && policyOk && stationOk && matchesQuery(row, ["contract_number", "contract_name", "category", "policy_code", (item) => item.contractor?.legal_name, (item) => item.assets?.map((asset) => `${asset.station_code || ""} ${asset.train_number || ""} ${asset.asset_name || ""}`).join(" ")], q);
-    });
+    return filterPublicityRows(publicityContracts, { status: publicityStatus, policy: publicityPolicy, station: publicityStation, query: search.contracts });
   }, [publicityContracts, runningPublicityContracts, publicityStatus, publicityPolicy, publicityStation, search.contracts]);
 
   const filteredCommercialContracts = useMemo(() => {
