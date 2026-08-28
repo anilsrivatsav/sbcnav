@@ -60,6 +60,10 @@ const matchesQuery = (row, fields, query) => {
   return fields.some((field) => normalizeText(typeof field === "function" ? field(row) : row[field]).includes(q));
 };
 const sameFilterValue = (value, filterValue) => normalizeText(filterValue) === "all" || normalizeText(value) === normalizeText(filterValue);
+const contractAssetLabel = (asset = {}) => {
+  const value = asset.station_code || asset.train_number || asset.asset_name || asset.raw_asset_value || "";
+  return String(value).trim().replace(/\.0$/, "");
+};
 const compactDate = (value) => {
   if (!value) return "";
   const date = new Date(value);
@@ -1089,7 +1093,7 @@ export default function Page() {
 
   const cateringScopedUnits = useMemo(() => {
     const q = search.contracts || "";
-    const stationOk = (row) => sameFilterValue(row.station_code, cateringStation);
+    const stationOk = (row) => sameFilterValue(String(row.station_code || "").trim().replace(/\.0$/, ""), cateringStation);
     return units.filter((row) => stationOk(row) && matchesQuery(row, ["unit_no", "station_code", "station_name", "licensee_name", "unit_status", "remarks", "station_category", "type_of_unit", "pf_no"], q));
   }, [units, search.contracts, cateringStation]);
 
@@ -1116,7 +1120,7 @@ export default function Page() {
         const statusOk = true;
       const policyOk = publicityPolicy === "all"
         || (publicityPolicy === "__missing__" ? !String(row.policy_code || "").trim() : normalizeText(row.policy_code) === normalizeText(publicityPolicy));
-      const stationOk = publicityStation === "all" || row.assets?.some((asset) => normalizeText(asset.station_code || asset.asset_name || asset.raw_asset_value) === normalizeText(publicityStation));
+      const stationOk = publicityStation === "all" || row.assets?.some((asset) => normalizeText(contractAssetLabel(asset)) === normalizeText(publicityStation));
       return statusOk && policyOk && stationOk && matchesQuery(row, ["contract_number", "contract_name", "category", "policy_code", (item) => item.contractor?.legal_name, (item) => item.assets?.map((asset) => `${asset.station_code || ""} ${asset.train_number || ""} ${asset.asset_name || ""}`).join(" ")], q);
     });
   }, [publicityContracts, runningPublicityContracts, publicityStatus, publicityPolicy, publicityStation, search.contracts]);
@@ -1425,7 +1429,7 @@ export default function Page() {
     { key: "contract_name", label: "Contract", value: (row) => pretty(row.contract_name), render: (row) => <span className="font-black text-blue">{pretty(row.contract_name)}</span> },
     { key: "contract_number", label: "Reference", value: (row) => pretty(row.contract_number) },
     { key: "contractor", label: "Contractor", value: (row) => pretty(row.contractor?.legal_name) },
-    { key: "asset", label: "Station / Train / Other", value: (row) => pretty(row.assets?.map((asset) => asset.station_code || asset.train_number || asset.asset_name || asset.raw_asset_value).filter(Boolean).join(", ")), render: (row) => <span>{pretty(row.assets?.map((asset) => asset.station_code || asset.train_number || asset.asset_name || asset.raw_asset_value).filter(Boolean).join(", "))}</span> },
+    { key: "asset", label: "Station / Train / Other", value: (row) => pretty(row.assets?.map(contractAssetLabel).filter(Boolean).join(", ")), render: (row) => <span>{pretty(row.assets?.map(contractAssetLabel).filter(Boolean).join(", "))}</span> },
     { key: "policy_code", label: "Policy / Category", value: (row) => `${pretty(row.policy_code)} ${pretty(row.category)}` },
     { key: "period", label: "Period", value: (row) => `${pretty(row.period?.start)} to ${pretty(row.period?.end)}` },
     { key: "status", label: "Status", value: (row) => pretty(row.status), render: (row) => <Badge tone={/running|active/i.test(pretty(row.status)) ? "accent" : "neutral"}>{pretty(row.status)}</Badge> },
@@ -1554,8 +1558,8 @@ export default function Page() {
     { value: "all", label: "All running policies", count: runningPolicyContracts.length },
     ...publicityPolicies.map((policy) => ({ value: policy, label: policy, count: runningPolicyContracts.filter((row) => normalizeText(row.policy_code) === normalizeText(policy)).length })),
   ];
-  const publicityStations = ["all", ...Array.from(new Set(publicityContracts.flatMap((row) => (row.assets || []).map((asset) => pretty(asset.station_code || asset.asset_name || asset.raw_asset_value)).filter((value) => value !== "NA")))).sort()];
-  const contractStations = ["all", ...Array.from(new Set(units.map((row) => pretty(row.station_code)).filter((value) => value !== "NA"))).sort()];
+  const publicityStations = ["all", ...Array.from(new Set(publicityContracts.flatMap((row) => (row.assets || []).map(contractAssetLabel).filter(Boolean)))).sort()];
+  const contractStations = ["all", ...Array.from(new Set(units.map((row) => String(row.station_code || "").trim().replace(/\.0$/, "")).filter(Boolean))).sort()];
   const cateringTypes = Array.from(new Set(units.map((row) => String(row.type_of_unit || "").trim()).filter(Boolean))).sort();
   const cateringTypeRows = contractTab === "active" ? cateringScopedUnits.filter(isActiveCateringUnit) : contractTab === "other" ? cateringScopedUnits.filter((row) => !isActiveCateringUnit(row)) : earnings;
   const cateringUnitTypeByNo = new Map(units.map((row) => [pretty(row.unit_no), row.type_of_unit]));
