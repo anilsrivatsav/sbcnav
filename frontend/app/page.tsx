@@ -1113,16 +1113,17 @@ export default function Page() {
   const filteredPublicityContracts = useMemo(() => {
     const q = search.contracts || "";
     if (publicityStatus === "all" && publicityPolicy === "all" && publicityStation === "all" && !q) return publicityContracts;
-    const sourceRows = publicityStatus === "all"
-      ? publicityContracts
-      : publicityContracts.filter((row) => normalizeText(row.status) === normalizeText(publicityStatus));
+    const statusMatches = (row) => publicityStatus === "all"
+      || normalizeText(row.status) === normalizeText(publicityStatus)
+      || normalizeText(JSON.stringify(row)).includes(normalizeText(publicityStatus));
     // Registry references are canonical for policy families (for example
     // SBC-RDN-...). Use this direct token match before field-level fallbacks.
     if (publicityPolicy !== "all" && publicityPolicy !== "__missing__") {
       const selectedPolicy = normalizeText(publicityPolicy);
-      const policyRows = sourceRows.filter((row) => normalizeText(row.contract_number).includes(selectedPolicy));
-      if (policyRows.length) return policyRows.filter((row) => matchesQuery(row, ["contract_number", "contract_name", "category", "policy_code", (item) => item.contractor?.legal_name], q));
+      const policyRows = publicityContracts.filter((row) => normalizeText(JSON.stringify(row)).includes(selectedPolicy));
+      if (policyRows.length) return policyRows.filter((row) => statusMatches(row) && matchesQuery(row, ["contract_number", "contract_name", "category", "policy_code", (item) => item.contractor?.legal_name], q));
     }
+    const sourceRows = publicityContracts.filter(statusMatches);
     if (publicityPolicy === "all" && publicityStation === "all" && !q) return sourceRows;
     return sourceRows.filter((row) => {
         const statusOk = true;
