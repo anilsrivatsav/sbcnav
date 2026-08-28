@@ -1119,9 +1119,9 @@ export default function Page() {
     if (publicityPolicy === "all" && publicityStation === "all" && !q) return sourceRows;
     return sourceRows.filter((row) => {
         const statusOk = true;
-      const rowPolicy = row.policy_code || row.policy || "";
+      const policyCandidates = [row.policy_code, row.policy, row.category].filter((value) => String(value ?? "").trim());
       const policyOk = publicityPolicy === "all"
-        || (publicityPolicy === "__missing__" ? !String(rowPolicy).trim() : normalizeCode(rowPolicy) === normalizeCode(publicityPolicy));
+        || (publicityPolicy === "__missing__" ? policyCandidates.length === 0 : policyCandidates.some((value) => normalizeCode(value) === normalizeCode(publicityPolicy)));
       const stationOk = publicityStation === "all" || row.assets?.some((asset) => normalizeText(contractAssetLabel(asset)) === normalizeText(publicityStation));
       return statusOk && policyOk && stationOk && matchesQuery(row, ["contract_number", "contract_name", "category", "policy_code", (item) => item.contractor?.legal_name, (item) => item.assets?.map((asset) => `${asset.station_code || ""} ${asset.train_number || ""} ${asset.asset_name || ""}`).join(" ")], q);
     });
