@@ -1122,7 +1122,7 @@ export default function Page() {
       // Some imported registry rows surface the policy in the contract name or
       // category while policy_code is blank/serialized differently. Keep the
       // filter aligned with the policy shown in the table.
-      const policyCandidates = [row.policy_code, row.policy, row.category, row.contract_name].filter((value) => String(value ?? "").trim());
+      const policyCandidates = [row.policy_code, row.policy, row.category, row.contract_name, row.contract_number].filter((value) => String(value ?? "").trim());
       const policyOk = publicityPolicy === "all"
         || (publicityPolicy === "__missing__" ? policyCandidates.length === 0 : policyCandidates.some((value) => {
           const candidate = normalizeCode(value);
