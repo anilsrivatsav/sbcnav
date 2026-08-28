@@ -1118,8 +1118,9 @@ export default function Page() {
     // Registry references are canonical for policy families (for example
     // SBC-RDN-...). Use this direct token match before field-level fallbacks.
     if (publicityPolicy !== "all" && publicityPolicy !== "__missing__") {
-      const selectedPolicy = normalizeText(publicityPolicy);
-      const policyRows = publicityContracts.filter((row) => normalizeText(JSON.stringify(row)).includes(selectedPolicy));
+      const selectedPolicy = String(publicityPolicy).trim().toLowerCase();
+      const policyRows = publicityContracts.filter((row) => [row.policy_code, row.policy, row.category, row.contract_name, row.contract_number]
+        .some((value) => String(value ?? "").trim().toLowerCase().includes(selectedPolicy)));
       if (policyRows.length) return policyRows.filter((row) => statusMatches(row) && matchesQuery(row, ["contract_number", "contract_name", "category", "policy_code", (item) => item.contractor?.legal_name], q));
     }
     const sourceRows = publicityContracts.filter(statusMatches);
