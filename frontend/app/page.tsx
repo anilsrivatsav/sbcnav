@@ -1127,9 +1127,12 @@ export default function Page() {
     };
   }, [cateringScopedUnits, units, earnings, search.contracts, cateringStation, cateringType]);
 
-  const filteredPublicityContracts = useMemo(() => {
-    return filterPublicityRows(publicityContracts, { status: publicityStatus, policy: publicityPolicy, station: publicityStation, query: search.contracts });
-  }, [publicityContracts, runningPublicityContracts, publicityStatus, publicityPolicy, publicityStation, search.contracts]);
+  const filteredPublicityContracts = filterPublicityRows(publicityContracts, {
+    status: publicityStatus,
+    policy: publicityPolicy,
+    station: publicityStation,
+    query: search.contracts,
+  });
 
   const filteredCommercialContracts = useMemo(() => {
     const q = search.commercial || "";
