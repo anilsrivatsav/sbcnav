@@ -35,8 +35,13 @@ export async function loadRailDashboardData() {
   // One PostgreSQL-backed read model avoids waiting on twenty separate API
   // requests. The backend caches this response in Redis (or a short-lived
   // process cache when Redis is not configured). It never imports source sheets.
-  const data = await fetchJson(dashboardBootstrapUrl());
-  return { ...data, errors: [] };
+  const [data, contractPage] = await Promise.all([
+    fetchJson(dashboardBootstrapUrl()),
+    fetchJson(contractsUrl({ page: 1, pageSize: 1000 })),
+  ]);
+  // The registry endpoint is authoritative for contract assets and payments;
+  // bootstrap data can legitimately be served from a short-lived cache.
+  return { ...data, registryContracts: contractPage, errors: [] };
 }
 
 export function dashboardBootstrapUrl({ refresh = false } = {}) {
