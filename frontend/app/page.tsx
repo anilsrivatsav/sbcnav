@@ -2704,7 +2704,7 @@ export default function Page() {
           {view === "contracts" ? (
             <div className="space-y-4">
               <Tabs
-                tabs={[{ value: "catering", label: "Catering", icon: Wallet }, { value: "publicity", label: `Publicity (${publicityContracts.length})`, icon: Megaphone }]}
+                tabs={[{ value: "catering", label: "Catering", icon: Wallet }, { value: "publicity", label: loading && !stats ? "Publicity (…)" : `Publicity (${publicityContracts.length})`, icon: Megaphone }]}
                 value={contractFamily}
                 onChange={(value) => {
                   setContractFamily(value);
