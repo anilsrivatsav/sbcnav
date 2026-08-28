@@ -1114,8 +1114,7 @@ export default function Page() {
     const q = search.contracts || "";
     if (publicityStatus === "all" && publicityPolicy === "all" && publicityStation === "all" && !q) return publicityContracts;
     const statusMatches = (row) => publicityStatus === "all"
-      || normalizeText(row.status) === normalizeText(publicityStatus)
-      || normalizeText(JSON.stringify(row)).includes(normalizeText(publicityStatus));
+      || normalizeText(row.status || row.contract_status || row.status_code) === normalizeText(publicityStatus);
     // Registry references are canonical for policy families (for example
     // SBC-RDN-...). Use this direct token match before field-level fallbacks.
     if (publicityPolicy !== "all" && publicityPolicy !== "__missing__") {
