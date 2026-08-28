@@ -32,6 +32,10 @@ class MobileApi {
         () => _dio.get('/api/mobile/v1/bootstrap'),
       );
 
+  Future<Map<String, dynamic>> dashboardBootstrap() => _request(
+        () => _dio.get('/api/dashboard-bootstrap'),
+      );
+
   Future<Map<String, dynamic>> station360(String stationCode) => _request(
         () => _dio.get(
           '/api/mobile/v1/stations/${Uri.encodeComponent(stationCode)}/360',
@@ -50,8 +54,10 @@ class MobileApi {
           queryParameters: {
             'offset': offset,
             'limit': limit,
-            if (section != null && section.trim().isNotEmpty) 'section': section.trim(),
-            if (stationCodes != null && stationCodes.isNotEmpty) 'station_codes': stationCodes.join(','),
+            if (section != null && section.trim().isNotEmpty)
+              'section': section.trim(),
+            if (stationCodes != null && stationCodes.isNotEmpty)
+              'station_codes': stationCodes.join(','),
           },
           options: Options(receiveTimeout: const Duration(seconds: 90)),
         ),
@@ -117,12 +123,17 @@ class MobileApi {
         () => _dio.get('/api/contracts/summary'),
       );
 
-  Future<Map<String, dynamic>> contracts({String status = 'all', String? search}) => _request(
+  Future<Map<String, dynamic>> contracts(
+          {String status = 'all', String? search}) =>
+      _request(
         () => _dio.get('/api/contracts', queryParameters: {
           'status': status,
           'page': 1,
-          'page_size': 100,
-          if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
+          // The Publicity registry currently contains 180 rows. Filtering a
+          // truncated first page made Android counts disagree with PostgreSQL.
+          'page_size': 1000,
+          if (search != null && search.trim().isNotEmpty)
+            'search': search.trim(),
         }),
       );
 

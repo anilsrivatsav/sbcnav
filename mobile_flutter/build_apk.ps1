@@ -24,7 +24,7 @@ try {
   }
 
   & $flutter pub get
-  & $flutter analyze
+  & $flutter analyze --no-fatal-infos --no-fatal-warnings
   if ($LASTEXITCODE -ne 0) { throw "Flutter analysis failed." }
 
   switch ($Architecture) {

@@ -6,6 +6,41 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:sqflite/sqflite.dart';
 
+Future<void> exportContractsPdf(
+    {required List<Map<String, dynamic>> rows, required String family}) async {
+  final document = pw.Document(
+      title: '${family == 'catering' ? 'Catering' : 'Publicity'} Contracts');
+  document.addPage(pw.MultiPage(
+    pageFormat: PdfPageFormat.a4.landscape,
+    build: (_) => [
+      pw.Text('${family == 'catering' ? 'Catering' : 'Publicity'} Contracts',
+          style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
+      pw.SizedBox(height: 12),
+      pw.Table.fromTextArray(
+        headers: const [
+          'Contract',
+          'Reference / Unit',
+          'Policy / Type',
+          'Status',
+          'Value'
+        ],
+        data: rows
+            .map((row) => [
+                  '${row['contract_name'] ?? row['licensee_name'] ?? 'Unnamed'}',
+                  '${row['contract_number'] ?? row['unit_no'] ?? '—'}',
+                  '${row['policy_code'] ?? row['type_of_unit'] ?? '—'}',
+                  '${row['status'] ?? row['unit_status'] ?? '—'}',
+                  '${(row['financials'] is Map ? (row['financials'] as Map)['total_contract_value'] : row['license_fee']) ?? 0}',
+                ])
+            .toList(),
+      ),
+    ],
+  ));
+  await Printing.sharePdf(
+      bytes: await document.save(),
+      filename: 'contracts-${family.toLowerCase()}.pdf');
+}
+
 Future<void> exportInspectionPdf({
   required Map<String, dynamic> inspection,
   required Map<String, dynamic> template,

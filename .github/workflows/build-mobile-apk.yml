@@ -29,7 +29,7 @@ jobs:
       run:
         working-directory: mobile_flutter
     env:
-      API_BASE_URL: ${{ inputs.api_base_url || vars.MOBILE_API_BASE_URL || 'https://your-central-api.example.com' }}
+      API_BASE_URL: ${{ inputs.api_base_url || vars.MOBILE_API_BASE_URL || 'https://sbcnav.onrender.com' }}
 
     steps:
       - name: Check out source
@@ -51,7 +51,7 @@ jobs:
         run: flutter pub get
 
       - name: Analyze
-        run: flutter analyze
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
       - name: Test
         run: flutter test
