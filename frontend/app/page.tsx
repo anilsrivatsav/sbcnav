@@ -683,7 +683,6 @@ export default function Page() {
     paWorks,
     paPfExtension,
     paNorms,
-    paReports,
     reports,
     registryContracts,
     loading,
@@ -2856,10 +2855,10 @@ export default function Page() {
           {view === "amenities" ? (
             <div className="space-y-4">
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <Card icon={TrainFront} label="Infra Stations" value={paReports?.infra_records ?? paInfra.length} subtext={`${paReports?.coverage?.infra ?? 0}% station infra coverage`} />
-                <Card icon={BarChart3} label="Platforms" value={paReports?.platform_records ?? paPlatforms.length} subtext="Platform length and access records" />
-                <Card icon={Users} label="Wheel Chairs" value={paReports?.wheelchair_stations ?? paWheelchairs.length} subtext={`${paReports?.coverage?.wheelchairs ?? 0}% stations with entries`} />
-                <Card icon={Wrench} label="PF Extn/Raising" value={paReports?.pf_extension_statuses ?? paPfExtension.length} subtext={`${paReports?.ramp_feasible ?? 0} ramp feasible, ${paReports?.lift_proposed ?? 0} lift proposed`} />
+                <Card icon={TrainFront} label="Infra Stations" value={canonicalAmenityData.infra.length} subtext={`${stations.length ? Math.round((canonicalAmenityData.infra.length / stations.length) * 1000) / 10 : 0}% station infra coverage`} />
+                <Card icon={BarChart3} label="Platforms" value={canonicalAmenityData.platforms.length} subtext="Platform length and access records" />
+                <Card icon={Users} label="Wheel Chairs" value={new Set(canonicalAmenityData.wheelchairs.map((row) => row.station_code)).size} subtext={`${stations.length ? Math.round((new Set(canonicalAmenityData.wheelchairs.map((row) => row.station_code)).size / stations.length) * 1000) / 10 : 0}% stations with entries`} />
+                <Card icon={Wrench} label="PF Extn/Raising" value={new Set(canonicalAmenityData.pfExtension.map((row) => row.station_code)).size} subtext={`${canonicalAmenityData.pfExtension.filter((row) => row.ramp_feasible).length} ramp feasible, ${canonicalAmenityData.pfExtension.filter((row) => row.lift_proposed).length} lift proposed`} />
               </div>
               <Panel
                 title="Passenger Amenity Workspace"
