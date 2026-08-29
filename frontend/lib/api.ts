@@ -31,12 +31,12 @@ export async function fetchJson(url: string, options?: RequestInit) {
   return json.data;
 }
 
-export async function loadRailDashboardData() {
+export async function loadRailDashboardData({ refresh = false } = {}) {
   // One PostgreSQL-backed read model avoids waiting on twenty separate API
   // requests. The backend caches this response in Redis (or a short-lived
   // process cache when Redis is not configured). It never imports source sheets.
   const [data, contractPage] = await Promise.all([
-    fetchJson(dashboardBootstrapUrl()),
+    fetchJson(dashboardBootstrapUrl({ refresh })),
     fetchJson(contractsUrl({ page: 1, pageSize: 1000 })),
   ]);
   // The registry endpoint is authoritative for contract assets and payments;

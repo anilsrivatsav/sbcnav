@@ -155,7 +155,7 @@ export function useRailDashboardData() {
     setLastRefreshAt(new Date().toLocaleString());
   };
 
-  const loadFromDb = async () => {
+  const loadFromDb = async ({ refresh = false } = {}) => {
     let data;
     let lastError;
     // Render can take a few seconds to wake from idle. Retry the single
@@ -163,7 +163,7 @@ export function useRailDashboardData() {
     // snapshot after a normal cold start.
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        data = await loadRailDashboardData();
+        data = await loadRailDashboardData({ refresh });
         break;
       } catch (error) {
         lastError = error;
@@ -181,11 +181,11 @@ export function useRailDashboardData() {
     return data.errors || [];
   };
 
-  const loadData = async () => {
+  const loadData = async ({ refresh = true } = {}) => {
     setLoading(true);
     setActivityStatus("Refreshing database data...");
     try {
-      const errors = await loadFromDb();
+      const errors = await loadFromDb({ refresh });
       setActivityStatus(errors.length ? `Data loaded with ${errors.length} warning(s)` : "Data refreshed successfully");
       return errors;
     } catch (error) {
@@ -210,7 +210,7 @@ export function useRailDashboardData() {
         applyData(cached);
         setActivityStatus("Showing last PostgreSQL snapshot; checking latest data...");
       }
-      if (active) await loadData();
+      if (active) await loadData({ refresh: false });
     })();
     return () => { active = false; };
   }, [initialSnapshot]);

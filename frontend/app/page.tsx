@@ -65,7 +65,17 @@ const contractAssetLabel = (asset = {}) => {
   const value = asset.station_code || asset.train_number || asset.asset_name || asset.raw_asset_value || "";
   return String(value).trim().replace(/\.0$/, "");
 };
-const filterPublicityRows = (rows, { status = "all", policy = "all", station = "all", query = "" } = {}) => {
+const contractExpiryBand = (value) => {
+  const days = contractDaysRemaining(value);
+  if (days === null) return "unknown";
+  if (days < 0) return "expired";
+  if (days < 7) return "under7";
+  if (days <= 15) return "15";
+  if (days <= 30) return "30";
+  return "60plus";
+};
+const expiryMatches = (value, band) => band === "all" || contractExpiryBand(value) === band;
+const filterPublicityRows = (rows, { status = "all", policy = "all", station = "all", query = "", expiry = "all" } = {}) => {
   const selectedStatus = String(status).trim().toLowerCase();
   const selectedPolicy = String(policy).trim().toLowerCase();
   const selectedStation = String(station).trim().toLowerCase();
@@ -77,9 +87,11 @@ const filterPublicityRows = (rows, { status = "all", policy = "all", station = "
     const assetText = (row.assets || []).map(contractAssetLabel).join(" ").toLowerCase();
     const searchText = [row.contract_number, row.contract_name, row.category, row.policy_code, row.contractor?.legal_name, assetText]
       .map((value) => String(value ?? "").toLowerCase()).join(" ");
-    return (selectedStatus === "all" || rowStatus === selectedStatus)
+    const expiryValue = row.period?.end || row.contract_upto || row.valid_to;
+    return (selectedStatus === "all" || (rowStatus === selectedStatus && (selectedStatus !== "running" || contractExpiryBand(expiryValue) !== "expired")))
       && (selectedPolicy === "all" || policyValues.includes(selectedPolicy) || contractPolicyTokens.includes(selectedPolicy))
       && (selectedStation === "all" || assetText.split(/\s+/).includes(selectedStation))
+      && expiryMatches(expiryValue, expiry)
       && (!String(query).trim() || searchText.includes(String(query).trim().toLowerCase()));
   });
 };
@@ -119,7 +131,7 @@ const contractRisk = (value) => {
 const monthKey = (value) => compactDate(value).slice(0, 7);
 const htmlEscape = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
 const workReportSection = (row) => {
-  const text = pretty(row.section).toLowerCase().trim();
+  const text = pretty(row.section || row.sr_den || row.srden || row.section_name).toLowerCase().trim();
   if (text.includes("north")) return "North";
   if (text.includes("south")) return "South";
   if (text.includes("east")) return "East";
@@ -130,11 +142,12 @@ const workReportSection = (row) => {
   if (text.includes("sr.dste") || text.includes("sr dste")) return "Sr.DSTE";
   if (text.includes("sdee")) return "SDEE";
   if (text.includes("gsu") || text.includes("gati sakthi")) return "GSU/SBC";
-  return pretty(row.section) === "NA" ? "Other" : pretty(row.section);
+  return text === "na" || !text ? "Other" : pretty(row.section || row.sr_den || row.srden || row.section_name);
 };
 const isActiveCateringUnit = (unit = {}) => {
   const status = String(unit.unit_status || "").toLowerCase();
   if (isAvailableUnit(unit)) return false;
+  if (contractExpiryBand(unit.valid_to || unit.contract_to) === "expired") return false;
   return !/no offers|scheduled|tender|under process|cancelled|not awarded|no train service/.test(status);
 };
 
@@ -691,7 +704,13 @@ export default function Page() {
   const [publicityStation, setPublicityStation] = useState("all");
   const [cateringStation, setCateringStation] = useState("all");
   const [cateringType, setCateringType] = useState("all");
+  const [cateringExpiry, setCateringExpiry] = useState("all");
+  const [publicityExpiry, setPublicityExpiry] = useState("all");
   const [workTab, setWorkTab] = useState("all");
+  const [workWorkspace, setWorkWorkspace] = useState("works");
+  const [workSummaryMode, setWorkSummaryMode] = useState("section");
+  const [workBifurcation, setWorkBifurcation] = useState("All");
+  const [workSection, setWorkSection] = useState("All");
   const [workSummaryTab, setWorkSummaryTab] = useState("summary");
   const [workSummarySheet, setWorkSummarySheet] = useState({ open: false, title: "", rows: [] });
   const [dashboardSheet, setDashboardSheet] = useState({ open: false, title: "", subtitle: "", groups: [] });
@@ -1121,18 +1140,19 @@ export default function Page() {
     const typeOk = (row) => cateringType === "__missing__" ? !String(row.type_of_unit || "").trim() : sameFilterValue(row.type_of_unit, cateringType);
     const typeByUnit = new Map(units.map((row) => [pretty(row.unit_no), row.type_of_unit]));
     return {
-      units: cateringScopedUnits.filter(typeOk),
-      active: cateringScopedUnits.filter((row) => typeOk(row) && isActiveCateringUnit(row)),
-      other: cateringScopedUnits.filter((row) => typeOk(row) && !isActiveCateringUnit(row)),
+      units: cateringScopedUnits.filter((row) => typeOk(row) && expiryMatches(row.valid_to || row.contract_to, cateringExpiry)),
+      active: cateringScopedUnits.filter((row) => typeOk(row) && isActiveCateringUnit(row) && expiryMatches(row.valid_to || row.contract_to, cateringExpiry)),
+      other: cateringScopedUnits.filter((row) => typeOk(row) && !isActiveCateringUnit(row) && expiryMatches(row.valid_to || row.contract_to, cateringExpiry)),
       earnings: earnings.filter((row) => sameFilterValue(row.station_code, cateringStation) && (cateringType === "__missing__" ? !String(typeByUnit.get(pretty(row.unit_no)) || "").trim() : sameFilterValue(typeByUnit.get(pretty(row.unit_no)), cateringType)) && matchesQuery(row, ["unit_no", "station_code", "licensee_name", "payment_head", "payment_sub_head", "receipt_type", "mr_no", "amount"], q)),
     };
-  }, [cateringScopedUnits, units, earnings, search.contracts, cateringStation, cateringType]);
+  }, [cateringScopedUnits, units, earnings, search.contracts, cateringStation, cateringType, cateringExpiry]);
 
   const filteredPublicityContracts = filterPublicityRows(publicityContracts, {
     status: publicityStatus,
     policy: publicityPolicy,
     station: publicityStation,
     query: search.contracts,
+    expiry: publicityExpiry,
   });
 
   const filteredCommercialContracts = useMemo(() => {
@@ -1154,7 +1174,9 @@ export default function Page() {
     const baseRows = works.filter((row) => {
       const searchOk = matchesQuery(row, ["project_id", "source_project_id", "source_sn", "short_name_of_work", "block_section_station", "section", "status", "station_code", "scope_value", "allocation", "physical_progress"], q);
       const statusOk = sameFilterValue(row.status, filters.workStatus);
-      return searchOk && statusOk;
+      const bifurcationOk = workBifurcation === "All" || workReportType(row) === workBifurcation;
+      const sectionOk = workSection === "All" || workReportSection(row) === workSection;
+      return searchOk && statusOk && bifurcationOk && sectionOk;
     });
     const workType = (row) => normalizeText(row.scope_type || row.work_type);
     const stationRows = baseRows.filter((row) => (workType(row).includes("station") || row.station_code || row.station_codes?.length) && (row.station_code || row.station_codes?.length));
@@ -1167,7 +1189,7 @@ export default function Page() {
       division: divisionRows,
       all: baseRows,
     };
-  }, [works, search.works, filters.workStation, filters.workStatus]);
+  }, [works, search.works, filters.workStation, filters.workStatus, workBifurcation, workSection]);
 
   const filteredAmenities = useMemo(() => {
     const q = search.amenities;
@@ -1375,11 +1397,46 @@ export default function Page() {
   const aiRows = Array.isArray(aiResult?.rows) ? aiResult.rows : [];
   const activeWorkRows = filteredWorks[workTab] || [];
   const workSummaryRows = workMonitoring?.items || works;
+  const workSummaryRowsForTable = works;
+  const workStatusKey = (row) => {
+    const status = normalizeText(row.status);
+    if (/complete|completed|done|closed/.test(status)) return "completed";
+    if (/tender|nit|bidding|award/.test(status)) return "tender";
+    if (!status || status === "na" || status === "unknown") return "other";
+    return "wip";
+  };
   const workSummaryGroups = useMemo(() => {
-    const keyFor = (row, key) => pretty(row[key] || "Unknown");
-    const grouped = (key) => Array.from(workSummaryRows.reduce((map, row) => { const keyValue = keyFor(row, key); map.set(keyValue, (map.get(keyValue) || 0) + 1); return map; }, new Map()).entries()).map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
-    return { srden: grouped("sr_den"), year: grouped("year_of_sanction"), allocation: grouped("allocation") };
-  }, [workSummaryRows]);
+    const groupBy = (keyFor) => {
+      const map = new Map();
+      workSummaryRowsForTable.forEach((row) => {
+        const label = keyFor(row);
+        if (!map.has(label)) map.set(label, { label, total: [], completed: [], tender: [], wip: [], other: [] });
+        const group = map.get(label);
+        group.total.push(row);
+        group[workStatusKey(row)].push(row);
+      });
+      return Array.from(map.values()).sort((a, b) => b.total.length - a.total.length || a.label.localeCompare(b.label));
+    };
+    return workSummaryMode === "year"
+      ? groupBy((row) => pretty(row.year_of_sanction || row.date_of_sanction?.slice?.(0, 4) || "Unknown"))
+      : groupBy((row) => workReportSection(row));
+  }, [workSummaryRowsForTable, workSummaryMode]);
+  const workBifurcationOptions = ["All", "FOB works", "Platform extension works", "Platform shelter works", "Divyangjan works", "Passenger amenity works", "Goods / CSGR works", "Other works"];
+  const workSectionOptions = useMemo(() => ["All", ...Array.from(new Set(works.map(workReportSection))).sort()], [works]);
+  const expiryOptions = [
+    { value: "all", label: "All validity" },
+    { value: "60plus", label: "60+ days" },
+    { value: "30", label: "30 days" },
+    { value: "15", label: "15 days" },
+    { value: "under7", label: "<7 days" },
+    { value: "expired", label: "Expired" },
+  ];
+  const chipClass = (selected) => cx("rounded-full border px-3 py-1.5 text-xs font-black transition", selected ? "border-accent bg-accent text-white shadow-raised" : "border-line bg-surface text-muted hover:border-accent hover:text-accentStrong");
+  const expiryChipClass = (selected, value) => cx(chipClass(selected), value === "expired" ? "border-red-300 text-red-700" : value === "under7" ? "border-amber-300 text-amber-700" : "");
+  const openWorkStatusDrawer = (group, status) => {
+    const rows = group[status] || [];
+    setWorkSummarySheet({ open: true, title: `${status[0].toUpperCase()}${status.slice(1)} · ${group.label}`, rows });
+  };
   const openWorkSummary = (dimension, label) => {
     if (dimension === "summary") {
       const rows = label === "Completed" ? workSummaryRows.filter((row) => row.completed) : label === "Open / attention" ? workSummaryRows.filter((row) => !row.completed) : workSummaryRows;
@@ -1573,6 +1630,11 @@ export default function Page() {
   const cateringTypes = Array.from(new Set(units.map((row) => String(row.type_of_unit || "").trim()).filter(Boolean))).sort();
   const cateringTypeRows = contractTab === "active" ? cateringScopedUnits.filter(isActiveCateringUnit) : contractTab === "other" ? cateringScopedUnits.filter((row) => !isActiveCateringUnit(row)) : earnings;
   const cateringUnitTypeByNo = new Map(units.map((row) => [pretty(row.unit_no), row.type_of_unit]));
+  const cateringExpiryCount = (band) => cateringScopedUnits.filter((row) => {
+    const typeOk = cateringType === "__missing__" ? !String(row.type_of_unit || "").trim() : sameFilterValue(row.type_of_unit, cateringType);
+    const tabOk = contractTab === "active" ? isActiveCateringUnit(row) : contractTab === "other" ? !isActiveCateringUnit(row) : false;
+    return typeOk && tabOk && expiryMatches(row.valid_to || row.contract_to, band);
+  }).length;
   const cateringTypeChips = [
     { value: "all", label: "All types", count: cateringTypeRows.length },
     ...cateringTypes.map((type) => ({ value: type, label: type, count: cateringTypeRows.filter((row) => normalizeText(contractTab === "earnings" ? cateringUnitTypeByNo.get(pretty(row.unit_no)) : row.type_of_unit) === normalizeText(type)).length })),
@@ -2742,7 +2804,11 @@ export default function Page() {
                     <label className="grid gap-1 text-xs font-black text-muted"><span className="text-[11px] uppercase tracking-[0.14em]">Status</span><select value={publicityStatus} onChange={(event) => setPublicityStatus(event.target.value)} className="soft-inset h-10 rounded-lg border border-line px-3 text-sm font-bold text-ink outline-none focus:border-accent">{["all", "running", "completed", "cancelled"].map((status) => <option key={status} value={status}>{status === "all" ? `All contracts (${publicityContracts.length})` : `${pretty(status)} (${publicityContracts.filter((row) => normalizeText(row.status) === status).length})`}</option>)}</select></label>
                     <label className="grid gap-1 text-xs font-black text-muted"><span className="text-[11px] uppercase tracking-[0.14em]">Policy</span><select value={publicityPolicy} onChange={(event) => setPublicityPolicy(event.target.value)} className="soft-inset h-10 rounded-lg border border-line px-3 text-sm font-bold text-ink outline-none focus:border-accent"><option value="all">All policies</option>{publicityPolicyOptions.map((policy) => <option key={policy} value={policy}>{policy}</option>)}</select></label>
                     <label className="grid gap-1 text-xs font-black text-muted"><span className="text-[11px] uppercase tracking-[0.14em]">Station / asset</span><select value={publicityStation} onChange={(event) => setPublicityStation(event.target.value)} className="soft-inset h-10 rounded-lg border border-line px-3 text-sm font-bold text-ink outline-none focus:border-accent">{publicityStations.map((option) => <option key={option} value={option}>{option === "all" ? "All stations" : option}</option>)}</select></label>
-                    <Button size="sm" variant="secondary" onClick={() => { setSearch((prev) => ({ ...prev, contracts: "" })); setPublicityStatus("all"); setPublicityPolicy("all"); setPublicityStation("all"); }}><RefreshCw size={14} /> Reset filters</Button>
+                    <Button size="sm" variant="secondary" onClick={() => { setSearch((prev) => ({ ...prev, contracts: "" })); setPublicityStatus("all"); setPublicityPolicy("all"); setPublicityStation("all"); setPublicityExpiry("all"); }}><RefreshCw size={14} /> Reset filters</Button>
+                  </div>
+                  <div className="soft-surface rounded-xl border border-line p-3">
+                    <div className="mb-2 text-[11px] font-black uppercase tracking-[0.14em] text-muted">Expiry filter</div>
+                    <div className="flex flex-wrap gap-2">{expiryOptions.map((option) => <button key={option.value} type="button" className={expiryChipClass(publicityExpiry === option.value, option.value)} onClick={() => setPublicityExpiry(option.value)}>{option.label} <span className="ml-1 opacity-75">({filterPublicityRows(publicityContracts, { status: publicityStatus, policy: publicityPolicy, station: publicityStation, query: search.contracts, expiry: option.value }).length})</span></button>)}</div>
                   </div>
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-xs font-bold text-muted"><span className="font-black text-ink">{filteredPublicityContracts.length} matching contracts</span><span>·</span><span>{publicityContracts.filter((row) => normalizeText(row.status) === "running").length} running</span><span>·</span><span>PostgreSQL registry</span></div>
                   <Panel title="Publicity contracts" subtitle="Select a row to open the contract workspace and payment schedule." action={<Button size="sm" variant="secondary" onClick={() => setView("settings")}><SettingsIcon size={14} /> Manage in Settings</Button>}>
@@ -2768,6 +2834,10 @@ export default function Page() {
                 <label className="grid gap-1 text-xs font-black text-muted"><span className="text-[11px] uppercase tracking-[0.14em]">Type</span><select value={cateringType} onChange={(event) => { setCateringType(event.target.value); setCateringStation("all"); }} className="soft-inset h-10 rounded-lg border border-line px-3 text-sm font-bold text-ink outline-none focus:border-accent"><option value="all">All types</option>{cateringTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
                 <label className="grid gap-1 text-xs font-black text-muted"><span className="text-[11px] uppercase tracking-[0.14em]">Station</span><select value={cateringStation} onChange={(event) => { setCateringStation(event.target.value); setCateringType("all"); }} className="soft-inset h-10 rounded-lg border border-line px-3 text-sm font-bold text-ink outline-none focus:border-accent">{contractStations.map((option) => <option key={option} value={option}>{option === "all" ? "All stations" : option}</option>)}</select></label>
                 <div className="flex h-10 items-center text-xs font-bold text-muted"><span className="font-black text-ink">{filteredContracts[contractTab]?.length || 0} matching records</span><span className="ml-2">· PostgreSQL</span></div>
+              </div>
+              <div className="soft-surface rounded-xl border border-line p-3">
+                <div className="mb-2 text-[11px] font-black uppercase tracking-[0.14em] text-muted">Expiry filter</div>
+                <div className="flex flex-wrap gap-2">{expiryOptions.map((option) => <button key={option.value} type="button" className={expiryChipClass(cateringExpiry === option.value, option.value)} onClick={() => setCateringExpiry(option.value)}>{option.label} <span className="ml-1 opacity-75">({option.value === "all" ? cateringExpiryCount("all") : cateringExpiryCount(option.value)})</span></button>)}</div>
               </div>
               <Panel
                 title="Contracts Workspace"
@@ -3544,14 +3614,36 @@ export default function Page() {
               </div>
             ) : view === "works" ? (
               <div className="space-y-4">
+                <Tabs
+                  tabs={[{ value: "works", label: `Works (${activeWorkRows.length})`, icon: Wrench }, { value: "summary", label: "Summary", icon: BarChart3 }]}
+                  value={workWorkspace}
+                  onChange={setWorkWorkspace}
+                />
+                {workWorkspace === "summary" ? (
+                  <Panel title="Works summary" subtitle="Section-wise and year-wise totals. Select a number to open only those works.">
+                    <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                      <Tabs tabs={[{ value: "section", label: "Section-wise", icon: TrainFront }, { value: "year", label: "Year-wise", icon: CalendarDays }]} value={workSummaryMode} onChange={setWorkSummaryMode} />
+                      <span className="text-xs font-bold text-muted">{workSummaryRowsForTable.length} sanctioned works</span>
+                    </div>
+                    <div className="overflow-x-auto rounded-xl border border-line">
+                      <table className="min-w-full text-left text-sm">
+                        <thead className="bg-surfaceStrong text-[11px] uppercase tracking-[0.12em] text-muted"><tr><th className="px-3 py-3 font-black">{workSummaryMode === "year" ? "Year" : "Section"}</th><th className="px-3 py-3 text-right font-black">Total</th><th className="px-3 py-3 text-right font-black">Completed</th><th className="px-3 py-3 text-right font-black">Tender</th><th className="px-3 py-3 text-right font-black">WIP</th><th className="px-3 py-3 text-right font-black">Other</th></tr></thead>
+                        <tbody className="divide-y divide-line bg-surface">{workSummaryGroups.map((group) => <tr key={group.label} className="hover:bg-surfaceStrong"><td className="whitespace-nowrap px-3 py-3 font-black text-ink">{group.label}</td>{["total", "completed", "tender", "wip", "other"].map((status) => <td key={status} className="px-3 py-3 text-right"><button type="button" disabled={!group[status].length} onClick={() => openWorkStatusDrawer(group, status)} className={cx("rounded-md px-2 py-1 font-black", group[status].length ? "text-accentStrong hover:bg-accentSoft" : "text-muted/50")}>{group[status].length}</button></td>)}</tr>)}</tbody>
+                      </table>
+                    </div>
+                  </Panel>
+                ) : null}
+                {workWorkspace === "works" ? (
+                <>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   <Card icon={Wrench} label="Works" value={workMonitoring?.total ?? works.length} subtext="Unique sanctioned works" />
                   <Card icon={CheckCircle2} label="Completed" value={workMonitoring?.completed ?? completedWorks} subtext="Works marked complete" />
                   <Card icon={CircleAlert} label="Work in Progress" value={workMonitoring?.open ?? pendingWorks} subtext="Open or unfinished works" />
                 </div>
-                <button type="button" onClick={() => setWorkSummarySheet({ open: true, title: "Works summary", rows: workSummaryRows })} className="soft-raised flex w-full items-center justify-between gap-3 rounded-xl border border-line p-3 text-left transition hover:border-accent sm:p-4">
-                  <span className="flex min-w-0 items-center gap-3"><span className="rounded-lg bg-accentSoft p-2 text-accentStrong"><BarChart3 size={17} /></span><span className="min-w-0"><span className="block text-sm font-black text-ink">Works summary</span><span className="block truncate text-xs font-semibold text-muted">{workSummaryRows.length} sanctioned works from the latest register · open grouped list</span></span></span><ChevronRight size={18} className="shrink-0 text-muted" />
-                </button>
+                <div className="soft-surface space-y-4 rounded-xl border border-line p-3">
+                  <div><div className="text-[11px] font-black uppercase tracking-[0.14em] text-muted">Quick work filters</div><div className="mt-2 flex flex-wrap gap-2">{workBifurcationOptions.map((option) => <button key={option} type="button" className={chipClass(workBifurcation === option)} onClick={() => setWorkBifurcation(option)}>{({ "FOB works": "FOB", "Platform extension works": "Platform extension", "Platform shelter works": "Platform shelter", "Divyangjan works": "Divyangjan", "Passenger amenity works": "Passenger amenities", "Goods / CSGR works": "Goods / CSGR", "Other works": "Other categories", All: "All" })[option]}</button>)}</div></div>
+                  <div><div className="text-[11px] font-black uppercase tracking-[0.14em] text-muted">Section</div><div className="mt-2 flex flex-wrap gap-2">{workSectionOptions.map((option) => <button key={option} type="button" className={chipClass(workSection === option)} onClick={() => setWorkSection(option)}>{option}</button>)}</div></div>
+                </div>
                 <Tabs
                   tabs={[
                     { value: "all", label: `All sanctioned works (${filteredWorks.all.length})`, icon: Wrench },
@@ -3575,6 +3667,8 @@ export default function Page() {
                   pageSizeOptions={[25, 50, 100, 152]}
                   enableColumnFilters={false}
                 />
+                </>
+                ) : null}
               </div>
             ) : null}
           </Panel>
