@@ -16,7 +16,7 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.exceptions import RequestValidationError
-from sqlalchemy import Integer, extract
+from sqlalchemy import Integer, extract, func
 from ai_service import query_ai
 from database import SessionLocal, engine, is_sqlite_fallback
 from models import (
@@ -177,6 +177,7 @@ PA_INFRA_TABS = {
     "has": {"gid": "1583406196", "model": PassengerAmenityWork, "parser": lambda text: parse_pf_extension_works(text, "HAS"), "conflict": ["work_type", "station_code", "work_name"], "skip": {"pa_work_key"}},
     "combined_accessibility": {"gid": "467658571", "model": StationPlatformExtensionStatus, "parser": parse_combined_accessibility, "conflict": ["station_code"], "skip": {"status_key"}},
 }
+PA_STATION_CODE_ALIASES = {"GNBH": "GNB"}
 
 
 DEFAULT_CORS_ORIGINS = [
@@ -725,15 +726,51 @@ def _sanctioned_works_export_url() -> str:
     return f"https://docs.google.com/spreadsheets/d/{SANCTIONED_WORKS_SPREADSHEET_ID}/export?format=xlsx"
 
 
-def _apply_pa_rows(session, tab_key: str, rows: list[dict]) -> int:
+def _pa_station_code_set(session) -> set[str]:
+    station_rows = session.query(Station.station_code).filter(
+        Station.is_active.is_(True),
+        func.lower(func.trim(Station.categorisation)).notin_(("", "test", "non-commercial")),
+    ).all()
+    return {str(code or "").strip().upper() for (code,) in station_rows}
+
+
+def _canonical_pa_station_rows(session, rows: list[dict]) -> tuple[list[dict], list[str]]:
+    """Keep import rows linked to the active 132-station commercial register."""
+    if not any("station_code" in row for row in rows):
+        return rows, []
+    valid_codes = _pa_station_code_set(session)
+    canonical = []
+    rejected = []
+    for source_row in rows:
+        row = dict(source_row)
+        source_code = str(row.get("station_code") or "").strip().upper()
+        station_code = PA_STATION_CODE_ALIASES.get(source_code, source_code)
+        if not station_code or station_code not in valid_codes:
+            rejected.append(source_code or "<blank>")
+            continue
+        row["station_code"] = station_code
+        canonical.append(row)
+    return canonical, sorted(set(rejected))
+
+
+def _apply_pa_rows(session, tab_key: str, rows: list[dict]) -> tuple[int, int, list[str]]:
     config = PA_INFRA_TABS[tab_key]
     model = config["model"]
     now = datetime.now(timezone.utc)
+    rows, rejected = _canonical_pa_station_rows(session, rows)
+    if hasattr(model, "station_code"):
+        valid_codes = _pa_station_code_set(session)
+        if valid_codes:
+            session.query(model).filter(
+                model.station_code.is_not(None),
+                ~model.station_code.in_(valid_codes),
+                model.is_active.is_(True),
+            ).update({model.is_active: False, model.updated_at: now}, synchronize_session=False)
     prepared = [{**row, **audit_fields(now), "source_hash": hash_row(f"pa_{tab_key}", row)} for row in rows]
     conflict_cols = [getattr(model, name) for name in config["conflict"]]
     skip = set(config["skip"]) | set(config["conflict"]) | {"created_at", "first_seen_at"}
     update_cols = [column.name for column in model.__table__.columns if column.name not in skip]
-    return upsert_many(session, model, prepared, conflict_cols, update_cols)
+    return upsert_many(session, model, prepared, conflict_cols, update_cols), len(rows), rejected
 
 
 def _import_passenger_amenity_tabs(tab: str = "all") -> dict:
@@ -750,8 +787,8 @@ def _import_passenger_amenity_tabs(tab: str = "all") -> dict:
                 response = requests.get(_pa_export_url(config["gid"]), timeout=90)
                 response.raise_for_status()
                 rows = config["parser"](response.text)
-                count = _apply_pa_rows(session, tab_key, rows)
-                results[tab_key] = {"rows": len(rows), "upserted": count}
+                count, accepted_count, rejected = _apply_pa_rows(session, tab_key, rows)
+                results[tab_key] = {"rows": accepted_count, "upserted": count, "rejected_station_codes": rejected}
             _log_change(session, "passenger_amenities", None, "import", "google_sheet", str(results))
         return results
     finally:
@@ -776,6 +813,7 @@ def _preview_passenger_amenity_tabs(tab: str = "all") -> dict:
             response = requests.get(_pa_export_url(config["gid"]), timeout=90)
             response.raise_for_status()
             rows = config["parser"](response.text)
+            rows, rejected = _canonical_pa_station_rows(session, rows)
             model = config["model"]
             conflict_names = config["conflict"]
 
@@ -800,8 +838,8 @@ def _preview_passenger_amenity_tabs(tab: str = "all") -> dict:
                 "added": {"count": len(added_keys), "sample": [list(key) for key in added_keys[:10]]},
                 "changed": {"count": len(changed_keys), "sample": [list(key) for key in changed_keys[:10]]},
                 "removed": {"count": len(removed_keys), "sample": [list(key) for key in removed_keys[:10]]},
-                "unmatched": {"count": 0, "sample": []},
-                "validation": {"valid": True, "errors": []},
+                "unmatched": {"count": len(rejected), "sample": rejected[:10]},
+                "validation": {"valid": not rejected, "errors": [f"Rejected non-canonical station codes: {', '.join(rejected)}"] if rejected else []},
             }
         return {"tabs": previews, "source": "google_sheet", "mode": "preview"}
     finally:
@@ -815,13 +853,22 @@ def _import_pf_extension_workbook(path: str) -> dict:
         {**row, **audit_fields(now), "source_hash": hash_row("pf_extension_summary", row)}
         for row in parsed["summaries"]
     ]
-    status_rows = [
-        {**row, **audit_fields(now), "source_hash": hash_row("pf_extension_status", row)}
-        for row in parsed["statuses"]
-    ]
     session = SessionLocal()
     try:
         with session.begin():
+            canonical_statuses, rejected = _canonical_pa_station_rows(session, parsed["statuses"])
+            status_rows = [
+                {**row, **audit_fields(now), "source_hash": hash_row("pf_extension_status", row)}
+                for row in canonical_statuses
+            ]
+            valid_codes = _pa_station_code_set(session)
+            session.query(StationPlatformExtensionStatus).filter(
+                ~StationPlatformExtensionStatus.station_code.in_(valid_codes),
+                StationPlatformExtensionStatus.is_active.is_(True),
+            ).update({
+                StationPlatformExtensionStatus.is_active: False,
+                StationPlatformExtensionStatus.updated_at: now,
+            }, synchronize_session=False)
             summary_count = upsert_many(
                 session,
                 PlatformExtensionSummary,
@@ -837,7 +884,13 @@ def _import_pf_extension_workbook(path: str) -> dict:
                 [column.name for column in StationPlatformExtensionStatus.__table__.columns if column.name not in {"status_key", "station_code", "created_at", "first_seen_at"}],
             )
             _log_change(session, "passenger_amenities", None, "import_pf_extension", "xlsx", f"{summary_count} summaries, {status_count} station statuses")
-        return {"summary_rows": len(summary_rows), "summary_upserted": summary_count, "station_status_rows": len(status_rows), "station_status_upserted": status_count}
+        return {
+            "summary_rows": len(summary_rows),
+            "summary_upserted": summary_count,
+            "station_status_rows": len(status_rows),
+            "station_status_upserted": status_count,
+            "rejected_station_codes": rejected,
+        }
     finally:
         session.close()
 
