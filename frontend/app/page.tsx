@@ -2767,6 +2767,8 @@ export default function Page() {
                     }}
                     emptyTitle="No passenger amenity records match the current search."
                     fileName={activeAmenity.fileName}
+                    pageSizeOptions={amenityTab === "summary" || amenityTab === "infra" ? [25, 50, 100, 132] : undefined}
+                    defaultPageSize={amenityTab === "summary" || amenityTab === "infra" ? 132 : undefined}
                   />
                 </div>
               </Panel>
@@ -3580,6 +3582,8 @@ export default function Page() {
                 onAdd={() => openCreate("stations")}
                 emptyTitle="No stations match the current search or filters."
                 fileName="stations-visible.csv"
+                pageSizeOptions={[25, 50, 100, 132]}
+                defaultPageSize={132}
               />
             ) : view === "units" ? (
               <DataTable

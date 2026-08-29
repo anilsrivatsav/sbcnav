@@ -1116,12 +1116,39 @@ def list_passenger_amenities(kind: str = "summary", q: str | None = None, statio
                 query = query.filter((AmenityNorm.category.ilike(like)) | (AmenityNorm.amenity.ilike(like)) | (AmenityNorm.norm.ilike(like)))
             return [row_to_dict(row) for row in query.order_by(AmenityNorm.category, AmenityNorm.amenity, AmenityNorm.norm).all()]
         if kind == "infra":
-            query = session.query(StationInfra, Station.division, Station.section).join(Station, Station.station_code == StationInfra.station_code, isouter=True)
-            if like:
-                query = query.filter((StationInfra.station_code.ilike(like)) | (StationInfra.station_name.ilike(like)) | (StationInfra.fob_details.ilike(like)))
+            station_query = session.query(Station).filter(
+                Station.is_active.is_(True),
+                func.lower(func.trim(Station.categorisation)).notin_(("", "test", "non-commercial")),
+            )
             if station_code and station_code != "All":
-                query = query.filter(StationInfra.station_code == station_code)
-            return [{**row_to_dict(row), "division": division, "section": section} for row, division, section in query.order_by(StationInfra.station_code).all()]
+                station_query = station_query.filter(Station.station_code == station_code)
+            station_rows = station_query.order_by(Station.station_name, Station.station_code).all()
+            infra_by_station = {row.station_code: row for row in session.query(StationInfra).all()}
+            # The PA Infra source still uses the former code GNBH for Jnana
+            # Bharati, while the authoritative station master uses GNB.
+            source_code_aliases = {"GNB": "GNBH"}
+            rows = []
+            for station in station_rows:
+                infra = infra_by_station.get(station.station_code) or infra_by_station.get(source_code_aliases.get(station.station_code))
+                row = row_to_dict(infra) if infra else {
+                    "infra_key": None,
+                    "platform_list": None,
+                    "platform_count": None,
+                    "platform_level": None,
+                    "fob_details": None,
+                    "shelter_details": None,
+                    "remarks": None,
+                }
+                row.update({
+                    "station_code": station.station_code,
+                    "station_name": station.station_name,
+                    "category": station.categorisation,
+                    "division": station.division,
+                    "section": station.section,
+                })
+                if not q or any(normalize(q) in normalize(value) for value in row.values()):
+                    rows.append(row)
+            return rows
         if kind == "platforms":
             query = session.query(PlatformDetail, Station.station_name, Station.division, Station.section).join(Station, Station.station_code == PlatformDetail.station_code, isouter=True)
             if like:
@@ -1178,7 +1205,10 @@ def list_passenger_amenities(kind: str = "summary", q: str | None = None, statio
                 query = query.filter((PlatformExtensionSummary.category.ilike(like)) | (PlatformExtensionSummary.remarks.ilike(like)) | (PlatformExtensionSummary.summary_type.ilike(like)))
             return [row_to_dict(row) for row in query.order_by(PlatformExtensionSummary.summary_type, PlatformExtensionSummary.category).all()]
 
-        station_rows = session.query(Station).all()
+        station_rows = session.query(Station).filter(
+            Station.is_active.is_(True),
+            func.lower(func.trim(Station.categorisation)).notin_(("", "test", "non-commercial")),
+        ).all()
         infra_by_station = {row.station_code: row for row in session.query(StationInfra).all()}
         wheel_by_station = {row.station_code: row for row in session.query(WheelChairAvailability).all()}
         trolley_by_station = {row.station_code: row for row in session.query(TrolleyPath).all()}
