@@ -53,7 +53,11 @@ const isAvailableUnit = (unit = {}) => {
 };
 const toNumber = (value) => Number(value || 0);
 const cx = (...classes) => classes.filter(Boolean).join(" ");
-const normalizeText = (value) => pretty(value).toLowerCase().replace(/[–—]/g, "-").replace(/\s+/g, " ").trim();
+const normalizeText = (value) => (value === null || value === undefined || value === "" ? "" : String(value))
+  .toLowerCase()
+  .replace(/[–—]/g, "-")
+  .replace(/\s+/g, " ")
+  .trim();
 const normalizeCode = (value) => normalizeText(value).replace(/\.0$/, "").replace(/[^a-z0-9]+/g, "");
 const matchesQuery = (row, fields, query) => {
   const q = normalizeText(query);
@@ -737,6 +741,9 @@ export default function Page() {
     stationDivision: "All",
     stationSection: "All",
     stationPlatform: "All",
+    amenityStation: "All",
+    amenityCategory: "All",
+    amenitySection: "All",
     unitCategory: "All",
     unitType: "All",
     unitStatus: "All",
@@ -1233,31 +1240,67 @@ export default function Page() {
     };
   }, [works, search.works, filters.workStation, filters.workStatus, workBifurcation, workSection]);
 
-  const filteredAmenities = useMemo(() => {
-    const q = search.amenities;
-    const filterRows = (rows, fields) => rows.filter((row) => matchesQuery(row, fields, q));
-    return {
-      summary: filterRows(paSummary, ["station_code", "station_name", "division", "section", "category", "trolley_path", "fob_details"]),
-      infra: filterRows(paInfra, ["station_code", "station_name", "division", "section", "category", "fob_details", "shelter_details"]),
-      platforms: filterRows(paPlatforms, ["station_code", "station_name", "division", "section", "platform"]),
-      wheelchairs: filterRows(paWheelchairs, ["station_code", "station_name", "division", "section", "category"]),
-      trolley: filterRows(paTrolley, ["station_code", "station_name", "division", "section", "categorisation", "trolley_path"]),
-      paWorks: filterRows(paWorks, ["station_code", "station_name", "work_type", "work_name", "progress", "tender_status", "executive_agency"]),
-      pfExtension: filterRows(paPfExtension, ["station_code", "station_name", "division", "section", "category", "status_text", "remarks"]),
-      norms: filterRows(paNorms, ["category", "amenity", "norm", "norm_quantity"]),
-      sanctionedWorks: filteredWorks.station,
-    };
-  }, [search.amenities, paSummary, paInfra, paPlatforms, paWheelchairs, paTrolley, paWorks, paPfExtension, paNorms, filteredWorks]);
-
   const stationByCode = useMemo(() => {
     const map = new Map();
-    stations.forEach((station) => map.set(pretty(station.station_code), station));
+    stations.forEach((station) => map.set(normalizeText(station.station_code), station));
     return map;
   }, [stations]);
 
+  const canonicalAmenityData = useMemo(() => {
+    const canonicalCode = (value) => normalizeText(value) === "gnbh" ? "gnb" : normalizeText(value);
+    const stationRows = (rows) => rows.flatMap((sourceRow) => {
+      const station = stationByCode.get(canonicalCode(sourceRow.station_code));
+      if (!station) return [];
+      return [{
+        ...sourceRow,
+        station_code: station.station_code,
+        station_name: station.station_name,
+        division: station.division,
+        section: station.section,
+        category: station.categorisation,
+        categorisation: station.categorisation,
+      }];
+    });
+    return {
+      summary: stationRows(paSummary),
+      infra: stationRows(paInfra),
+      platforms: stationRows(paPlatforms),
+      wheelchairs: stationRows(paWheelchairs),
+      trolley: stationRows(paTrolley),
+      paWorks: stationRows(paWorks),
+      pfExtension: stationRows(paPfExtension),
+      norms: paNorms,
+      sanctionedWorks: filteredWorks.station,
+    };
+  }, [stationByCode, paSummary, paInfra, paPlatforms, paWheelchairs, paTrolley, paWorks, paPfExtension, paNorms, filteredWorks.station]);
+
+  const filteredAmenities = useMemo(() => {
+    const q = search.amenities;
+    const filterRows = (rows, fields, { stationLinked = true } = {}) => rows.filter((row) => {
+      const station = stationByCode.get(normalizeText(row.station_code));
+      const category = row.category || row.categorisation || station?.categorisation;
+      const section = row.section || station?.section;
+      const stationOk = !stationLinked || sameFilterValue(row.station_code, filters.amenityStation);
+      const categoryOk = sameFilterValue(category, filters.amenityCategory);
+      const sectionOk = !stationLinked || sameFilterValue(section, filters.amenitySection);
+      return stationOk && categoryOk && sectionOk && matchesQuery(row, fields, q);
+    });
+    return {
+      summary: filterRows(canonicalAmenityData.summary, ["station_code", "station_name", "division", "section", "category", "trolley_path", "fob_details"]),
+      infra: filterRows(canonicalAmenityData.infra, ["station_code", "station_name", "division", "section", "category", "fob_details", "shelter_details"]),
+      platforms: filterRows(canonicalAmenityData.platforms, ["station_code", "station_name", "division", "section", "category", "platform"]),
+      wheelchairs: filterRows(canonicalAmenityData.wheelchairs, ["station_code", "station_name", "division", "section", "category"]),
+      trolley: filterRows(canonicalAmenityData.trolley, ["station_code", "station_name", "division", "section", "category", "trolley_path"]),
+      paWorks: filterRows(canonicalAmenityData.paWorks, ["station_code", "station_name", "division", "section", "category", "work_type", "work_name", "progress", "tender_status", "executive_agency"]),
+      pfExtension: filterRows(canonicalAmenityData.pfExtension, ["station_code", "station_name", "division", "section", "category", "status_text", "remarks"]),
+      norms: filterRows(canonicalAmenityData.norms, ["category", "amenity", "norm", "norm_quantity"], { stationLinked: false }),
+      sanctionedWorks: filterRows(canonicalAmenityData.sanctionedWorks, ["station_code", "station_name", "section", "short_name_of_work", "status"]),
+    };
+  }, [search.amenities, canonicalAmenityData, stationByCode, filters.amenityStation, filters.amenityCategory, filters.amenitySection]);
+
   const matchesReportScope = (row) => {
     const code = pretty(row.station_code || row.scope_value);
-    const station = stationByCode.get(code);
+    const station = stationByCode.get(normalizeText(code));
     const division = pretty(row.division || station?.division);
     const section = pretty(row.section || station?.section);
     const stationOk = sameFilterValue(code, reportFilters.station);
@@ -1867,10 +1910,21 @@ export default function Page() {
       };
     }
     if (view === "amenities") {
+      const sourceRows = canonicalAmenityData[amenityTab] || [];
+      const categoryOptions = amenityTab === "norms"
+        ? sourceRows.map((row) => row.category)
+        : sourceRows.map((row) => row.category || row.categorisation);
+      const stationLinkedFilters = amenityTab === "norms" ? [] : [
+        ["Station", filters.amenityStation, (value) => setFilters((prev) => ({ ...prev, amenityStation: value })), ["All", ...new Set(sourceRows.map((row) => row.station_code).filter(Boolean).sort())]],
+        ["Section", filters.amenitySection, (value) => setFilters((prev) => ({ ...prev, amenitySection: value })), ["All", ...new Set(sourceRows.map((row) => row.section).filter(Boolean).sort())]],
+      ];
       return {
         title: "Passenger Amenities",
         subtitle: "Station-linked norms, infra, platform, wheel chair, trolley path, and PA work data.",
-        filters: [],
+        filters: [
+          ...stationLinkedFilters,
+          ["Category", filters.amenityCategory, (value) => setFilters((prev) => ({ ...prev, amenityCategory: value })), ["All", ...new Set(categoryOptions.filter(Boolean).sort())]],
+        ],
       };
     }
     if (view === "reports") {

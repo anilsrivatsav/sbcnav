@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react";
 import { loadRailDashboardData } from "../lib/api";
 
-const cacheKey = "sbcnav-postgres-dashboard-snapshot-v2";
-const oldCacheKey = "sbcnav-postgres-read-model-v1";
+const cacheKey = "sbcnav-postgres-dashboard-snapshot-v3";
+const oldCacheKeys = ["sbcnav-postgres-read-model-v1", "sbcnav-postgres-dashboard-snapshot-v2"];
 const indexedDbName = "sbcnav-postgres-dashboard-cache";
 const indexedDbStore = "snapshots";
+const indexedDbEntryKey = "latest-v3";
 
 const rows = (value) => Array.isArray(value) ? value : (value?.items || []);
 
@@ -82,7 +83,7 @@ async function readIndexedSnapshot() {
   const db = await openIndexedCache();
   if (!db) return null;
   return new Promise<any>((resolve) => {
-    const request = db.transaction(indexedDbStore, "readonly").objectStore(indexedDbStore).get("latest");
+    const request = db.transaction(indexedDbStore, "readonly").objectStore(indexedDbStore).get(indexedDbEntryKey);
     request.onsuccess = () => resolve(request.result || null);
     request.onerror = () => resolve(null);
   });
@@ -92,7 +93,7 @@ async function writeIndexedSnapshot(snapshot) {
   const db = await openIndexedCache();
   if (!db) return;
   await new Promise((resolve) => {
-    const request = db.transaction(indexedDbStore, "readwrite").objectStore(indexedDbStore).put(snapshot, "latest");
+    const request = db.transaction(indexedDbStore, "readwrite").objectStore(indexedDbStore).put(snapshot, indexedDbEntryKey);
     request.onsuccess = resolve;
     request.onerror = resolve;
   });
@@ -198,7 +199,7 @@ export function useRailDashboardData() {
 
   useEffect(() => {
     let active = true;
-    try { window.localStorage.removeItem(oldCacheKey); } catch { /* Ignore storage cleanup failures. */ }
+    try { oldCacheKeys.forEach((key) => window.localStorage.removeItem(key)); } catch { /* Ignore storage cleanup failures. */ }
     (async () => {
       const localSnapshot = readSnapshot();
       if (active && localSnapshot?.stats) {

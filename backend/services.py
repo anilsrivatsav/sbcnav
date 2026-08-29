@@ -1115,21 +1115,57 @@ def list_passenger_amenities(kind: str = "summary", q: str | None = None, statio
             if like:
                 query = query.filter((AmenityNorm.category.ilike(like)) | (AmenityNorm.amenity.ilike(like)) | (AmenityNorm.norm.ilike(like)))
             return [row_to_dict(row) for row in query.order_by(AmenityNorm.category, AmenityNorm.amenity, AmenityNorm.norm).all()]
+
+        station_rows = session.query(Station).filter(
+            Station.is_active.is_(True),
+            func.lower(func.trim(Station.categorisation)).notin_(("", "test", "non-commercial")),
+        ).order_by(Station.station_name, Station.station_code).all()
+        stations_by_code = {station.station_code: station for station in station_rows}
+        source_code_aliases = {"GNBH": "GNB"}
+        legacy_code_by_canonical = {canonical: source for source, canonical in source_code_aliases.items()}
+
+        def canonical_station(source_code: Any) -> Station | None:
+            code = clean(source_code).upper()
+            return stations_by_code.get(source_code_aliases.get(code, code))
+
+        def amenity_row(source_row: Any) -> dict[str, Any] | None:
+            row = row_to_dict(source_row)
+            station = canonical_station(row.get("station_code"))
+            if not station:
+                return None
+            row.update({
+                "station_code": station.station_code,
+                "station_name": station.station_name,
+                "division": station.division,
+                "section": station.section,
+                "category": station.categorisation,
+                "categorisation": station.categorisation,
+            })
+            return row
+
+        selected_station = clean(station_code).upper() if station_code and station_code != "All" else ""
+
+        def row_matches(row: dict[str, Any]) -> bool:
+            if selected_station and normalize(row.get("station_code")) != normalize(selected_station):
+                return False
+            return not q or any(normalize(q) in normalize(value) for value in row.values())
+
+        def canonical_rows(source_rows: list[Any]) -> list[dict[str, Any]]:
+            rows = []
+            for source_row in source_rows:
+                row = amenity_row(source_row)
+                if row and row_matches(row):
+                    rows.append(row)
+            return rows
+
         if kind == "infra":
-            station_query = session.query(Station).filter(
-                Station.is_active.is_(True),
-                func.lower(func.trim(Station.categorisation)).notin_(("", "test", "non-commercial")),
-            )
-            if station_code and station_code != "All":
-                station_query = station_query.filter(Station.station_code == station_code)
-            station_rows = station_query.order_by(Station.station_name, Station.station_code).all()
             infra_by_station = {row.station_code: row for row in session.query(StationInfra).all()}
-            # The PA Infra source still uses the former code GNBH for Jnana
-            # Bharati, while the authoritative station master uses GNB.
-            source_code_aliases = {"GNB": "GNBH"}
             rows = []
             for station in station_rows:
-                infra = infra_by_station.get(station.station_code) or infra_by_station.get(source_code_aliases.get(station.station_code))
+                if selected_station and normalize(station.station_code) != normalize(selected_station):
+                    continue
+                legacy_source_code = legacy_code_by_canonical.get(station.station_code)
+                infra = infra_by_station.get(station.station_code) or infra_by_station.get(legacy_source_code)
                 row = row_to_dict(infra) if infra else {
                     "infra_key": None,
                     "platform_list": None,
@@ -1143,83 +1179,44 @@ def list_passenger_amenities(kind: str = "summary", q: str | None = None, statio
                     "station_code": station.station_code,
                     "station_name": station.station_name,
                     "category": station.categorisation,
+                    "categorisation": station.categorisation,
                     "division": station.division,
                     "section": station.section,
                 })
-                if not q or any(normalize(q) in normalize(value) for value in row.values()):
+                if row_matches(row):
                     rows.append(row)
             return rows
         if kind == "platforms":
-            query = session.query(PlatformDetail, Station.station_name, Station.division, Station.section).join(Station, Station.station_code == PlatformDetail.station_code, isouter=True)
-            if like:
-                query = query.filter((PlatformDetail.station_code.ilike(like)) | (PlatformDetail.platform.ilike(like)))
-            if station_code and station_code != "All":
-                query = query.filter(PlatformDetail.station_code == station_code)
-            return [{**row_to_dict(row), "station_name": station_name, "division": division, "section": section} for row, station_name, division, section in query.order_by(PlatformDetail.station_code, PlatformDetail.platform).all()]
+            return canonical_rows(session.query(PlatformDetail).order_by(PlatformDetail.station_code, PlatformDetail.platform).all())
         if kind == "wheelchairs":
-            query = session.query(WheelChairAvailability, Station.division).join(Station, Station.station_code == WheelChairAvailability.station_code, isouter=True)
-            if like:
-                query = query.filter((WheelChairAvailability.station_code.ilike(like)) | (WheelChairAvailability.station_name.ilike(like)) | (WheelChairAvailability.section.ilike(like)))
-            if station_code and station_code != "All":
-                query = query.filter(WheelChairAvailability.station_code == station_code)
-            return [{**row_to_dict(row), "division": division} for row, division in query.order_by(WheelChairAvailability.station_code).all()]
+            return canonical_rows(session.query(WheelChairAvailability).order_by(WheelChairAvailability.station_code).all())
         if kind == "trolley":
-            query = session.query(TrolleyPath)
-            if like:
-                query = query.filter((TrolleyPath.station_code.ilike(like)) | (TrolleyPath.station_name.ilike(like)) | (TrolleyPath.section.ilike(like)) | (TrolleyPath.trolley_path.ilike(like)))
-            if station_code and station_code != "All":
-                query = query.filter(TrolleyPath.station_code == station_code)
-            return [row_to_dict(row) for row in query.order_by(TrolleyPath.station_code).all()]
+            return canonical_rows(session.query(TrolleyPath).order_by(TrolleyPath.station_code).all())
         if kind == "pa_works":
-            query = session.query(PassengerAmenityWork, Station.station_name, Station.division, Station.section).join(Station, Station.station_code == PassengerAmenityWork.station_code, isouter=True)
-            if like:
-                query = query.filter((PassengerAmenityWork.station_code.ilike(like)) | (PassengerAmenityWork.work_name.ilike(like)) | (PassengerAmenityWork.work_type.ilike(like)) | (PassengerAmenityWork.progress.ilike(like)))
-            if station_code and station_code != "All":
-                query = query.filter(PassengerAmenityWork.station_code == station_code)
-            return [{**row_to_dict(row), "station_name": station_name, "division": division, "section": section} for row, station_name, division, section in query.order_by(PassengerAmenityWork.work_type, PassengerAmenityWork.station_code).all()]
+            return canonical_rows(session.query(PassengerAmenityWork).order_by(PassengerAmenityWork.work_type, PassengerAmenityWork.station_code).all())
         if kind == "pf_extension":
-            query = session.query(StationPlatformExtensionStatus, Station.station_name, Station.division, Station.section, Station.categorisation).join(Station, Station.station_code == StationPlatformExtensionStatus.station_code, isouter=True)
-            if like:
-                query = query.filter(
-                    (StationPlatformExtensionStatus.station_code.ilike(like))
-                    | (StationPlatformExtensionStatus.category.ilike(like))
-                    | (StationPlatformExtensionStatus.source_category.ilike(like))
-                    | (StationPlatformExtensionStatus.status_text.ilike(like))
-                    | (StationPlatformExtensionStatus.remarks.ilike(like))
-                )
-            if station_code and station_code != "All":
-                query = query.filter(StationPlatformExtensionStatus.station_code == station_code)
-            return [
-                {
-                    **row_to_dict(row),
-                    "station_name": station_name,
-                    "division": division,
-                    "section": section,
-                    "categorisation": categorisation,
-                }
-                for row, station_name, division, section, categorisation in query.order_by(StationPlatformExtensionStatus.station_code).all()
-            ]
+            return canonical_rows(session.query(StationPlatformExtensionStatus).order_by(StationPlatformExtensionStatus.station_code).all())
         if kind == "pf_extension_summary":
             query = session.query(PlatformExtensionSummary)
             if like:
                 query = query.filter((PlatformExtensionSummary.category.ilike(like)) | (PlatformExtensionSummary.remarks.ilike(like)) | (PlatformExtensionSummary.summary_type.ilike(like)))
             return [row_to_dict(row) for row in query.order_by(PlatformExtensionSummary.summary_type, PlatformExtensionSummary.category).all()]
 
-        station_rows = session.query(Station).filter(
-            Station.is_active.is_(True),
-            func.lower(func.trim(Station.categorisation)).notin_(("", "test", "non-commercial")),
-        ).all()
         infra_by_station = {row.station_code: row for row in session.query(StationInfra).all()}
         wheel_by_station = {row.station_code: row for row in session.query(WheelChairAvailability).all()}
         trolley_by_station = {row.station_code: row for row in session.query(TrolleyPath).all()}
-        platform_counts = dict(session.execute(select(PlatformDetail.station_code, func.count(PlatformDetail.platform_key)).group_by(PlatformDetail.station_code)).all())
+        platform_counts: dict[str, int] = {}
+        for source_code, count in session.execute(select(PlatformDetail.station_code, func.count(PlatformDetail.platform_key)).group_by(PlatformDetail.station_code)).all():
+            canonical = canonical_station(source_code)
+            if canonical:
+                platform_counts[canonical.station_code] = platform_counts.get(canonical.station_code, 0) + count
         pa_work_counts = dict(session.execute(select(PassengerAmenityWork.station_code, func.count(PassengerAmenityWork.pa_work_key)).group_by(PassengerAmenityWork.station_code)).all())
         pf_status_by_station = {row.station_code: row for row in session.query(StationPlatformExtensionStatus).all()}
         rows = []
         for station in station_rows:
             if station_code and station_code != "All" and station.station_code != station_code:
                 continue
-            infra = infra_by_station.get(station.station_code)
+            infra = infra_by_station.get(station.station_code) or infra_by_station.get(legacy_code_by_canonical.get(station.station_code))
             wheel = wheel_by_station.get(station.station_code)
             trolley = trolley_by_station.get(station.station_code)
             row = {
@@ -1246,50 +1243,56 @@ def list_passenger_amenities(kind: str = "summary", q: str | None = None, statio
         session.close()
 
 
-def get_passenger_amenity_reports() -> dict[str, Any]:
-    session = SessionLocal()
-    try:
-        station_count = session.query(func.count(Station.station_code)).scalar() or 0
-        infra_count = session.query(func.count(StationInfra.infra_key)).scalar() or 0
-        platform_count = session.query(func.count(PlatformDetail.platform_key)).scalar() or 0
-        wheelchair_stations = session.query(func.count(WheelChairAvailability.wheel_chair_key)).scalar() or 0
-        trolley_yes = session.query(func.count(TrolleyPath.trolley_path_key)).filter(TrolleyPath.trolley_path.ilike("%yes%")).scalar() or 0
-        trolley_no = session.query(func.count(TrolleyPath.trolley_path_key)).filter(TrolleyPath.trolley_path.ilike("%no%")).scalar() or 0
-        pa_works = session.query(func.count(PassengerAmenityWork.pa_work_key)).scalar() or 0
-        open_pa_works = session.query(func.count(PassengerAmenityWork.pa_work_key)).filter(~PassengerAmenityWork.progress.ilike("%complete%")).scalar() or 0
-        norms = session.query(func.count(AmenityNorm.norm_key)).scalar() or 0
-        pf_statuses = session.query(func.count(StationPlatformExtensionStatus.status_key)).scalar() or 0
-        pf_wip = session.query(func.count(StationPlatformExtensionStatus.status_key)).filter(StationPlatformExtensionStatus.pf_extension_wip.is_(True)).scalar() or 0
-        pf_proposed = session.query(func.count(StationPlatformExtensionStatus.status_key)).filter(StationPlatformExtensionStatus.pf_extension_proposed.is_(True)).scalar() or 0
-        ramp_feasible = session.query(func.count(StationPlatformExtensionStatus.status_key)).filter(StationPlatformExtensionStatus.ramp_feasible.is_(True)).scalar() or 0
-        lift_proposed = session.query(func.count(StationPlatformExtensionStatus.status_key)).filter(StationPlatformExtensionStatus.lift_proposed.is_(True)).scalar() or 0
-        ramp_proposed = session.query(func.count(StationPlatformExtensionStatus.status_key)).filter(StationPlatformExtensionStatus.ramp_proposed.is_(True)).scalar() or 0
-        not_feasible = session.query(func.count(StationPlatformExtensionStatus.status_key)).filter(StationPlatformExtensionStatus.not_feasible_lift_ramp.is_(True)).scalar() or 0
-        return {
-            "stations": station_count,
-            "infra_records": infra_count,
-            "platform_records": platform_count,
-            "wheelchair_stations": wheelchair_stations,
-            "trolley_path_yes": trolley_yes,
-            "trolley_path_no": trolley_no,
-            "pa_works": pa_works,
-            "open_pa_works": open_pa_works,
-            "norms": norms,
-            "pf_extension_statuses": pf_statuses,
-            "pf_extension_wip": pf_wip,
-            "pf_extension_proposed": pf_proposed,
-            "ramp_feasible": ramp_feasible,
-            "lift_proposed": lift_proposed,
-            "ramp_proposed": ramp_proposed,
-            "not_feasible_lift_ramp": not_feasible,
-            "coverage": {
-                "infra": round((infra_count / station_count) * 100, 1) if station_count else 0,
-                "wheelchairs": round((wheelchair_stations / station_count) * 100, 1) if station_count else 0,
-                "pf_extension": round((pf_statuses / station_count) * 100, 1) if station_count else 0,
-            },
-        }
-    finally:
-        session.close()
+def get_passenger_amenity_reports(amenity_data: dict[str, list[dict[str, Any]]] | None = None) -> dict[str, Any]:
+    # Build every KPI from the same canonical rows returned to the UI. Source
+    # sheets contain totals and section headings that must never count as
+    # stations or make the KPI disagree with a filtered table.
+    data = amenity_data or {
+        "summary": list_passenger_amenities(kind="summary"),
+        "infra": list_passenger_amenities(kind="infra"),
+        "platforms": list_passenger_amenities(kind="platforms"),
+        "wheelchairs": list_passenger_amenities(kind="wheelchairs"),
+        "trolley": list_passenger_amenities(kind="trolley"),
+        "works": list_passenger_amenities(kind="pa_works"),
+        "norms": list_passenger_amenities(kind="norms"),
+        "pfExtension": list_passenger_amenities(kind="pf_extension"),
+    }
+    stations = data.get("summary") or []
+    infra = data.get("infra") or []
+    platforms = data.get("platforms") or []
+    wheelchairs = data.get("wheelchairs") or []
+    trolley = data.get("trolley") or []
+    pa_work_rows = data.get("works") or []
+    norms_rows = data.get("norms") or []
+    pf_rows = data.get("pfExtension") or []
+
+    station_count = len(stations)
+    infra_count = len(infra)
+    wheelchair_stations = len({row.get("station_code") for row in wheelchairs if row.get("station_code")})
+    pf_statuses = len({row.get("station_code") for row in pf_rows if row.get("station_code")})
+    return {
+        "stations": station_count,
+        "infra_records": infra_count,
+        "platform_records": len(platforms),
+        "wheelchair_stations": wheelchair_stations,
+        "trolley_path_yes": sum("yes" in normalize(row.get("trolley_path")) for row in trolley),
+        "trolley_path_no": sum("no" in normalize(row.get("trolley_path")) for row in trolley),
+        "pa_works": len(pa_work_rows),
+        "open_pa_works": sum("complete" not in normalize(row.get("progress")) for row in pa_work_rows),
+        "norms": len(norms_rows),
+        "pf_extension_statuses": pf_statuses,
+        "pf_extension_wip": sum(bool(row.get("pf_extension_wip")) for row in pf_rows),
+        "pf_extension_proposed": sum(bool(row.get("pf_extension_proposed")) for row in pf_rows),
+        "ramp_feasible": sum(bool(row.get("ramp_feasible")) for row in pf_rows),
+        "lift_proposed": sum(bool(row.get("lift_proposed")) for row in pf_rows),
+        "ramp_proposed": sum(bool(row.get("ramp_proposed")) for row in pf_rows),
+        "not_feasible_lift_ramp": sum(bool(row.get("not_feasible_lift_ramp")) for row in pf_rows),
+        "coverage": {
+            "infra": round((infra_count / station_count) * 100, 1) if station_count else 0,
+            "wheelchairs": round((wheelchair_stations / station_count) * 100, 1) if station_count else 0,
+            "pf_extension": round((pf_statuses / station_count) * 100, 1) if station_count else 0,
+        },
+    }
 
 
 def get_stats() -> dict[str, Any]:

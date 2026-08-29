@@ -1094,6 +1094,16 @@ def dashboard_bootstrap(refresh: bool = False):
 
     work_monitoring_data = get_work_monitoring()
     works_rows = work_monitoring_data.get("items") or list_works()
+    passenger_amenities = {
+        "summary": list_passenger_amenities(kind="summary"),
+        "infra": list_passenger_amenities(kind="infra"),
+        "platforms": list_passenger_amenities(kind="platforms"),
+        "wheelchairs": list_passenger_amenities(kind="wheelchairs"),
+        "trolley": list_passenger_amenities(kind="trolley"),
+        "works": list_passenger_amenities(kind="pa_works"),
+        "pfExtension": list_passenger_amenities(kind="pf_extension"),
+        "norms": list_passenger_amenities(kind="norms"),
+    }
     payload = {
         "stats": get_stats(),
         "dataCentre": get_data_centre_status(),
@@ -1109,15 +1119,15 @@ def dashboard_bootstrap(refresh: bool = False):
         "registryContracts": _bootstrap_page(list_registry_contracts(), "contract_name"),
         "reports": get_reports(),
         "passengerAmenities": {
-            "summary": _bootstrap_page(list_passenger_amenities(kind="summary"), "station_code"),
-            "infra": _bootstrap_page(list_passenger_amenities(kind="infra"), "station_code"),
-            "platforms": _bootstrap_page(list_passenger_amenities(kind="platforms"), "station_code"),
-            "wheelchairs": _bootstrap_page(list_passenger_amenities(kind="wheelchairs"), "station_code"),
-            "trolley": _bootstrap_page(list_passenger_amenities(kind="trolley"), "station_code"),
-            "works": _bootstrap_page(list_passenger_amenities(kind="pa_works"), "station_code"),
-            "pfExtension": _bootstrap_page(list_passenger_amenities(kind="pf_extension"), "station_code"),
-            "norms": _bootstrap_page(list_passenger_amenities(kind="norms"), "category"),
-            "reports": get_passenger_amenity_reports(),
+            "summary": _bootstrap_page(passenger_amenities["summary"], "station_code"),
+            "infra": _bootstrap_page(passenger_amenities["infra"], "station_code"),
+            "platforms": _bootstrap_page(passenger_amenities["platforms"], "station_code"),
+            "wheelchairs": _bootstrap_page(passenger_amenities["wheelchairs"], "station_code"),
+            "trolley": _bootstrap_page(passenger_amenities["trolley"], "station_code"),
+            "works": _bootstrap_page(passenger_amenities["works"], "station_code"),
+            "pfExtension": _bootstrap_page(passenger_amenities["pfExtension"], "station_code"),
+            "norms": _bootstrap_page(passenger_amenities["norms"], "category"),
+            "reports": get_passenger_amenity_reports(passenger_amenities),
         },
     }
     _bootstrap_cache_set(payload)
