@@ -107,6 +107,7 @@ from contract_registry import (
     list_registry_contracts,
     registry_summary,
 )
+from data_quality import check_postgres_consistency, resolve_postgres_inconsistency
 
 try:
     import redis
@@ -1040,6 +1041,25 @@ def stats():
 @app.get("/api/data-centre")
 def data_centre():
     return envelope(get_data_centre_status(), "data centre status ready")
+
+
+@app.get("/api/data-quality/check")
+def data_quality_check():
+    return envelope(check_postgres_consistency(), "PostgreSQL consistency check complete")
+
+
+@app.post("/api/data-quality/resolve")
+def data_quality_resolve(payload: dict):
+    try:
+        result = resolve_postgres_inconsistency(
+            resolution=str(payload.get("resolution") or ""),
+            table_name=payload.get("table"),
+            column_name=payload.get("column"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    _invalidate_bootstrap_cache()
+    return envelope(result, "PostgreSQL inconsistency resolved")
 
 
 @app.get("/api/action-centre")

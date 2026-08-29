@@ -48,6 +48,14 @@ export function dashboardBootstrapUrl({ refresh = false } = {}) {
   return `${API_URL}/api/dashboard-bootstrap${refresh ? "?refresh=true" : ""}`;
 }
 
+export function dataQualityCheckUrl() {
+  return `${API_URL}/api/data-quality/check`;
+}
+
+export function dataQualityResolveUrl() {
+  return `${API_URL}/api/data-quality/resolve`;
+}
+
 export function contractAlertsUrl(stationCode?: string) {
   const query = stationCode && stationCode !== "All" ? `?station_code=${encodeURIComponent(stationCode)}` : "";
   return `${API_URL}/api/contracts/alerts${query}`;

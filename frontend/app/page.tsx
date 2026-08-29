@@ -39,7 +39,7 @@ import { Station360 } from "../components/station-360";
 import { StationQuickView } from "../components/station-quick-view";
 import { StationMetricsMaster } from "../components/station-metrics-master";
 import { ReportTemplatesPanel } from "../components/reports/report-templates-panel";
-import { API_URL, aiQueryUrl, amenityFindingsUrl, cateringSyncUrl, commercialContractDetailUrl, commercialContractStatementUrl, contractRegistryDetailUrl, fetchJson, importCommercialContractsUrl, importPassengerAmenitiesUrl, importPfExtensionUrl, importSanctionedWorksUrl, previewPassengerAmenitiesUrl, previewSanctionedWorksUrl, reportPresetRunUrl, reportPresetsUrl, stationDetailUrl, workExpenditureUrl, workProgressUrl } from "../lib/api";
+import { API_URL, aiQueryUrl, amenityFindingsUrl, cateringSyncUrl, commercialContractDetailUrl, commercialContractStatementUrl, contractRegistryDetailUrl, dataQualityCheckUrl, dataQualityResolveUrl, fetchJson, importCommercialContractsUrl, importPassengerAmenitiesUrl, importPfExtensionUrl, importSanctionedWorksUrl, previewPassengerAmenitiesUrl, previewSanctionedWorksUrl, reportPresetRunUrl, reportPresetsUrl, stationDetailUrl, workExpenditureUrl, workProgressUrl } from "../lib/api";
 import { reportTemplates, templateFilterState, templatePreset } from "../lib/report-templates";
 import { useRailDashboardData } from "../hooks/use-rail-dashboard-data";
 
@@ -762,6 +762,9 @@ export default function Page() {
   const [aiResult, setAiResult] = useState(null);
   const [aiError, setAiError] = useState("");
   const [cateringSyncResult, setCateringSyncResult] = useState(null);
+  const [qualityAudit, setQualityAudit] = useState(null);
+  const [qualityAuditLoading, setQualityAuditLoading] = useState(false);
+  const [qualityTableFilter, setQualityTableFilter] = useState("all");
 
   useEffect(() => {
     const requestedView = new URLSearchParams(window.location.search).get("view");
@@ -953,6 +956,45 @@ export default function Page() {
       setActivityStatus(`Refresh finished: ${outcomes.join(" · ")}`);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const runQualityAudit = async () => {
+    setQualityAuditLoading(true);
+    setActivityStatus("Checking every PostgreSQL table for inconsistencies...");
+    try {
+      const result = await fetchJson(dataQualityCheckUrl());
+      setQualityAudit(result);
+      setActivityStatus(`Consistency check complete: ${result?.tables_checked || 0} tables, ${result?.issues_total || 0} issues`);
+      return result;
+    } catch (error) {
+      setActivityStatus(error?.message || "Consistency check failed");
+      return null;
+    } finally {
+      setQualityAuditLoading(false);
+    }
+  };
+
+  const resolveQualityIssue = async (issue) => {
+    if (!issue?.resolvable || !issue?.resolution) return;
+    const scope = issue.column ? `${issue.table}.${issue.column}` : issue.table;
+    if (!window.confirm(`Resolve ${issue.count} issue(s) in ${scope}? Only the deterministic correction shown will be applied.`)) return;
+    setQualityAuditLoading(true);
+    setActivityStatus(`Resolving ${scope}...`);
+    try {
+      const result = await fetchJson(dataQualityResolveUrl(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resolution: issue.resolution, table: issue.table, column: issue.column }),
+      });
+      setActivityStatus(`${result?.resolved || 0} PostgreSQL row(s) corrected in ${scope}`);
+      await loadData();
+      const refreshed = await fetchJson(dataQualityCheckUrl());
+      setQualityAudit(refreshed);
+    } catch (error) {
+      setActivityStatus(error?.message || "Unable to resolve inconsistency");
+    } finally {
+      setQualityAuditLoading(false);
     }
   };
 
@@ -1703,6 +1745,9 @@ export default function Page() {
     ...filteredReportWorks.filter((row) => row.scope_type === "Station" && !row.station_code).map((row) => ({ module: "Works", record: row.project_id, problem: "Station scope without station code", station_code: row.station_code })),
     ...filteredCommercialContracts.filter((row) => /unmatched|asset/i.test(pretty(row.station_match_status))).map((row) => ({ module: "Commercial", record: row.contract_name, problem: `Station link: ${pretty(row.station_match_status)}`, station_code: row.station_code })),
   ];
+  const qualityAuditIssues = qualityAudit?.issues || [];
+  const qualityAuditTableOptions = ["all", ...Array.from(new Set(qualityAuditIssues.map((issue) => issue.table))).sort()];
+  const visibleQualityAuditIssues = qualityTableFilter === "all" ? qualityAuditIssues : qualityAuditIssues.filter((issue) => issue.table === qualityTableFilter);
 
   const contractExpiryColumns = [
     { key: "contract_code", label: "Code" },
@@ -2522,6 +2567,30 @@ export default function Page() {
                     return <div key={key} className="flex items-center gap-3 rounded-lg border border-line bg-surfaceStrong p-3"><span className={`h-3 w-3 shrink-0 rounded-full ${healthy ? "bg-emerald-500" : "bg-amber-500"}`} title={healthy ? "Refreshed" : "Needs refresh"} /><div className="min-w-0"><div className="truncate text-sm font-black text-ink">{pretty(key)}</div><div className="truncate text-xs text-muted">{healthy ? `Refreshed · ${source.source || "PostgreSQL"}` : "Needs refresh"}</div></div></div>;
                   })}
                 </div>
+              </Panel>
+              <Panel
+                title="PostgreSQL inconsistency checker"
+                subtitle="Scans every managed table. Deterministic corrections can be resolved here; ambiguous findings remain review-only."
+                action={<Button size="sm" onClick={runQualityAudit} disabled={qualityAuditLoading}><RefreshCw size={14} className={qualityAuditLoading ? "animate-spin" : ""} />{qualityAuditLoading ? "Checking..." : qualityAudit ? "Check again" : "Check all tables"}</Button>}
+              >
+                {qualityAudit ? (
+                  <div className="space-y-4">
+                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                      {[
+                        ["Tables checked", qualityAudit.tables_checked],
+                        ["Rows checked", qualityAudit.rows_checked],
+                        ["Issues found", qualityAudit.issues_total],
+                        ["Safely resolvable", qualityAudit.resolvable_total],
+                      ].map(([label, value]) => <div key={label} className="soft-inset rounded-lg border border-line p-3"><div className="text-[10px] font-black uppercase tracking-[0.14em] text-muted">{label}</div><div className="mt-1 text-xl font-black text-ink">{Number(value || 0).toLocaleString("en-IN")}</div></div>)}
+                    </div>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                      <label className="grid min-w-[220px] gap-1 text-xs font-black text-muted"><span className="text-[11px] uppercase tracking-[0.14em]">Table</span><select value={qualityTableFilter} onChange={(event) => setQualityTableFilter(event.target.value)} className="soft-inset h-10 rounded-lg border border-line px-3 text-sm font-bold text-ink outline-none focus:border-accent"><option value="all">All tables ({qualityAuditIssues.length} issue groups)</option>{qualityAuditTableOptions.filter((option) => option !== "all").map((option) => <option key={option} value={option}>{pretty(option)} ({qualityAuditIssues.filter((issue) => issue.table === option).length})</option>)}</select></label>
+                      <div className="text-xs font-bold text-muted">Checked {compactDate(qualityAudit.checked_at)} · PostgreSQL/Supabase</div>
+                    </div>
+                    {visibleQualityAuditIssues.length ? <div className="soft-scroll max-h-[52vh] space-y-2 overflow-auto pr-1">{visibleQualityAuditIssues.map((issue) => <div key={issue.id} className="soft-raised flex flex-col gap-3 rounded-lg border border-line p-3 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><Badge tone={issue.severity === "danger" ? "danger" : "warning"}>{pretty(issue.table)}</Badge><span className="text-sm font-black text-ink">{pretty(issue.column)}</span><span className="rounded-full bg-surfaceStrong px-2 py-0.5 text-xs font-black text-muted">{issue.count}</span></div><div className="mt-1 text-xs text-muted">{issue.description}</div><div className="mt-1 text-[10px] font-bold uppercase tracking-[0.1em] text-muted">{pretty(issue.kind).replaceAll("_", " ")}</div></div>{issue.resolvable ? <Button size="sm" variant="secondary" disabled={qualityAuditLoading} onClick={() => resolveQualityIssue(issue)}>Resolve safely</Button> : <span className="shrink-0 text-[10px] font-black uppercase tracking-[0.1em] text-muted">Review only</span>}</div>)}</div> : <EmptyState title="No inconsistencies found" description={qualityTableFilter === "all" ? "All checked PostgreSQL tables passed the configured consistency rules." : `No configured inconsistencies were found in ${qualityTableFilter}.`} />}
+                    <details className="rounded-lg border border-line bg-surfaceStrong p-3"><summary className="cursor-pointer text-xs font-black uppercase tracking-[0.12em] text-ink">Table coverage ({qualityAudit.tables?.length || 0})</summary><div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">{(qualityAudit.tables || []).map((table) => <div key={table.table} className="flex items-center justify-between gap-2 rounded-md border border-line bg-surface px-3 py-2 text-xs"><span className="truncate font-bold text-ink">{pretty(table.table)}</span><span className={cx("shrink-0 font-black", table.issue_count ? "text-amber-700" : "text-emerald-700")}>{table.rows} rows · {table.issue_count || 0}</span></div>)}</div></details>
+                  </div>
+                ) : <EmptyState title="Run the database checker" description="It will inspect Works and every other mapped PostgreSQL table without changing any records." />}
               </Panel>
               <Panel title="Action Centre" subtitle="Review flagged records here instead of on the dashboard.">
                 {reportActionRows.length ? <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">{reportActionRows.slice(0, 8).map((row, index) => <button key={`${row.action_type}-${row.action_key}-${index}`} type="button" onClick={() => openActionRecord(row)} className="soft-raised rounded-lg border border-line p-3 text-left hover:border-accent"><div className="flex items-start justify-between gap-2"><span className="rounded-full border border-amber-300 bg-amber-500/10 px-2 py-1 text-[10px] font-black uppercase tracking-[0.1em] text-amber-700">{pretty(row.action_type)}</span><CircleAlert size={16} className="text-amber-600" /></div><div className="mt-3 truncate text-sm font-black text-ink">{pretty(row.action_key)}</div><div className="mt-1 truncate text-xs text-muted">{pretty(row.problem)}</div></button>)}</div> : <EmptyState title="No immediate actions" description="Nothing currently needs review." />}
