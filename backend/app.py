@@ -1256,7 +1256,14 @@ def _build_bootstrap_payload(scope: str) -> dict:
             kind: (lambda requested_kind=kind: list_passenger_amenities(kind=requested_kind))
             for kind in ("summary", "infra", "platforms", "wheelchairs", "trolley", "pa_works", "pf_extension", "norms")
         }
-        return {"passengerAmenities": _passenger_amenity_payload(_parallel_bootstrap_tasks(amenity_tasks))}
+        # Amenity rows are canonicalised against the station master in the UI,
+        # so this scope must include stations as a small shared dependency.
+        results = _parallel_bootstrap_tasks({"stations": list_stations, **amenity_tasks})
+        station_rows = results.pop("stations")
+        return {
+            "stations": _bootstrap_page(station_rows, "station_name"),
+            "passengerAmenities": _passenger_amenity_payload(results),
+        }
 
     if scope == "reports":
         results = _parallel_bootstrap_tasks({"earnings": list_earnings, "reports": get_reports})
