@@ -1350,42 +1350,39 @@ def get_data_centre_status() -> dict[str, Any]:
         }
         modules = {}
         for name, model in module_models.items():
-            query = session.query(model)
+            primary_key = tuple(model.__table__.primary_key.columns)[0]
+            count_expression = func.count(primary_key)
             if name == "stations":
-                query = query.filter(*commercial_station_filter)
-            last_updated_query = session.query(func.max(model.updated_at))
+                count_expression = count_expression.filter(*commercial_station_filter)
+            last_updated_expression = func.max(model.updated_at)
             if hasattr(model, "is_active"):
-                last_updated_query = last_updated_query.filter(model.is_active.is_(True))
-            last_updated = last_updated_query.scalar()
+                last_updated_expression = last_updated_expression.filter(model.is_active.is_(True))
+            count, last_updated = session.query(count_expression, last_updated_expression).one()
             modules[name] = {
-                "count": query.count(),
+                "count": count or 0,
                 "last_updated_at": last_updated.isoformat() if last_updated else None,
             }
 
-        amenity_counts = {
-            "norms": session.query(AmenityNorm).filter(AmenityNorm.is_active.is_(True)).count(),
-            "infra": session.query(StationInfra).filter(StationInfra.is_active.is_(True)).count(),
-            "platforms": session.query(PlatformDetail).filter(PlatformDetail.is_active.is_(True)).count(),
-            "wheelchairs": session.query(WheelChairAvailability).filter(WheelChairAvailability.is_active.is_(True)).count(),
-            "trolley": session.query(TrolleyPath).filter(TrolleyPath.is_active.is_(True)).count(),
-            "works": session.query(PassengerAmenityWork).filter(PassengerAmenityWork.is_active.is_(True)).count(),
-            "accessibility": session.query(StationPlatformExtensionStatus).filter(StationPlatformExtensionStatus.is_active.is_(True)).count(),
+        amenity_models = {
+            "norms": AmenityNorm,
+            "infra": StationInfra,
+            "platforms": PlatformDetail,
+            "wheelchairs": WheelChairAvailability,
+            "trolley": TrolleyPath,
+            "works": PassengerAmenityWork,
+            "accessibility": StationPlatformExtensionStatus,
         }
-        amenity_models = (
-            AmenityNorm,
-            StationInfra,
-            PlatformDetail,
-            WheelChairAvailability,
-            TrolleyPath,
-            PassengerAmenityWork,
-            StationPlatformExtensionStatus,
-        )
-        amenity_dates = [
-            session.query(func.max(model.updated_at))
-            .filter(model.is_active.is_(True))
-            .scalar()
-            for model in amenity_models
-        ]
+        amenity_counts = {}
+        amenity_dates = []
+        for name, model in amenity_models.items():
+            primary_key = tuple(model.__table__.primary_key.columns)[0]
+            active = model.is_active.is_(True)
+            count, last_updated = session.query(
+                func.count(primary_key).filter(active),
+                func.max(model.updated_at).filter(active),
+            ).one()
+            amenity_counts[name] = count or 0
+            amenity_dates.append(last_updated)
         amenity_last_updated = max((value for value in amenity_dates if value), default=None)
         modules["amenities"] = {
             "count": sum(amenity_counts.values()),
@@ -2007,12 +2004,22 @@ def get_commercial_contract_detail(contract_key: int) -> dict[str, Any] | None:
         session.close()
 
 
-def get_contract_alerts(today: date | None = None, station_code: str | None = None) -> dict[str, Any]:
+def get_contract_alerts(
+    today: date | None = None,
+    station_code: str | None = None,
+    *,
+    catering: list[dict[str, Any]] | None = None,
+    commercial: list[dict[str, Any]] | None = None,
+    commercial_report: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Combine catering and non-catering risk into one action-centre payload."""
     today = today or date.today()
-    catering = list_units(station_code=station_code)
-    commercial = list_commercial_contracts(station_code=station_code)
-    commercial_report = get_commercial_contract_reports(today)
+    if catering is None:
+        catering = list_units(station_code=station_code)
+    if commercial is None:
+        commercial = list_commercial_contracts(station_code=station_code)
+    if commercial_report is None:
+        commercial_report = get_commercial_contract_reports(today)
     commercial_risk = {row["contract_key"]: row for row in commercial_report.get("contract_risk", [])}
     rows: list[dict[str, Any]] = []
 
@@ -2072,12 +2079,23 @@ def get_contract_alerts(today: date | None = None, station_code: str | None = No
     }
 
 
-def get_action_centre(station_code: str | None = None, limit: int = 200, today: date | None = None) -> dict[str, Any]:
+def get_action_centre(
+    station_code: str | None = None,
+    limit: int = 200,
+    today: date | None = None,
+    *,
+    contract_alerts: dict[str, Any] | None = None,
+    work_report: dict[str, Any] | None = None,
+    report: dict[str, Any] | None = None,
+    passenger_summary: list[dict[str, Any]] | None = None,
+    data_centre: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Return one normalized exception feed for web, Station 360, and mobile clients."""
     today = today or date.today()
     items: list[dict[str, Any]] = []
 
-    contract_alerts = get_contract_alerts(today=today, station_code=station_code)
+    if contract_alerts is None:
+        contract_alerts = get_contract_alerts(today=today, station_code=station_code)
     for row in contract_alerts.get("rows", []):
         days = row.get("days_to_expiry")
         severity = "critical" if row.get("risk_level") == "critical" else "high" if row.get("risk_level") == "high" else "medium"
@@ -2095,7 +2113,8 @@ def get_action_centre(station_code: str | None = None, limit: int = 200, today: 
             "updated_at": row.get("updated_at"),
         })
 
-    work_report = get_work_monitoring(station_code=station_code, today=today)
+    if work_report is None:
+        work_report = get_work_monitoring(station_code=station_code, today=today)
     for row in work_report.get("items", []):
         if not row.get("alert_type"):
             continue
@@ -2113,7 +2132,8 @@ def get_action_centre(station_code: str | None = None, limit: int = 200, today: 
             "updated_at": row.get("updated_at"),
         })
 
-    report = get_reports(today)
+    if report is None:
+        report = get_reports(today)
     for finding in report.get("inspections", {}).get("overdue_findings", []):
         if station_code and finding.get("station_code") != station_code.upper():
             continue
@@ -2130,7 +2150,9 @@ def get_action_centre(station_code: str | None = None, limit: int = 200, today: 
             "updated_at": finding.get("updated_at"),
         })
 
-    for row in list_passenger_amenities(kind="summary", station_code=station_code):
+    if passenger_summary is None:
+        passenger_summary = list_passenger_amenities(kind="summary", station_code=station_code)
+    for row in passenger_summary:
         missing = []
         if not row.get("platform_detail_count"):
             missing.append("platform details")
@@ -2152,7 +2174,8 @@ def get_action_centre(station_code: str | None = None, limit: int = 200, today: 
             "updated_at": None,
         })
 
-    data_centre = get_data_centre_status()
+    if data_centre is None:
+        data_centre = get_data_centre_status()
     for failure in data_centre.get("failures", []):
         items.append({
             "notification_key": f"sync:{failure.get('resource')}:{failure.get('at')}",

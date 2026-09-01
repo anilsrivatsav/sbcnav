@@ -1,0 +1,20 @@
+[Unit]
+Description=SBCNAV FastAPI backend
+Requires=docker.service sbcnav-postgres.service
+After=docker.service sbcnav-postgres.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+ExecStartPre=-/usr/bin/docker rm -f sbcnav-backend
+ExecStartPre=/usr/bin/install -d -m 700 /opt/sbcnav/cache
+ExecStartPre=/bin/sh -c 'until /usr/bin/docker exec sbcnav-postgres pg_isready -U sbcnav -d sbcnav; do sleep 2; done'
+ExecStart=/usr/bin/docker run --name sbcnav-backend --network sbcnav --env-file /opt/sbcnav/backend.env --volume /opt/sbcnav/cache:/app/cache --publish 127.0.0.1:8000:8000 --memory 650m --memory-swap 1536m sbcnav-backend:oracle-amd64
+ExecStop=/usr/bin/docker stop --time 30 sbcnav-backend
+TimeoutStartSec=300
+TimeoutStopSec=45
+
+[Install]
+WantedBy=multi-user.target

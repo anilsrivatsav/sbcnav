@@ -8,12 +8,16 @@ import io
 import json
 import asyncio
 import time
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from uuid import uuid4
 from datetime import date, datetime, timedelta, timezone
 
 import requests
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy import Integer, extract, func
@@ -116,9 +120,15 @@ except ImportError:  # pragma: no cover - optional locally; Render installs it f
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rail_dashboard.api")
 
-BOOTSTRAP_CACHE_KEY = "sbcnav:dashboard-bootstrap:v1"
-BOOTSTRAP_CACHE_TTL = int(os.getenv("DASHBOARD_CACHE_TTL_SECONDS", "60"))
+BOOTSTRAP_CACHE_KEY = "sbcnav:dashboard-bootstrap:v2"
+BOOTSTRAP_CACHE_TTL = int(os.getenv("DASHBOARD_CACHE_TTL_SECONDS", "3600"))
+BOOTSTRAP_CACHE_DIR = Path(os.getenv("DASHBOARD_CACHE_DIR", "/tmp/sbcnav-dashboard-cache"))
+BOOTSTRAP_BUILD_WORKERS = max(2, min(int(os.getenv("DASHBOARD_BUILD_WORKERS", "6")), 8))
+BOOTSTRAP_SCOPES = {"all", "stations", "contracts", "works", "amenities", "reports"}
 _bootstrap_memory_cache: dict[str, tuple[float, dict]] = {}
+_bootstrap_scope_locks = {scope: threading.Lock() for scope in BOOTSTRAP_SCOPES}
+_bootstrap_generation_lock = threading.Lock()
+_bootstrap_generation = 0
 _redis_client = None
 if redis and os.getenv("REDIS_URL"):
     try:
@@ -130,36 +140,80 @@ if redis and os.getenv("REDIS_URL"):
         logger.warning("Redis cache unavailable; using process memory cache: %s", exc)
 
 
+def _bootstrap_redis_key(scope: str) -> str:
+    return f"{BOOTSTRAP_CACHE_KEY}:{scope}"
+
+
+def _bootstrap_cache_path(scope: str) -> Path:
+    return BOOTSTRAP_CACHE_DIR / f"dashboard-bootstrap-{scope}.json"
+
+
 def _invalidate_bootstrap_cache() -> None:
+    global _bootstrap_generation
+    with _bootstrap_generation_lock:
+        _bootstrap_generation += 1
     _bootstrap_memory_cache.clear()
     if _redis_client:
         try:
-            _redis_client.delete(BOOTSTRAP_CACHE_KEY)
+            _redis_client.delete(*[_bootstrap_redis_key(scope) for scope in BOOTSTRAP_SCOPES])
         except Exception:
             logger.warning("Unable to invalidate Redis dashboard cache", exc_info=True)
+    try:
+        if BOOTSTRAP_CACHE_DIR.exists():
+            for path in BOOTSTRAP_CACHE_DIR.glob("dashboard-bootstrap-*.json"):
+                path.unlink(missing_ok=True)
+    except Exception:
+        logger.warning("Unable to invalidate durable dashboard cache", exc_info=True)
 
 
-def _bootstrap_cache_get() -> dict | None:
+def _bootstrap_cache_get(scope: str) -> tuple[dict | None, bool]:
+    now = time.time()
+    entry = _bootstrap_memory_cache.get(scope)
+    if entry:
+        return entry[1], entry[0] > now
     if _redis_client:
         try:
-            cached = _redis_client.get(BOOTSTRAP_CACHE_KEY)
-            return json.loads(cached) if cached else None
+            cached = _redis_client.get(_bootstrap_redis_key(scope))
+            if cached:
+                payload = json.loads(cached)
+                _bootstrap_memory_cache[scope] = (now + BOOTSTRAP_CACHE_TTL, payload)
+                return payload, True
         except Exception:
             logger.warning("Unable to read Redis dashboard cache", exc_info=True)
-    entry = _bootstrap_memory_cache.get(BOOTSTRAP_CACHE_KEY)
-    if entry and entry[0] > time.time():
-        return entry[1]
-    return None
+    try:
+        record = json.loads(_bootstrap_cache_path(scope).read_text())
+        payload = record.get("payload")
+        expires_at = float(record.get("expires_at") or 0)
+        if isinstance(payload, dict):
+            _bootstrap_memory_cache[scope] = (expires_at, payload)
+            return payload, expires_at > now
+    except FileNotFoundError:
+        pass
+    except Exception:
+        logger.warning("Unable to read durable dashboard cache for %s", scope, exc_info=True)
+    return None, False
 
 
-def _bootstrap_cache_set(payload: dict) -> None:
+def _bootstrap_cache_set(scope: str, payload: dict, generation: int) -> bool:
+    with _bootstrap_generation_lock:
+        if generation != _bootstrap_generation:
+            return False
+    expires_at = time.time() + BOOTSTRAP_CACHE_TTL
     if _redis_client:
         try:
-            _redis_client.setex(BOOTSTRAP_CACHE_KEY, BOOTSTRAP_CACHE_TTL, json.dumps(payload, default=str))
-            return
+            _redis_client.setex(_bootstrap_redis_key(scope), BOOTSTRAP_CACHE_TTL, json.dumps(payload, default=str))
         except Exception:
             logger.warning("Unable to write Redis dashboard cache", exc_info=True)
-    _bootstrap_memory_cache[BOOTSTRAP_CACHE_KEY] = (time.time() + BOOTSTRAP_CACHE_TTL, payload)
+    _bootstrap_memory_cache[scope] = (expires_at, payload)
+    try:
+        BOOTSTRAP_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        path = _bootstrap_cache_path(scope)
+        temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+        temporary.write_text(json.dumps({"expires_at": expires_at, "payload": payload}, default=str))
+        os.replace(temporary, path)
+    except Exception:
+        logger.warning("Unable to write durable dashboard cache for %s", scope, exc_info=True)
+    return True
 
 PA_INFRA_SPREADSHEET_ID = "1UdRgQQPEkak1fUTuVH7jIn5R4sE3szAhM4VZJOdFIOU"
 SANCTIONED_WORKS_SPREADSHEET_ID = "1rJbfhcnEVuGMwGkT8yBObb9Bk5Hx0uU224EGxfplGRc"
@@ -203,6 +257,11 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+app.add_middleware(
+    GZipMiddleware,
+    minimum_size=int(os.getenv("GZIP_MINIMUM_SIZE", "1024")),
+    compresslevel=int(os.getenv("GZIP_LEVEL", "4")),
 )
 
 
@@ -1132,59 +1191,193 @@ def _bootstrap_page(items: list[dict], sort_key: str | None = None) -> dict:
     return {"items": rows, "pagination": {"total": len(rows), "page": 1, "page_size": len(rows)}}
 
 
+def _parallel_bootstrap_tasks(tasks: dict[str, object]) -> dict[str, object]:
+    if not tasks:
+        return {}
+    with ThreadPoolExecutor(max_workers=min(BOOTSTRAP_BUILD_WORKERS, len(tasks))) as executor:
+        futures = {name: executor.submit(task) for name, task in tasks.items()}
+        return {name: future.result() for name, future in futures.items()}
+
+
+def _passenger_amenity_payload(rows_by_kind: dict[str, list[dict]]) -> dict:
+    report_rows = {
+        **rows_by_kind,
+        "works": rows_by_kind["pa_works"],
+        "pfExtension": rows_by_kind["pf_extension"],
+    }
+    return {
+        "summary": _bootstrap_page(rows_by_kind["summary"], "station_code"),
+        "infra": _bootstrap_page(rows_by_kind["infra"], "station_code"),
+        "platforms": _bootstrap_page(rows_by_kind["platforms"], "station_code"),
+        "wheelchairs": _bootstrap_page(rows_by_kind["wheelchairs"], "station_code"),
+        "trolley": _bootstrap_page(rows_by_kind["trolley"], "station_code"),
+        "works": _bootstrap_page(rows_by_kind["pa_works"], "station_code"),
+        "pfExtension": _bootstrap_page(rows_by_kind["pf_extension"], "station_code"),
+        "norms": _bootstrap_page(rows_by_kind["norms"], "category"),
+        "reports": get_passenger_amenity_reports(report_rows),
+    }
+
+
+def _build_bootstrap_payload(scope: str) -> dict:
+    if scope == "stations":
+        results = _parallel_bootstrap_tasks({"stations": list_stations})
+        return {"stations": _bootstrap_page(results["stations"], "station_name")}
+
+    if scope == "works":
+        work_monitoring = get_work_monitoring()
+        works_rows = work_monitoring.get("items") or list_works()
+        return {
+            "works": _bootstrap_page(works_rows, "project_id"),
+            "workMonitoring": {**work_monitoring, "items": works_rows},
+        }
+
+    if scope == "contracts":
+        results = _parallel_bootstrap_tasks({
+            "units": list_units,
+            "commercialContracts": list_commercial_contracts,
+            "commercialContractReports": get_commercial_contract_reports,
+            "registryContracts": list_registry_contracts,
+        })
+        contract_alerts = get_contract_alerts(
+            catering=results["units"],
+            commercial=results["commercialContracts"],
+            commercial_report=results["commercialContractReports"],
+        )
+        return {
+            "units": _bootstrap_page(results["units"], "unit_no"),
+            "commercialContracts": _bootstrap_page(results["commercialContracts"], "contract_name"),
+            "commercialContractReports": results["commercialContractReports"],
+            "contractAlerts": contract_alerts,
+            "registryContracts": _bootstrap_page(results["registryContracts"], "contract_name"),
+        }
+
+    if scope == "amenities":
+        amenity_tasks = {
+            kind: (lambda requested_kind=kind: list_passenger_amenities(kind=requested_kind))
+            for kind in ("summary", "infra", "platforms", "wheelchairs", "trolley", "pa_works", "pf_extension", "norms")
+        }
+        return {"passengerAmenities": _passenger_amenity_payload(_parallel_bootstrap_tasks(amenity_tasks))}
+
+    if scope == "reports":
+        results = _parallel_bootstrap_tasks({"earnings": list_earnings, "reports": get_reports})
+        return {
+            "earnings": _bootstrap_page(results["earnings"], "date_of_receipt"),
+            "reports": results["reports"],
+        }
+
+    tasks = {
+        "stats": get_stats,
+        "dataCentre": get_data_centre_status,
+        "stations": list_stations,
+        "units": list_units,
+        "earnings": list_earnings,
+        "workMonitoring": get_work_monitoring,
+        "commercialContracts": list_commercial_contracts,
+        "commercialContractReports": get_commercial_contract_reports,
+        "registryContracts": list_registry_contracts,
+        "reports": get_reports,
+    }
+    for kind in ("summary", "infra", "platforms", "wheelchairs", "trolley", "pa_works", "pf_extension", "norms"):
+        tasks[f"amenity:{kind}"] = lambda requested_kind=kind: list_passenger_amenities(kind=requested_kind)
+    results = _parallel_bootstrap_tasks(tasks)
+    work_monitoring = results["workMonitoring"]
+    works_rows = work_monitoring.get("items") or list_works()
+    passenger_amenities = {
+        kind: results[f"amenity:{kind}"]
+        for kind in ("summary", "infra", "platforms", "wheelchairs", "trolley", "pa_works", "pf_extension", "norms")
+    }
+    contract_alerts = get_contract_alerts(
+        catering=results["units"],
+        commercial=results["commercialContracts"],
+        commercial_report=results["commercialContractReports"],
+    )
+    action_centre = get_action_centre(
+        limit=500,
+        contract_alerts=contract_alerts,
+        work_report=work_monitoring,
+        report=results["reports"],
+        passenger_summary=passenger_amenities["summary"],
+        data_centre=results["dataCentre"],
+    )
+    return {
+        "stats": results["stats"],
+        "dataCentre": results["dataCentre"],
+        "actionCentre": action_centre,
+        "stations": _bootstrap_page(results["stations"], "station_name"),
+        "units": _bootstrap_page(results["units"], "unit_no"),
+        "earnings": _bootstrap_page(results["earnings"], "date_of_receipt"),
+        "works": _bootstrap_page(works_rows, "project_id"),
+        "workMonitoring": {**work_monitoring, "items": works_rows},
+        "commercialContracts": _bootstrap_page(results["commercialContracts"], "contract_name"),
+        "commercialContractReports": results["commercialContractReports"],
+        "contractAlerts": contract_alerts,
+        "registryContracts": _bootstrap_page(results["registryContracts"], "contract_name"),
+        "reports": results["reports"],
+        "passengerAmenities": _passenger_amenity_payload(passenger_amenities),
+    }
+
+
+def _current_bootstrap_generation() -> int:
+    with _bootstrap_generation_lock:
+        return _bootstrap_generation
+
+
+def _refresh_bootstrap_scope(scope: str, generation: int) -> None:
+    lock = _bootstrap_scope_locks[scope]
+    try:
+        payload = _build_bootstrap_payload(scope)
+        _bootstrap_cache_set(scope, payload, generation)
+    except Exception:
+        logger.exception("Unable to refresh dashboard bootstrap scope %s", scope)
+    finally:
+        lock.release()
+
+
+def _schedule_bootstrap_refresh(scope: str) -> None:
+    lock = _bootstrap_scope_locks[scope]
+    if not lock.acquire(blocking=False):
+        return
+    generation = _current_bootstrap_generation()
+    threading.Thread(
+        target=_refresh_bootstrap_scope,
+        args=(scope, generation),
+        daemon=True,
+        name=f"bootstrap-refresh-{scope}",
+    ).start()
+
+
 @app.get("/api/dashboard-bootstrap")
-def dashboard_bootstrap(refresh: bool = False):
+def dashboard_bootstrap(refresh: bool = False, scope: str = "all"):
     """Return the complete PostgreSQL read model in one cacheable response.
 
     Google Sheets/workbook imports are deliberately not called here. They remain
     explicit Settings actions; this endpoint only reads PostgreSQL and caches the
     assembled response for fast dashboard startup.
     """
-    if not refresh:
-        cached = _bootstrap_cache_get()
-        if cached:
-            return envelope({**cached, "cache": "hit"}, "dashboard bootstrap cache hit")
+    scope = scope.strip().lower()
+    if scope not in BOOTSTRAP_SCOPES:
+        raise HTTPException(status_code=400, detail=f"Unknown dashboard scope: {scope}")
 
-    work_monitoring_data = get_work_monitoring()
-    works_rows = work_monitoring_data.get("items") or list_works()
-    passenger_amenities = {
-        "summary": list_passenger_amenities(kind="summary"),
-        "infra": list_passenger_amenities(kind="infra"),
-        "platforms": list_passenger_amenities(kind="platforms"),
-        "wheelchairs": list_passenger_amenities(kind="wheelchairs"),
-        "trolley": list_passenger_amenities(kind="trolley"),
-        "works": list_passenger_amenities(kind="pa_works"),
-        "pfExtension": list_passenger_amenities(kind="pf_extension"),
-        "norms": list_passenger_amenities(kind="norms"),
-    }
-    payload = {
-        "stats": get_stats(),
-        "dataCentre": get_data_centre_status(),
-        "actionCentre": get_action_centre(limit=500),
-        "stations": _bootstrap_page(list_stations(), "station_name"),
-        "units": _bootstrap_page(list_units(), "unit_no"),
-        "earnings": _bootstrap_page(list_earnings(), "date_of_receipt"),
-        "works": _bootstrap_page(works_rows, "project_id"),
-        "workMonitoring": {**work_monitoring_data, "items": works_rows},
-        "commercialContracts": _bootstrap_page(list_commercial_contracts(), "contract_name"),
-        "commercialContractReports": get_commercial_contract_reports(),
-        "contractAlerts": get_contract_alerts(),
-        "registryContracts": _bootstrap_page(list_registry_contracts(), "contract_name"),
-        "reports": get_reports(),
-        "passengerAmenities": {
-            "summary": _bootstrap_page(passenger_amenities["summary"], "station_code"),
-            "infra": _bootstrap_page(passenger_amenities["infra"], "station_code"),
-            "platforms": _bootstrap_page(passenger_amenities["platforms"], "station_code"),
-            "wheelchairs": _bootstrap_page(passenger_amenities["wheelchairs"], "station_code"),
-            "trolley": _bootstrap_page(passenger_amenities["trolley"], "station_code"),
-            "works": _bootstrap_page(passenger_amenities["works"], "station_code"),
-            "pfExtension": _bootstrap_page(passenger_amenities["pfExtension"], "station_code"),
-            "norms": _bootstrap_page(passenger_amenities["norms"], "category"),
-            "reports": get_passenger_amenity_reports(passenger_amenities),
-        },
-    }
-    _bootstrap_cache_set(payload)
-    return envelope({**payload, "cache": "miss"}, "dashboard bootstrap ready")
+    cached, fresh = _bootstrap_cache_get(scope)
+    if cached is not None and not refresh:
+        if not fresh:
+            _schedule_bootstrap_refresh(scope)
+        cache_state = "hit" if fresh else "stale"
+        return envelope({**cached, "cache": cache_state, "scope": scope}, f"dashboard bootstrap cache {cache_state}")
+
+    lock = _bootstrap_scope_locks[scope]
+    with lock:
+        # Another request may have completed the same build while this request
+        # waited. Explicit refreshes always rebuild from PostgreSQL.
+        if not refresh:
+            cached_after_wait, fresh_after_wait = _bootstrap_cache_get(scope)
+            if cached_after_wait is not None and fresh_after_wait:
+                return envelope({**cached_after_wait, "cache": "hit", "scope": scope}, "dashboard bootstrap cache hit")
+        generation = _current_bootstrap_generation()
+        payload = _build_bootstrap_payload(scope)
+        _bootstrap_cache_set(scope, payload, generation)
+    cache_state = "refresh" if refresh else "miss"
+    return envelope({**payload, "cache": cache_state, "scope": scope}, "dashboard bootstrap ready")
 
 
 def _report_preset_dict(row: ReportPreset) -> dict:

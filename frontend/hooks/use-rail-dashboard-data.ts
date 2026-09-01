@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { loadRailDashboardData } from "../lib/api";
 
 const cacheKey = "sbcnav-postgres-dashboard-snapshot-v3";
@@ -10,6 +10,25 @@ const indexedDbStore = "snapshots";
 const indexedDbEntryKey = "latest-v3";
 
 const rows = (value) => Array.isArray(value) ? value : (value?.items || []);
+const hasSnapshotData = (snapshot) => Boolean(
+  snapshot?.stats
+  || rows(snapshot?.stations).length
+  || rows(snapshot?.units).length
+  || rows(snapshot?.works).length
+  || rows(snapshot?.commercialContracts).length
+);
+
+const scopeForView = (view) => ({
+  stations: "stations",
+  masters: "stations",
+  contracts: "contracts",
+  commercial: "contracts",
+  units: "contracts",
+  works: "works",
+  amenities: "amenities",
+  reports: "reports",
+  earnings: "reports",
+}[view] || "all");
 
 function readSnapshot() {
   if (typeof window === "undefined") return null;
@@ -99,7 +118,7 @@ async function writeIndexedSnapshot(snapshot) {
   });
 }
 
-export function useRailDashboardData() {
+export function useRailDashboardData({ view = "dashboard", enabled = true } = {}) {
   // Keep the server and first client render identical. Browser snapshots are
   // applied immediately after hydration to avoid React text mismatches.
   const [initialSnapshot] = useState(null);
@@ -128,35 +147,61 @@ export function useRailDashboardData() {
   const [loading, setLoading] = useState(true);
   const [activityStatus, setActivityStatus] = useState("Loading PostgreSQL data...");
   const [lastRefreshAt, setLastRefreshAt] = useState(null);
+  const [cacheReady, setCacheReady] = useState(false);
+  const dataRef = useRef<any>({});
+  const loadedScopesRef = useRef<Set<string>>(new Set());
+  const activeScope = scopeForView(view);
 
-  const applyData = (data) => {
-    setStats(data.stats);
-    setDataCentre(data.dataCentre);
-    setActionCentre(data.actionCentre);
-    setStations(rows(data.stations));
-    setUnits(rows(data.units));
-    setEarnings(rows(data.earnings));
-    setWorks(rows(data.works));
-    setWorkMonitoring(data.workMonitoring);
-    setCommercialContracts(rows(data.commercialContracts));
-    setCommercialContractReports(data.commercialContractReports);
-    setContractAlerts(data.contractAlerts);
-    setRegistryContracts(rows(data.registryContracts));
-    setReports(data.reports);
-    const amenities = data.passengerAmenities || {};
-    setPaSummary(rows(amenities.summary));
-    setPaInfra(rows(amenities.infra));
-    setPaPlatforms(rows(amenities.platforms));
-    setPaWheelchairs(rows(amenities.wheelchairs));
-    setPaTrolley(rows(amenities.trolley));
-    setPaWorks(rows(amenities.works));
-    setPaPfExtension(rows(amenities.pfExtension));
-    setPaNorms(rows(amenities.norms));
-    setPaReports(amenities.reports);
-    setLastRefreshAt(new Date().toLocaleString());
+  const rememberSnapshotScopes = (snapshot) => {
+    if (rows(snapshot?.stations).length) loadedScopesRef.current.add("stations");
+    if (rows(snapshot?.units).length || rows(snapshot?.commercialContracts).length || rows(snapshot?.registryContracts).length) loadedScopesRef.current.add("contracts");
+    if (rows(snapshot?.works).length || snapshot?.workMonitoring) loadedScopesRef.current.add("works");
+    if (snapshot?.passengerAmenities) loadedScopesRef.current.add("amenities");
+    if (rows(snapshot?.earnings).length || snapshot?.reports) loadedScopesRef.current.add("reports");
+    if (snapshot?.stats && snapshot?.dataCentre && snapshot?.actionCentre && snapshot?.reports && snapshot?.passengerAmenities) {
+      loadedScopesRef.current.add("all");
+    }
   };
 
-  const loadFromDb = async ({ refresh = false } = {}) => {
+  const applyData = (data) => {
+    const merged = {
+      ...dataRef.current,
+      ...data,
+      passengerAmenities: data.passengerAmenities
+        ? { ...(dataRef.current.passengerAmenities || {}), ...data.passengerAmenities }
+        : dataRef.current.passengerAmenities,
+    };
+    dataRef.current = merged;
+    if (data.stats !== undefined) setStats(data.stats);
+    if (data.dataCentre !== undefined) setDataCentre(data.dataCentre);
+    if (data.actionCentre !== undefined) setActionCentre(data.actionCentre);
+    if (data.stations !== undefined) setStations(rows(data.stations));
+    if (data.units !== undefined) setUnits(rows(data.units));
+    if (data.earnings !== undefined) setEarnings(rows(data.earnings));
+    if (data.works !== undefined) setWorks(rows(data.works));
+    if (data.workMonitoring !== undefined) setWorkMonitoring(data.workMonitoring);
+    if (data.commercialContracts !== undefined) setCommercialContracts(rows(data.commercialContracts));
+    if (data.commercialContractReports !== undefined) setCommercialContractReports(data.commercialContractReports);
+    if (data.contractAlerts !== undefined) setContractAlerts(data.contractAlerts);
+    if (data.registryContracts !== undefined) setRegistryContracts(rows(data.registryContracts));
+    if (data.reports !== undefined) setReports(data.reports);
+    if (data.passengerAmenities !== undefined) {
+      const amenities = data.passengerAmenities || {};
+      if (amenities.summary !== undefined) setPaSummary(rows(amenities.summary));
+      if (amenities.infra !== undefined) setPaInfra(rows(amenities.infra));
+      if (amenities.platforms !== undefined) setPaPlatforms(rows(amenities.platforms));
+      if (amenities.wheelchairs !== undefined) setPaWheelchairs(rows(amenities.wheelchairs));
+      if (amenities.trolley !== undefined) setPaTrolley(rows(amenities.trolley));
+      if (amenities.works !== undefined) setPaWorks(rows(amenities.works));
+      if (amenities.pfExtension !== undefined) setPaPfExtension(rows(amenities.pfExtension));
+      if (amenities.norms !== undefined) setPaNorms(rows(amenities.norms));
+      if (amenities.reports !== undefined) setPaReports(amenities.reports);
+    }
+    setLastRefreshAt(new Date().toLocaleString());
+    return merged;
+  };
+
+  const loadFromDb = async ({ refresh = false, scope = activeScope } = {}) => {
     let data;
     let lastError;
     // Render can take a few seconds to wake from idle. Retry the single
@@ -164,7 +209,7 @@ export function useRailDashboardData() {
     // snapshot after a normal cold start.
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        data = await loadRailDashboardData({ refresh });
+        data = await loadRailDashboardData({ refresh, scope });
         break;
       } catch (error) {
         lastError = error;
@@ -172,28 +217,31 @@ export function useRailDashboardData() {
       }
     }
     if (!data) throw lastError || new Error("Unable to load PostgreSQL data");
-    applyData(data);
+    const merged = applyData(data);
+    loadedScopesRef.current.add(scope);
     try {
-      window.localStorage.setItem(cacheKey, JSON.stringify(coreSnapshotOf(data)));
+      window.localStorage.setItem(cacheKey, JSON.stringify(coreSnapshotOf(merged)));
     } catch {
       // A browser storage limit must not prevent the live PostgreSQL refresh.
     }
-    await writeIndexedSnapshot(snapshotOf(data));
+    await writeIndexedSnapshot(snapshotOf(merged));
     return data.errors || [];
   };
 
-  const loadData = async ({ refresh = true } = {}) => {
-    setLoading(true);
-    setActivityStatus("Refreshing database data...");
+  const loadData = async ({ refresh = true, scope = activeScope, background = false } = {}) => {
+    if (!background) {
+      setLoading(true);
+      setActivityStatus("Refreshing database data...");
+    }
     try {
-      const errors = await loadFromDb({ refresh });
+      const errors = await loadFromDb({ refresh, scope });
       setActivityStatus(errors.length ? `Data loaded with ${errors.length} warning(s)` : "Data refreshed successfully");
       return errors;
     } catch (error) {
       setActivityStatus(error?.message || "Refresh failed");
       return [error?.message || "Refresh failed"];
     } finally {
-      setLoading(false);
+      if (!background) setLoading(false);
     }
   };
 
@@ -202,19 +250,32 @@ export function useRailDashboardData() {
     try { oldCacheKeys.forEach((key) => window.localStorage.removeItem(key)); } catch { /* Ignore storage cleanup failures. */ }
     (async () => {
       const localSnapshot = readSnapshot();
-      if (active && localSnapshot?.stats) {
+      if (active && hasSnapshotData(localSnapshot)) {
         applyData(localSnapshot);
+        rememberSnapshotScopes(localSnapshot);
+        setLoading(false);
         setActivityStatus("Showing last PostgreSQL snapshot; checking latest data...");
       }
       const cached = await readIndexedSnapshot();
-      if (active && cached?.stats) {
+      if (active && hasSnapshotData(cached)) {
         applyData(cached);
+        rememberSnapshotScopes(cached);
+        setLoading(false);
         setActivityStatus("Showing last PostgreSQL snapshot; checking latest data...");
       }
-      if (active) await loadData({ refresh: false });
+      if (active) setCacheReady(true);
     })();
     return () => { active = false; };
   }, [initialSnapshot]);
+
+  useEffect(() => {
+    if (!enabled || !cacheReady) return;
+    loadData({
+      refresh: false,
+      scope: activeScope,
+      background: loadedScopesRef.current.has("all") || loadedScopesRef.current.has(activeScope),
+    });
+  }, [activeScope, cacheReady, enabled]);
 
   return {
     stats,

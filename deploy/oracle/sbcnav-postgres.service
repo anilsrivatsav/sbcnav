@@ -1,0 +1,22 @@
+[Unit]
+Description=SBCNAV PostgreSQL database
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+ExecStartPre=-/usr/bin/docker network create sbcnav
+ExecStartPre=-/usr/bin/docker rm -f sbcnav-postgres
+ExecStartPre=/usr/bin/install -d -m 700 /opt/sbcnav/postgres-data
+ExecStartPre=/usr/bin/chown -R 70:70 /opt/sbcnav/postgres-data
+ExecStartPre=/usr/bin/install -d -m 700 /opt/sbcnav/backups
+ExecStart=/usr/bin/docker run --name sbcnav-postgres --network sbcnav --env-file /opt/sbcnav/postgres.env --volume /opt/sbcnav/postgres-data:/var/lib/postgresql/data --volume /opt/sbcnav/backups:/backup --memory 384m --memory-swap 1024m --shm-size 128m postgres:17-alpine postgres -c max_connections=30 -c shared_buffers=96MB -c effective_cache_size=384MB -c work_mem=4MB -c maintenance_work_mem=64MB -c wal_buffers=4MB
+ExecStop=/usr/bin/docker stop --time 60 sbcnav-postgres
+TimeoutStartSec=300
+TimeoutStopSec=75
+
+[Install]
+WantedBy=multi-user.target

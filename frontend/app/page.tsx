@@ -663,6 +663,8 @@ export default function Page() {
   const resourcePath = { stations: "stations", units: "units", earnings: "earnings", works: "works", "commercial-contracts": "commercial-contracts" };
   const keyField = { stations: "station_code", units: "unit_no", earnings: "receipt_key", works: "project_id", "commercial-contracts": "contract_key" };
 
+  const [view, setView] = useState("dashboard");
+  const [viewReady, setViewReady] = useState(false);
   const {
     stats,
     dataCentre,
@@ -692,9 +694,7 @@ export default function Page() {
     lastRefreshAt,
     loadFromDb,
     loadData,
-  } = useRailDashboardData();
-  const [view, setView] = useState("dashboard");
-  const [viewReady, setViewReady] = useState(false);
+  } = useRailDashboardData({ view, enabled: viewReady });
   const [navigationOpen, setNavigationOpen] = useState(false);
   const [theme, setTheme] = useState("light");
   const [search, setSearch] = useState({ dashboard: "", stations: "", contracts: "", commercial: "", units: "", earnings: "", works: "", amenities: "", reports: "", ai: "", settings: "" });

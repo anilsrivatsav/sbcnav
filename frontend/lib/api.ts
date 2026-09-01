@@ -31,21 +31,21 @@ export async function fetchJson(url: string, options?: RequestInit) {
   return json.data;
 }
 
-export async function loadRailDashboardData({ refresh = false } = {}) {
-  // One PostgreSQL-backed read model avoids waiting on twenty separate API
-  // requests. The backend caches this response in Redis (or a short-lived
-  // process cache when Redis is not configured). It never imports source sheets.
-  const [data, contractPage] = await Promise.all([
-    fetchJson(dashboardBootstrapUrl({ refresh })),
-    fetchJson(contractsUrl({ page: 1, pageSize: 1000 })),
-  ]);
-  // The registry endpoint is authoritative for contract assets and payments;
-  // bootstrap data can legitimately be served from a short-lived cache.
-  return { ...data, registryContracts: contractPage?.items || contractPage, errors: [] };
+export async function loadRailDashboardData({ refresh = false, scope = "all" } = {}) {
+  // Each screen requests only the PostgreSQL projection it needs. The complete
+  // read model remains available as `all` for the dashboard and mobile clients.
+  // Contract rows are already part of the relevant bootstrap projection, so do
+  // not fetch the same 400 KB registry page a second time at startup.
+  const data = await fetchJson(dashboardBootstrapUrl({ refresh, scope }));
+  return { ...data, errors: [] };
 }
 
-export function dashboardBootstrapUrl({ refresh = false } = {}) {
-  return `${API_URL}/api/dashboard-bootstrap${refresh ? "?refresh=true" : ""}`;
+export function dashboardBootstrapUrl({ refresh = false, scope = "all" } = {}) {
+  const query = new URLSearchParams();
+  if (refresh) query.set("refresh", "true");
+  if (scope && scope !== "all") query.set("scope", scope);
+  const suffix = query.toString();
+  return `${API_URL}/api/dashboard-bootstrap${suffix ? `?${suffix}` : ""}`;
 }
 
 export function dataQualityCheckUrl() {

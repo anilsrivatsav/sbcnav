@@ -33,7 +33,27 @@ def make_engine():
     url = get_database_url()
     if url.startswith("sqlite"):
         return create_engine(url, connect_args={"check_same_thread": False}, pool_pre_ping=True)
-    return create_engine(url, pool_pre_ping=True)
+    # SBCNAV uses Supabase's transaction pooler in production. Keep a small,
+    # warm client-side pool so normal requests do not repeatedly pay the
+    # Mumbai-to-database connection setup cost, while staying well within the
+    # limits of the shared PgBouncer pool and the Oracle micro VM.
+    return create_engine(
+        url,
+        pool_pre_ping=True,
+        pool_size=int(os.getenv("DB_POOL_SIZE", "5")),
+        max_overflow=int(os.getenv("DB_MAX_OVERFLOW", "3")),
+        pool_timeout=int(os.getenv("DB_POOL_TIMEOUT_SECONDS", "20")),
+        pool_recycle=int(os.getenv("DB_POOL_RECYCLE_SECONDS", "300")),
+        pool_use_lifo=True,
+        connect_args={
+            "connect_timeout": int(os.getenv("DB_CONNECT_TIMEOUT_SECONDS", "10")),
+            "application_name": os.getenv("DB_APPLICATION_NAME", "sbcnav-fastapi"),
+            "keepalives": 1,
+            "keepalives_idle": 30,
+            "keepalives_interval": 10,
+            "keepalives_count": 3,
+        },
+    )
 
 
 engine = make_engine()
