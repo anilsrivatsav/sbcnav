@@ -36,20 +36,33 @@ async function loaded(tab, previous=null) {
   }
   throw new Error('IREPS page did not finish loading; no sheet changes were made.');
 }
-async function click(tab,label) {
+async function click(tab,label,nextControl=null) {
   const stamp=await read(tab, label=>{
     const matches=[...document.querySelectorAll('a,button,input[type=button],input[type=submit]')].filter(e=>e.getClientRects().length&&(e.innerText||e.value||'').trim()===label);
     if(matches.length!==1)return {error:'Expected one IREPS '+label+' control; found '+matches.length};
     const stamp=performance.timeOrigin;matches[0].click();return stamp;
   },[label]);
+  if(nextControl) {
+    for(let i=0;i<120;i++) {
+      const ready=await read(tab,label=>document.readyState==='complete'&&(
+        document.getElementById('regCat')?.getClientRects().length&&document.getElementById('tenderNumber')?.getClientRects().length ||
+        [...document.querySelectorAll('a,button,input[type=button],input[type=submit]')].some(e=>e.getClientRects().length&&(e.innerText||e.value||'').trim()===label)),[nextControl]);
+      if(ready)return;
+      await pause(500);
+    }
+    throw new Error('IREPS '+nextControl+' menu did not become ready.');
+  }
   return loaded(tab,stamp);
 }
 async function navigate(tab,mode) {
-  await chrome.tabs.update(tab,{url:HOME});await loaded(tab);
+  const previous=await read(tab,()=>performance.timeOrigin);
+  await chrome.tabs.update(tab,{url:HOME});await loaded(tab,previous);
   const authenticated=await read(tab,()=>[...document.querySelectorAll('a')].some(a=>a.innerText.trim()==='Payments'));
   if(!authenticated)throw new Error('Complete IREPS digital-token sign-in, then click Check IREPS.');
-  await click(tab,mode);
-  await click(tab,mode==='Payments'?'Payments Received':'View Contracts');
+  const submenu=mode==='Payments'?'Payments Received':'View Contracts';
+  await click(tab,mode,submenu);
+  const searchReady=await read(tab,()=>Boolean(document.getElementById('regCat')?.getClientRects().length&&document.getElementById('tenderNumber')?.getClientRects().length));
+  if(!searchReady)await click(tab,submenu);
 }
 async function search(tab,category,kind,start,end,contract='') {
   const stamp=await read(tab,(category,kind,start,end,contract)=>{
@@ -185,7 +198,7 @@ async function collect(tab,config,notify) {
 chrome.runtime.onMessage.addListener((message,sender,reply)=>{
   const origin=sender.url&&new URL(sender.url).origin;
   if(origin!=='https://sbcnav-38t2.vercel.app')return;
-  if(message.action==='ping') {reply({ready:true,version:'1.0.1',running});return;}
+  if(message.action==='ping') {reply({ready:true,version:'1.0.2',running});return;}
   if(message.action==='open') {irepsTab(true).then(()=>reply({opened:true}),e=>reply({error:e.message}));return true;}
   if(message.action==='session') {
     if(running){reply({authenticated:true});return;}

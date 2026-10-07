@@ -2,18 +2,19 @@ const fs=require('node:fs');
 const vm=require('node:vm');
 const assert=require('node:assert/strict');
 const test=require('node:test');
-function worker(pages) {
+function worker(pages,controls=[]) {
   let page=0,stamp=1;
   const context={URL,AbortSignal,Uint8Array,Set,Map,console,setTimeout,clearTimeout,chrome:{runtime:{onMessage:{addListener(){}}},tabs:{async get(){return {url:'https://www.ireps.gov.in/epsn/home/showHome.do'};}},scripting:{async executeScript({func,args}){return [{result:await func(...args)}];}}}};
   context.performance={get timeOrigin(){return stamp;}};
   const cell=t=>({innerText:t});
-  context.document={readyState:'complete',body:{get innerText(){return `${pages[page].total} Records Found`;}},querySelectorAll(selector){
+  context.document={readyState:'complete',getElementById(){return null;},body:{get innerText(){return `${pages[page].total} Records Found`;}},querySelectorAll(selector){
+    if(selector==='a,button,input[type=button],input[type=submit]')return controls;
     if(selector==='table')return [{rows:[{cells:[cell('Contract No'),...Array.from({length:8},()=>cell(''))]},...pages[page].rows.map(cells=>({cells:cells.map(cell),querySelectorAll(){return [];}}))]}];
     if(selector.startsWith('a[onclick'))return page+1<pages.length?[{innerText:String(page+2),click(){page++;stamp++;}}]:[];
     return [];
   }};
   vm.createContext(context);vm.runInContext(fs.readFileSync(__dirname+'/worker.js','utf8'),context);
-  return vm.runInContext('({allRows,relevant,day,pdf})',context);
+  return vm.runInContext('({allRows,relevant,day,pdf,click})',context);
 }
 const contract=n=>['SBC-'+n,'01/01/2026','Firm','Advertising','SBC','01/01/2026','31/12/2026','Running',''];
 test('reads every contract page',async()=>{
@@ -38,4 +39,14 @@ test('excludes ordinary parking and accepts Radio Taxi',()=>{
 });
 test('never fetches invoice PDFs from another origin',async()=>{
   const w=worker([{total:0,rows:[]}]);await assert.rejects(()=>w.pdf(1,'https://example.com/invoice.pdf'),/Unexpected/);
+});
+
+test('waits for a same-document Contracts submenu without requiring a reload',async()=>{
+  let visible=false;
+  const controls=[
+    {innerText:'Contracts',getClientRects:()=>[{}],click(){visible=true;}},
+    {innerText:'View Contracts',getClientRects:()=>visible?[{}]:[]}
+  ];
+  await worker([{total:0,rows:[]}],controls).click(1,'Contracts','View Contracts');
+  assert.equal(visible,true);
 });

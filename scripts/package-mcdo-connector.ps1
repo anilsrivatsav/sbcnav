@@ -13,7 +13,7 @@ SBC NAV MCDO browser connector
 4. Reload https://sbcnav-38t2.vercel.app/?view=mcdo.
 5. Sign in to the updater once using your operator access key.
 6. Click Update now. Authenticate on IREPS with your USB DSC token if requested.
-7. Click Update now. IREPS authentication is detected automatically;
+7. IREPS authentication is detected automatically;
    validated changes flow through both sheets and Oracle without more clicks.
 
 Keep SBC NAV open while checking. Your DSC signer and token driver remain
