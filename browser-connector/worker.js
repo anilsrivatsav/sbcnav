@@ -38,7 +38,12 @@ async function loaded(tab, previous=null) {
 }
 async function click(tab,label,nextControl=null) {
   const stamp=await read(tab, label=>{
-    const matches=[...document.querySelectorAll('a,button,input[type=button],input[type=submit]')].filter(e=>e.getClientRects().length&&(e.innerText||e.value||'').trim()===label);
+    const matches=[...document.querySelectorAll('a,button,input[type=button],input[type=submit]')].filter(e=>{
+      if(!e.getClientRects().length)return false;
+      const names=[e.innerText,e.value,e.getAttribute('aria-label'),e.getAttribute('title'),
+        ...[...e.querySelectorAll('img')].flatMap(image=>[image.getAttribute('alt'),image.getAttribute('title')])];
+      return names.some(name=>String(name||'').replace(/\s+/g,' ').trim()===label);
+    });
     if(matches.length!==1)return {error:'Expected one IREPS '+label+' control; found '+matches.length};
     const stamp=performance.timeOrigin;matches[0].click();return stamp;
   },[label]);
@@ -198,7 +203,7 @@ async function collect(tab,config,notify) {
 chrome.runtime.onMessage.addListener((message,sender,reply)=>{
   const origin=sender.url&&new URL(sender.url).origin;
   if(origin!=='https://sbcnav-38t2.vercel.app')return;
-  if(message.action==='ping') {reply({ready:true,version:'1.0.2',running});return;}
+  if(message.action==='ping') {reply({ready:true,version:'1.0.3',running});return;}
   if(message.action==='open') {irepsTab(true).then(()=>reply({opened:true}),e=>reply({error:e.message}));return true;}
   if(message.action==='session') {
     if(running){reply({authenticated:true});return;}

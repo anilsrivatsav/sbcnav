@@ -7,6 +7,7 @@ function worker(pages,controls=[]) {
   const context={URL,AbortSignal,Uint8Array,Set,Map,console,setTimeout,clearTimeout,chrome:{runtime:{onMessage:{addListener(){}}},tabs:{async get(){return {url:'https://www.ireps.gov.in/epsn/home/showHome.do'};}},scripting:{async executeScript({func,args}){return [{result:await func(...args)}];}}}};
   context.performance={get timeOrigin(){return stamp;}};
   const cell=t=>({innerText:t});
+  for(const control of controls){control.getAttribute??=()=>null;control.querySelectorAll??=()=>[];}
   context.document={readyState:'complete',getElementById(){return null;},body:{get innerText(){return `${pages[page].total} Records Found`;}},querySelectorAll(selector){
     if(selector==='a,button,input[type=button],input[type=submit]')return controls;
     if(selector==='table')return [{rows:[{cells:[cell('Contract No'),...Array.from({length:8},()=>cell(''))]},...pages[page].rows.map(cells=>({cells:cells.map(cell),querySelectorAll(){return [];}}))]}];
@@ -49,4 +50,12 @@ test('waits for a same-document Contracts submenu without requiring a reload',as
   ];
   await worker([{total:0,rows:[]}],controls).click(1,'Contracts','View Contracts');
   assert.equal(visible,true);
+});
+
+test('opens an icon-only Contract action and excludes Modify Contract',async()=>{
+  let selected='';
+  const action=name=>({innerText:'',getClientRects:()=>[{}],querySelectorAll:()=>[{getAttribute:attr=>attr==='alt'?name:null}],click(){selected=name;}});
+  const controls=[action('Contract'),action('Modify Contract'),{innerText:'View Contracts',getClientRects:()=>[{}]}];
+  await worker([{total:0,rows:[]}],controls).click(1,'Contract','View Contracts');
+  assert.equal(selected,'Contract');
 });
