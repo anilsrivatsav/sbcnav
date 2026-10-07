@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
     Integer,
+    JSON,
     Numeric,
     Date,
     LargeBinary,
@@ -17,6 +18,45 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
+
+
+class PublicityEarningsImport(Base):
+    __tablename__ = "publicity_earnings_imports"
+    import_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    filename: Mapped[str] = mapped_column(Text)
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    row_count: Mapped[int] = mapped_column(Integer)
+    warnings: Mapped[list] = mapped_column(JSON)
+
+
+class PublicityEarning(Base):
+    __tablename__ = "publicity_earnings"
+    import_id: Mapped[str] = mapped_column(ForeignKey("publicity_earnings_imports.import_id"), primary_key=True)
+    source_row: Mapped[int] = mapped_column(Integer, primary_key=True)
+    financial_year: Mapped[str] = mapped_column(String(7), index=True)
+    month: Mapped[int | None] = mapped_column(Integer)
+    receipt_date: Mapped[date | None] = mapped_column(Date)
+    details: Mapped[str | None] = mapped_column(Text)
+    policy: Mapped[str | None] = mapped_column(Text, index=True)
+    firm: Mapped[str | None] = mapped_column(Text)
+    location: Mapped[str | None] = mapped_column(Text)
+    detailed_head: Mapped[str | None] = mapped_column(Text)
+    allocation_code: Mapped[str | None] = mapped_column(Text)
+    receipt_reference: Mapped[str | None] = mapped_column(Text)
+    pub_earnings: Mapped[float | None] = mapped_column(Numeric(24, 10))
+    nfr_earnings: Mapped[float | None] = mapped_column(Numeric(24, 10))
+    licence_fee: Mapped[float | None] = mapped_column(Numeric(24, 10))
+    penalty: Mapped[float | None] = mapped_column(Numeric(24, 10))
+    app_based_cab: Mapped[float | None] = mapped_column(Numeric(24, 10))
+    gst: Mapped[float | None] = mapped_column(Numeric(24, 10))
+    total_with_gst: Mapped[float | None] = mapped_column(Numeric(24, 10))
+    source_values: Mapped[dict] = mapped_column(JSON)
+
+
+class PublicityEarningsCurrent(Base):
+    __tablename__ = "publicity_earnings_current"
+    dataset: Mapped[str] = mapped_column(String(32), primary_key=True)
+    import_id: Mapped[str | None] = mapped_column(ForeignKey("publicity_earnings_imports.import_id"))
 
 
 def utcnow() -> datetime:
@@ -823,6 +863,17 @@ class MobileChange(Base):
     action: Mapped[str] = mapped_column(String(32), nullable=False)
     payload_json: Mapped[str] = mapped_column(Text, nullable=False)
     changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False, index=True)
+
+
+class McdoSyncRun(Base):
+    __tablename__ = 'mcdo_sync_runs'
+    run_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    result: Mapped[dict] = mapped_column(JSON, nullable=False)
+    error: Mapped[str | None] = mapped_column(Text)
 
 
 class MobileDeviceState(Base):

@@ -37,6 +37,8 @@ import {
 import { BottomSheet, DataTable } from "../components/ui";
 import { Station360 } from "../components/station-360";
 import { StationQuickView } from "../components/station-quick-view";
+import { PublicityEarnings } from "../components/publicity-earnings";
+import { Mcdo } from "../components/mcdo";
 import { StationMetricsMaster } from "../components/station-metrics-master";
 import { ReportTemplatesPanel } from "../components/reports/report-templates-panel";
 import { API_URL, aiQueryUrl, amenityFindingsUrl, cateringSyncUrl, commercialContractDetailUrl, commercialContractStatementUrl, contractRegistryDetailUrl, dataQualityCheckUrl, dataQualityResolveUrl, fetchJson, importCommercialContractsUrl, importPassengerAmenitiesUrl, importPfExtensionUrl, importSanctionedWorksUrl, previewPassengerAmenitiesUrl, previewSanctionedWorksUrl, reportPresetRunUrl, reportPresetsUrl, stationDetailUrl, workExpenditureUrl, workProgressUrl } from "../lib/api";
@@ -774,7 +776,7 @@ export default function Page() {
 
   useEffect(() => {
     const requestedView = new URLSearchParams(window.location.search).get("view");
-    if (["dashboard", "stations", "contracts", "commercial", "units", "earnings", "works", "amenities", "masters", "reports", "ai", "settings"].includes(requestedView)) {
+    if (["dashboard", "stations", "contracts", "commercial", "units", "earnings", "works", "amenities", "masters", "reports", "ai", "settings", "mcdo"].includes(requestedView)) {
       setView(requestedView);
     }
     setViewReady(true);
@@ -1950,6 +1952,7 @@ export default function Page() {
         filters: [],
       };
     }
+    if (view === "mcdo") return {title:"MCDO",subtitle:"Monthly commercial report and IREPS source updates.",filters:[]};
     return { title: "Dashboard", subtitle: "KPI cards and high-level trends across the dataset.", filters: [] };
   })();
 
@@ -2531,6 +2534,7 @@ export default function Page() {
             <NavButton active={view === "amenities"} icon={TrainFront} label="Amenity Infra" hint="Norms, platforms, wheel chairs, trolley paths" onClick={() => setView("amenities")} />
             <NavButton active={view === "works"} icon={Wrench} label="Sanctioned Works" hint="PA sanctioned works and station links" onClick={() => setView("works")} />
             <NavButton active={view === "reports"} icon={FileText} label="Reports" hint="License fee and unit alerts" onClick={() => setView("reports")} />
+            <NavButton active={view === "mcdo"} icon={RefreshCw} label="MCDO" hint="IREPS, Google Sheets and Oracle updates" onClick={() => setView("mcdo")} />
             <NavButton active={view === "ai"} icon={Bot} label="Ask AI" hint="Talk to any table safely" onClick={() => setView("ai")} />
             <NavButton active={view === "settings"} icon={SettingsIcon} label="Settings" hint="Fetch, sync, import, and database controls" onClick={() => setView("settings")} />
           </nav>
@@ -2576,6 +2580,7 @@ export default function Page() {
             <StationMetricsMaster stations={stations} onActivity={setActivityStatus} />
           ) : null}
 
+          {view === "mcdo" ? <Mcdo onUpdated={loadData} /> : null}
           {view === "settings" ? (
             <div className="space-y-4">
               <Panel
@@ -2924,6 +2929,7 @@ export default function Page() {
               />
               {contractFamily === "publicity" ? (
                 <>
+                  <PublicityEarnings />
                   <div className="soft-surface grid gap-3 rounded-xl border border-line p-3 md:grid-cols-4 md:items-end">
                     <label className="grid gap-1 text-xs font-black text-muted"><span className="text-[11px] uppercase tracking-[0.14em]">Status</span><select value={publicityStatus} onChange={(event) => setPublicityStatus(event.target.value)} className="soft-inset h-10 rounded-lg border border-line px-3 text-sm font-bold text-ink outline-none focus:border-accent">{["all", "running", "completed", "cancelled"].map((status) => <option key={status} value={status}>{status === "all" ? `All contracts (${publicityContracts.length})` : `${pretty(status)} (${publicityContracts.filter((row) => normalizeText(row.status) === status).length})`}</option>)}</select></label>
                     <label className="grid gap-1 text-xs font-black text-muted"><span className="text-[11px] uppercase tracking-[0.14em]">Policy</span><select value={publicityPolicy} onChange={(event) => setPublicityPolicy(event.target.value)} className="soft-inset h-10 rounded-lg border border-line px-3 text-sm font-bold text-ink outline-none focus:border-accent"><option value="all">All policies</option>{publicityPolicyOptions.map((policy) => <option key={policy} value={policy}>{policy}</option>)}</select></label>
@@ -3602,7 +3608,7 @@ export default function Page() {
             </div>
           ) : null}
 
-          {view !== "dashboard" && view !== "reports" && view !== "amenities" && view !== "contracts" && view !== "commercial" && view !== "masters" && view !== "ai" && view !== "settings" ? (
+          {view !== "dashboard" && view !== "reports" && view !== "amenities" && view !== "contracts" && view !== "commercial" && view !== "masters" && view !== "ai" && view !== "settings" && view !== "mcdo" ? (
           <Panel
             title={viewConfig.title}
             subtitle={view === "stations" ? "Station master with filtering and search." : view === "units" ? "Catering units linked to stations." : view === "earnings" ? "Earnings linked to units and station codes." : view === "works" ? "Sanctioned works with scope and status." : view === "reports" ? "License fee pending and contract expiry alert list." : "Dashboard summary"}

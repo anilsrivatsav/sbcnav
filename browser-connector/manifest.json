@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "SBC NAV IREPS Connector",
+  "version": "1.0.0",
+  "minimum_chrome_version": "114",
+  "description": "Use your authenticated IREPS browser from SBC NAV MCDO. No Windows updater and no token PIN collection.",
+  "permissions": ["scripting"],
+  "host_permissions": ["https://www.ireps.gov.in/*"],
+  "background": {"service_worker": "worker.js"},
+  "content_scripts": [{"matches": ["https://sbcnav-38t2.vercel.app/*"], "js": ["bridge.js"]}]
+}

@@ -52,3 +52,21 @@ schedules, and actual payments separately.
   backfills existing Rail Inspect contract records.
 
 The PostgreSQL migration is `0027_contract_registry`.
+
+## Historical publicity earnings
+
+The Publicity workspace includes Main Sheet-only workbook imports, financial
+year totals, monthly trends, policy/head filters, common-month comparisons,
+and a searchable receipt ledger with CSV export. A dedicated view is available
+at `/publicity-earnings`. Apply migration `0030_publicity_earnings` before import.
+See [PUBLICITY_EARNINGS.md](PUBLICITY_EARNINGS.md) for source analysis, API,
+versioned import behaviour, validation and Oracle deployment instructions.
+
+## MCDO web updater
+
+The MCDO tab (`/?view=mcdo` or `/mcdo`) controls IREPS authentication through
+the browser connector, saved previews, Google Sheets updates and verified
+Master/Main Sheet imports into Oracle PostgreSQL. It also provides the
+monthly commercial earnings report and update history. Apply migration
+`0031_mcdo_sync` and configure operator/Google access before enabling writes.
+See [MCDO.md](MCDO.md) for setup, recovery and production verification.

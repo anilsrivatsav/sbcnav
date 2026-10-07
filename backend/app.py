@@ -59,6 +59,9 @@ from import_catering_workbook import (
 )
 from api_utils import envelope, exception_response, filter_search, paginate, sort_items
 from inspection_router import router as inspection_router
+from publicity_router import router as publicity_router
+from mcdo_router import router as mcdo_router
+from mcdo_router import configure_cache_invalidator
 from services import (
     audit_fields,
     earnings_sort_map,
@@ -250,6 +253,9 @@ configured_cors_origins = [
 
 app = FastAPI(title="Rail Dashboard API")
 app.include_router(inspection_router)
+app.include_router(publicity_router)
+app.include_router(mcdo_router)
+configure_cache_invalidator(_invalidate_bootstrap_cache)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=configured_cors_origins or DEFAULT_CORS_ORIGINS,

@@ -12,3 +12,6 @@ openai
 uvicorn[standard]
 gunicorn
 redis
+google-auth
+pypdf
+tzdata
