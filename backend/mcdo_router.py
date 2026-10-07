@@ -15,6 +15,7 @@ from mcdo.planner import main_plan
 from mcdo.checkpoint import compatible, pending, seven_day_failures
 from mcdo.sheets_api import Sheets, SOURCES, computed_workbook
 from mcdo.auth import administrator, issue_session
+from mcdo.deadlines import deadline_lists
 from publicity_earnings import parse_workbook, read_ledger, dashboard, apply_import
 from contract_registry import import_eauction_workbook, list_registry_contracts
 
@@ -61,7 +62,7 @@ def mcdo(year: str | None=Query(None,pattern=r'^20\d{2}-\d{2}$')):
         rows,source=read_ledger(session)
         counts=session.execute(select(ContractRegistryContract.status,func.count()).where(ContractRegistryContract.source_system=='e_auction').group_by(ContractRegistryContract.status)).all()
     data=dashboard(rows,source,year)
-    return envelope({'earnings':data,'contracts':dict(counts),'sources':SOURCES,'configured':bool(os.getenv('MCDO_GOOGLE_CREDENTIALS')) and len(os.getenv('MCDO_ADMIN_TOKEN',''))>=32,'authentication':'IREPS digital-token sign-in in your browser'})
+    return envelope({'earnings':data,'contracts':dict(counts),'deadlines':deadline_lists(list_registry_contracts(),today()),'sources':SOURCES,'configured':bool(os.getenv('MCDO_GOOGLE_CREDENTIALS')) and len(os.getenv('MCDO_ADMIN_TOKEN',''))>=32,'authentication':'IREPS digital-token sign-in in your browser'})
 
 @router.post('/runs',dependencies=[Depends(administrator)])
 def begin_run():

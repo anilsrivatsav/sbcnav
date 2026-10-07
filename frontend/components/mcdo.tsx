@@ -3,10 +3,11 @@ import {useEffect,useRef,useState} from "react";
 import {Download,RefreshCw} from "lucide-react";
 import {fetchJson} from "../lib/api";
 import {Button,Panel} from "./ui";
+import {McdoDeadlines,type Deadlines} from "./mcdo-deadlines";
 
 type Run={run_id:string;state:string;mode?:string;updated_at?:string;summary:Record<string,number>;warnings:string[];error?:string;created_at?:string;result?:Record<string,unknown>;overdue?:unknown[][];connector?:unknown};
 type Month={month:number;label:string;row_count:number;pub_earnings:string|null;nfr_earnings:string|null};
-type Summary={configured:boolean;contracts:Record<string,number>;earnings:{selected_year:string;source:{filename:string;row_count:number}|null;latest_receipt_date:string|null;options:{years:string[]};monthly:Month[]}};
+type Summary={configured:boolean;contracts:Record<string,number>;deadlines?:Deadlines;earnings:{selected_year:string;source:{filename:string;row_count:number}|null;latest_receipt_date:string|null;options:{years:string[]};monthly:Month[]}};
 const money=(v:number|string|null|undefined)=>v==null?"—":Number(v).toLocaleString("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:2});
 const states:Record<string,string>={awaiting_ireps:"Waiting for IREPS check",preview_ready:"Preview ready",applying:"Updating and verifying",needs_review:"Needs review",complete:"Verified and imported"};
 
@@ -122,6 +123,7 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
       {run&&<div className="mt-4 rounded-lg border border-line p-4"><p className="font-black text-ink">{states[run.state]||run.state}</p><div className="mt-2 flex flex-wrap gap-4 text-sm text-muted"><span>{run.summary?.new_invoices??0} new invoices</span><span>{run.summary?.new_contracts??0} new contracts</span><span>{money(run.summary?.earnings_amount)} earnings</span><span>{run.summary?.failed_payments??0} source payment failures</span></div>{run.warnings?.map((w,i)=><p key={i} className="mt-2 text-xs text-amber-700">{w}</p>)}{run.error&&<p className="mt-2 text-sm text-red-700">{run.error}</p>}{Boolean(run.overdue?.length)&&<div className="mt-3 overflow-auto"><table className="w-full text-left text-xs"><caption className="mb-2 text-left font-bold">IREPS-listed dues beyond seven-day grace</caption><thead><tr>{["Contract","Contractor","Amount due","Due date","Grace ends","Days past grace"].map(h=><th key={h} className="p-2">{h}</th>)}</tr></thead><tbody>{run.overdue?.map((r,i)=><tr key={i}>{r.map((c,j)=><td key={j} className="border-t border-line p-2">{String(c)}</td>)}</tr>)}</tbody></table></div>}</div>}
       {history.length>0&&<div className="mt-4 space-y-2">{history.map(h=><button key={h.run_id} className="flex w-full justify-between rounded-lg border border-line p-3 text-left text-xs text-ink" disabled={busy} onClick={()=>{setRun(h);runId.current=h.run_id;setRefreshed(false);setError("");if(h.state==="complete")setRevision(v=>v+1);}}><span>{h.created_at?new Date(h.created_at).toLocaleString("en-IN"):h.run_id}</span><span>{states[h.state]||h.state}</span></button>)}</div>}
     </Panel>
+    <McdoDeadlines data={summary?.deadlines}/>
     <a className="text-sm font-bold text-blue underline" href="/publicity-earnings">View historical earnings details</a>
   </div>;
 }
