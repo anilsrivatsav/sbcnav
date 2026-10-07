@@ -240,7 +240,7 @@ def apply(run_id:str,tasks:BackgroundTasks):
 def sync_existing_sheets(tasks:BackgroundTasks):
     row=McdoSyncRun(run_id=str(uuid4()),state='applying',payload={'mode':'sheets_to_oracle'},result={})
     with SessionLocal.begin() as session:session.add(row);session.flush();result=public_run(row)
-    tasks.add_task(apply_worker,row.run_id,True)
+    tasks.add_task(apply_worker,result['run_id'],True)
     return envelope(result)
 
 @router.post('/runs/{run_id}/recover',dependencies=[Depends(administrator)])

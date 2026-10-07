@@ -5,6 +5,7 @@ openpyxl
 SQLAlchemy
 alembic
 psycopg2-binary
+psycopg[binary]
 openpyxl
 python-multipart
 langgraph

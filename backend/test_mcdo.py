@@ -81,6 +81,17 @@ class McdoTests(unittest.TestCase):
         self.assertEqual(self.state(),'applying')
         self.assertEqual(tasks.tasks[0].args,('test',True))
 
+    def test_sheets_import_schedules_worker_after_session_commit(self):
+        from fastapi import BackgroundTasks
+        tasks=BackgroundTasks()
+        with patch.object(api,'SessionLocal',sessionmaker(self.engine,expire_on_commit=True)):
+            response=api.sync_existing_sheets(tasks)
+        self.assertEqual(len(tasks.tasks),1)
+        run_id=tasks.tasks[0].args[0]
+        self.assertEqual(tasks.tasks[0].args,(run_id,True))
+        with self.sessions() as session:
+            self.assertEqual(api.find_run(session,run_id).state,'applying')
+
     def test_admin_access_is_closed_by_default(self):
         with patch.dict(os.environ,{'MCDO_ADMIN_TOKEN':''}):
             with self.assertRaises(HTTPException) as err:api.administrator(None)

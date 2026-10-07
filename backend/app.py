@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.exceptions import RequestValidationError
-from sqlalchemy import Integer, extract, func
+from sqlalchemy import Integer, extract, func, text
 from ai_service import query_ai
 from database import SessionLocal, engine, is_sqlite_fallback
 from models import (
@@ -317,7 +317,12 @@ async def shutdown() -> None:
 
 @app.get("/api/health")
 def health() -> dict[str, object]:
-    return envelope({"status": "ok", "schema_version": "0029_uts_prs_station_metrics"}, "ok")
+    if engine.dialect.name == "sqlite":
+        version = "sqlite_fallback"
+    else:
+        with engine.connect() as connection:
+            version = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+    return envelope({"status": "ok", "schema_version": version}, "ok")
 
 
 @app.get("/api/activity")
