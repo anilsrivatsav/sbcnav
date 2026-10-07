@@ -72,6 +72,15 @@ class McdoTests(unittest.TestCase):
         self.assertEqual(fake.calls,[]);self.assertEqual(self.state(),'needs_review')
     def test_incomplete_ireps_scan_is_refused(self):
         with self.assertRaisesRegex(ValueError,'incomplete'):api.evidence_plan({}, {'completed_categories':['Advertising']})
+    def test_interrupted_sheets_import_resumes_in_database_only_mode(self):
+        from fastapi import BackgroundTasks
+        with self.sessions.begin() as session:
+            session.add(McdoSyncRun(run_id='test',state='needs_review',payload={'mode':'sheets_to_oracle'},result={}))
+        tasks=BackgroundTasks()
+        api.apply('test',tasks)
+        self.assertEqual(self.state(),'applying')
+        self.assertEqual(tasks.tasks[0].args,('test',True))
+
     def test_admin_access_is_closed_by_default(self):
         with patch.dict(os.environ,{'MCDO_ADMIN_TOKEN':''}):
             with self.assertRaises(HTTPException) as err:api.administrator(None)

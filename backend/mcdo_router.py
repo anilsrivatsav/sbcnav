@@ -230,9 +230,10 @@ def apply(run_id:str,tasks:BackgroundTasks):
     with SessionLocal.begin() as session:
         row=find_run(session,run_id,True)
         if row.state not in ('preview_ready','needs_review'):raise HTTPException(409,'Only a reviewed preview or interrupted run can be applied.')
-        if 'plan' not in row.payload:raise HTTPException(409,'A validated IREPS preview is required.')
+        only_database=row.payload.get('mode')=='sheets_to_oracle'
+        if not only_database and 'plan' not in row.payload:raise HTTPException(409,'A validated IREPS preview is required.')
         row.state='applying';row.error=None
-    tasks.add_task(apply_worker,run_id)
+    tasks.add_task(apply_worker,run_id,only_database)
     return envelope({'run_id':run_id,'state':'applying'})
 
 @router.post('/sync-sheets',dependencies=[Depends(administrator)])

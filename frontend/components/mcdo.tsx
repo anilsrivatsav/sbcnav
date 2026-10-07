@@ -20,14 +20,14 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
   async function api(path:string,body?:unknown) {
     const response=await fetch(`${window.location.origin}/api/mcdo${path}`,{cache:"no-store",method:body===undefined?"GET":"POST",headers:{"Content-Type":"application/json",...(path==="/session"&&body!==undefined?{Authorization:`Bearer ${keyRef.current}`}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})});
     const json=await response.json();
-    if(response.status===401)setAuthenticated(false);
+    if(response.status===401){setAuthenticated(false);setBusy(false);setScanning(false);setWaiting(false);waitingRef.current=false;}
     if(!response.ok||json.success===false)throw new Error(typeof json.detail==="string"?json.detail:json.message||`Update request failed (${response.status}).`);
     return json.data;
   }
   async function restoreRun(){
     const previous:Run[]=await api("/runs");
-    const pending=previous.find(r=>["applying","needs_review","preview_ready"].includes(r.state));
-    if(pending){setRun(pending);runId.current=pending.run_id;setBusy(pending.state==="applying");}
+    const latest=previous[0];
+    if(latest){setRun(latest);runId.current=latest.run_id;setBusy(latest.state==="applying");setRefreshed(false);if(latest.state==="complete")setRevision(v=>v+1);}
   }
   function bridge(action:string,config?:unknown){window.postMessage({channel:"sbcnav-mcdo-request",nonce:nonce.current,action,config},window.location.origin);}
   async function startCheck(){
@@ -52,7 +52,7 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
         catch(e){setError(e instanceof Error?e.message:"Evidence validation failed.");setBusy(false);}
       }
     };
-    window.addEventListener("message",listener);bridge("ping");void api("/session").then(()=>{setAuthenticated(true);return restoreRun();}).catch(()=>setAuthenticated(false));
+    window.addEventListener("message",listener);bridge("ping");void api("/session").then(async()=>{setAuthenticated(true);try{await restoreRun();}catch(e){setError(e instanceof Error?e.message:"Unable to restore update history.");}}).catch(()=>setAuthenticated(false));
     const heartbeat=setInterval(()=>bridge("ping"),15000);
     return()=>{window.removeEventListener("message",listener);clearInterval(heartbeat);};
     // Callbacks read current run and access values from refs.
@@ -66,10 +66,10 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[year,revision]);
   useEffect(()=>{
-    if(run?.state!=="applying")return;let polling=false;
+    if(run?.state!=="applying"||!authenticated)return;let polling=false;
     const timer=setInterval(async()=>{if(polling)return;polling=true;try{const next=await api(`/runs/${run.run_id}`);setRun(next);if(next.state!=="applying"){setBusy(false);if(next.state==="complete"){setMessage("Update complete. Both sheets and Oracle verified.");setRevision(v=>v+1);onUpdated?.();}if(next.error)setError(next.error);}}catch(e){setError(e instanceof Error?e.message:"Unable to read update status.");}finally{polling=false;}},3000);return()=>clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[run?.run_id,run?.state]);
+  },[run?.run_id,run?.state,authenticated]);
   async function operation(mode:"check"|"apply"|"sync"|"history"|"recover"){
     setBusy(true);setError("");setMessage("");setRefreshed(false);
     try{
@@ -105,9 +105,9 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
     </Panel>
     <Panel title="Update from IREPS" subtitle="One update: IREPS, Google Sheets and Oracle.">
       <p className="mb-4 text-sm text-muted">One click checks IREPS, updates both Sheets and imports verified data into Oracle. Authenticate with your digital token only if IREPS requests it.</p>
-      <Button onClick={()=>operation(run&&run.mode!=="sheets_to_oracle"&&["preview_ready","needs_review"].includes(run.state)?"apply":"check")} disabled={busy||!authenticated||!connected||!summary?.configured}><RefreshCw size={15}/>{busy?"Updating...":run?.state==="needs_review"?"Resume update":"Update now"}</Button>
+      <Button onClick={()=>operation(run&&["preview_ready","needs_review"].includes(run.state)?"apply":"check")} disabled={busy||!authenticated||(!connected&&!(run&&["preview_ready","needs_review"].includes(run.state)))||!summary?.configured}><RefreshCw size={15}/>{busy?"Updating...":run&&["preview_ready","needs_review"].includes(run.state)?"Resume update":"Update now"}</Button>
       {!summary?.configured&&<p role="alert" className="mt-3 text-sm text-amber-700">Oracle updater setup is not ready. IREPS sign-in alone cannot update Sheets.</p>}
-      {!authenticated&&<details open className="mt-4 rounded-lg border border-line p-3"><summary className="cursor-pointer text-sm font-bold">Sign in to updater once</summary><label className="mt-3 grid max-w-md gap-1 text-xs font-bold text-muted">Operator access key<input type="password" autoComplete="off" value={token} onChange={e=>setToken(e.target.value)} className="soft-inset rounded-lg border border-line p-3 text-sm text-ink"/></label><Button onClick={signIn} disabled={!token||busy} className="mt-3">Sign in</Button><p className="mt-2 text-xs text-muted">Session lasts eight hours. The key is not saved in browser storage.</p></details>}
+      {summary?.configured&&!authenticated&&<details open className="mt-4 rounded-lg border border-line p-3"><summary className="cursor-pointer text-sm font-bold">Sign in to updater once</summary><label className="mt-3 grid max-w-md gap-1 text-xs font-bold text-muted">Operator access key<input type="password" autoComplete="off" value={token} onChange={e=>setToken(e.target.value)} className="soft-inset rounded-lg border border-line p-3 text-sm text-ink"/></label><Button onClick={signIn} disabled={!token||busy} className="mt-3">Sign in</Button><p className="mt-2 text-xs text-muted">Session lasts eight hours. The key is not saved in browser storage.</p></details>}
       <details className="mt-4 rounded-lg border border-line p-3"><summary className="cursor-pointer text-sm font-bold">Connection setup and recovery</summary><p className="mt-3 text-sm text-muted">{connected?"Browser connector connected.":"Install the connector once in Chrome or Edge and reload SBC NAV."} <a className="font-bold text-blue underline" href="/mcdo-connector.zip" download>Download connector</a> · <a className="font-bold text-blue underline" href="/mcdo-connector-setup.txt" target="_blank" rel="noreferrer">Instructions</a></p><div className="mt-3 flex flex-wrap gap-2"><Button variant="secondary" onClick={()=>operation("sync")} disabled={busy||!authenticated||!summary?.configured}>Import existing sheets only</Button><Button variant="secondary" onClick={()=>operation("history")} disabled={busy||!authenticated}>Update history</Button>{run?.state==="applying"&&run.updated_at&&Date.now()-new Date(run.updated_at).getTime()>300000?<Button variant="secondary" onClick={()=>operation("recover")} disabled={!authenticated||scanning}>Recover interrupted update</Button>:null}</div></details>
       {(busy||run||irepsReady)&&<ol aria-label="Update progress" aria-live="polite" className="mt-4 space-y-2 text-sm">{[
         ["IREPS authenticated",irepsReady],
@@ -116,11 +116,11 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
         ["Master sheet updated and verified",Boolean(run?.result?.master_verified)],
         ["Oracle Master and earnings imported and verified",run?.state==="complete"],
         ["Web app refreshed",refreshed]
-      ].map(([label,done],i)=><li key={String(label)} className={done?"text-green-700":"text-muted"}>{i+1}. {String(label)} - {done?"Updated":"Pending"}</li>)}</ol>}
+      ].map(([label,done],i)=><li key={String(label)} className={done?"text-green-700":"text-muted"}>{i+1}. {String(label)} - {run?.mode==="sheets_to_oracle"&&i<4?"Skipped (existing sheets import)":done?"Updated":"Pending"}</li>)}</ol>}
       {message&&<p role="status" className="mt-4 text-sm font-bold text-ink">{message}</p>}
       {error&&<p role="alert" className="mt-4 rounded-lg border border-red-300 bg-red-500/10 p-3 text-sm text-red-700">{error}</p>}
       {run&&<div className="mt-4 rounded-lg border border-line p-4"><p className="font-black text-ink">{states[run.state]||run.state}</p><div className="mt-2 flex flex-wrap gap-4 text-sm text-muted"><span>{run.summary?.new_invoices??0} new invoices</span><span>{run.summary?.new_contracts??0} new contracts</span><span>{money(run.summary?.earnings_amount)} earnings</span><span>{run.summary?.failed_payments??0} source payment failures</span></div>{run.warnings?.map((w,i)=><p key={i} className="mt-2 text-xs text-amber-700">{w}</p>)}{run.error&&<p className="mt-2 text-sm text-red-700">{run.error}</p>}{Boolean(run.overdue?.length)&&<div className="mt-3 overflow-auto"><table className="w-full text-left text-xs"><caption className="mb-2 text-left font-bold">IREPS-listed dues beyond seven-day grace</caption><thead><tr>{["Contract","Contractor","Amount due","Due date","Grace ends","Days past grace"].map(h=><th key={h} className="p-2">{h}</th>)}</tr></thead><tbody>{run.overdue?.map((r,i)=><tr key={i}>{r.map((c,j)=><td key={j} className="border-t border-line p-2">{String(c)}</td>)}</tr>)}</tbody></table></div>}</div>}
-      {history.length>0&&<div className="mt-4 space-y-2">{history.map(h=><button key={h.run_id} className="flex w-full justify-between rounded-lg border border-line p-3 text-left text-xs text-ink" disabled={busy} onClick={()=>{setRun(h);setError("");}}><span>{h.created_at?new Date(h.created_at).toLocaleString("en-IN"):h.run_id}</span><span>{states[h.state]||h.state}</span></button>)}</div>}
+      {history.length>0&&<div className="mt-4 space-y-2">{history.map(h=><button key={h.run_id} className="flex w-full justify-between rounded-lg border border-line p-3 text-left text-xs text-ink" disabled={busy} onClick={()=>{setRun(h);runId.current=h.run_id;setRefreshed(false);setError("");if(h.state==="complete")setRevision(v=>v+1);}}><span>{h.created_at?new Date(h.created_at).toLocaleString("en-IN"):h.run_id}</span><span>{states[h.state]||h.state}</span></button>)}</div>}
     </Panel>
     <a className="text-sm font-bold text-blue underline" href="/publicity-earnings">View historical earnings details</a>
   </div>;
