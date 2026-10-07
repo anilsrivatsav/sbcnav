@@ -88,4 +88,15 @@ class McdoTests(unittest.TestCase):
         self.assertEqual(sheet.cell(1,6).value.date(),date(2026,10,6))
         self.assertEqual(sheet.cell(1,18).value.date(),date(2026,10,6))
 
+    def test_operator_session_rejects_tampering_expiry_and_rotated_key(self):
+        from mcdo.auth import issue_session
+        with patch.dict(os.environ,{'MCDO_ADMIN_TOKEN':'x'*40}):
+            token=issue_session()['session_token']
+            api.administrator('Bearer '+token)
+            with self.assertRaises(HTTPException):api.administrator('Bearer '+token[:-1]+'z')
+            with patch('mcdo.auth.time.time',return_value=9999999999):
+                with self.assertRaises(HTTPException):api.administrator('Bearer '+token)
+        with patch.dict(os.environ,{'MCDO_ADMIN_TOKEN':'y'*40}):
+            with self.assertRaises(HTTPException):api.administrator('Bearer '+token)
+
 if __name__=='__main__':unittest.main()

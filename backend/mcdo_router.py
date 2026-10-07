@@ -14,11 +14,19 @@ from mcdo.core import actual, entered, key, day, relevant, invoice, contract_ter
 from mcdo.planner import main_plan
 from mcdo.checkpoint import compatible, pending, seven_day_failures
 from mcdo.sheets_api import Sheets, SOURCES, computed_workbook
-from mcdo.auth import administrator
+from mcdo.auth import administrator, issue_session
 from publicity_earnings import parse_workbook, read_ledger, dashboard, apply_import
 from contract_registry import import_eauction_workbook, list_registry_contracts
 
 router = APIRouter(prefix='/api/mcdo', tags=['MCDO'])
+
+@router.post('/session',dependencies=[Depends(administrator)])
+def start_session():
+    return envelope(issue_session())
+
+@router.get('/session',dependencies=[Depends(administrator)])
+def session_status():
+    return envelope({'authenticated':True})
 CATEGORIES = ['Advertising','Misc-Static-Services','Misc-Mobile-Services','ATM/DBU/Banking e-Lobby','PMBJK','Parking','Hybrid NFR']
 _worker_lock = threading.Lock()
 _invalidate_cache = lambda: None

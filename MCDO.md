@@ -4,10 +4,12 @@ SBC NAV has an MCDO navigation tab and a standalone `/mcdo` page. Vercel hosts
 the UI. The existing Oracle FastAPI/PostgreSQL service owns previews, writes,
 verification, import history and the receipt ledger. Supabase is not used.
 
-The workflow is **IREPS sign-in → Check IREPS → review preview → Update sheets
-& Oracle**. A separate **Sync existing sheets to Oracle** operation imports the
-latest complete sources without collecting IREPS again. Only Earnings Master
-**Main Sheet** and Master **E Auction** are managed.
+The primary workflow is **Update now**. SBC NAV detects IREPS sign-in, waits
+for authentication when needed, checks evidence, updates both Google Sheets,
+verifies their values, imports into Oracle and refreshes the report.
+Report filters and connection/recovery controls are collapsed. An optional
+**Import existing sheets only** action skips IREPS collection. Only Earnings
+Master **Main Sheet** and Master **E Auction** are managed.
 
 IREPS requires the user's physical DSC token and signer. Ordinary web pages
 cannot read another site's authenticated tabs. The browser connector provides
@@ -24,8 +26,7 @@ evidence. Sheet writes and DB imports happen on Oracle.
    container. Enable Google Sheets API and grant that account edit access to
    the two configured source workbooks. Credentials never enter the frontend.
 3. Configure a unique `MCDO_ADMIN_TOKEN` of at least 32 random characters in
-   Oracle's backend environment. Operators enter it in the MCDO tab; it is
-   retained only in page memory. Every preview/evidence/write/history API
+   Oracle's backend environment. Operators enter it once to sign in. The Vercel proxy stores a signed eight-hour session in an HttpOnly, Secure, SameSite cookie; it never stores the operator key. Every preview/evidence/write/history API
    requires this token. Public MCDO reporting does not.
 4. Build the connector zip with `scripts/package-mcdo-connector.ps1` before
    building/deploying the frontend. Preserve `NEXT_PUBLIC_API_URL` pointing to
@@ -35,9 +36,11 @@ evidence. Sheet writes and DB imports happen on Oracle.
    Reload SBC NAV. This grants scripting access only to IREPS; the bridge runs
    only on the configured SBC NAV production origin.
    A signed Web Store release can replace unpacked installation after review.
-6. Connect the DSC token, click Sign in to IREPS, authenticate there, return to
-   MCDO, enter the operator key, and click Check IREPS. Keep SBC NAV open during
-   collection. Review invoice counts, amounts, source warnings and failures.
+6. Connect the DSC token, sign in to the updater once, and click Update now.
+   Authenticate on IREPS if requested. Keep SBC NAV open during collection.
+   The connector detects sign-in and continues automatically. Validated changes
+   are applied automatically; incomplete or conflicting evidence stops the
+   update. Numbered results turn Updated only after readback verifies each stage.
 
 ## Integrity and recovery
 

@@ -55,7 +55,7 @@ class Sheets:
         if required > capacity:
             requests.append({'appendDimension': {'sheetId': sid, 'dimension': 'ROWS', 'length': required-capacity}})
         for r, c, rows in patches:
-            requests.append({'updateCells': {'start': {'sheetId': sid, 'rowIndex': r-1, 'columnIndex': c-1}, 'rows': [{'values': row} for row in rows], 'fields': 'userEnteredValue'}})
+            requests.append({'updateCells': {'start': {'sheetId': sid, 'rowIndex': r-1, 'columnIndex': c-1}, 'rows': [{'values': [{'userEnteredValue':cell['userEnteredValue']} if cell.get('userEnteredValue') else {} for cell in row]} for row in rows], 'fields': 'userEnteredValue'}})
         # Copy formatting only; original formulas, filters and validation survive API writes.
         from openpyxl.utils.cell import range_boundaries
         for owner, exemplar, destination in formats:
@@ -65,6 +65,13 @@ class Sheets:
                 c1,r1,c2,r2 = range_boundaries(a1)
                 return {'sheetId':sid,'startRowIndex':r1-1,'endRowIndex':r2,'startColumnIndex':c1-1,'endColumnIndex':c2}
             requests.append({'copyPaste': {'source':rect(exemplar),'destination':rect(destination),'pasteType':'PASTE_FORMAT'}})
+        date_columns={3} if source=='earnings' else {6,13,14,*range(18,37)}
+        for r,c,rows in patches:
+            for i,row in enumerate(rows):
+                for j,cell in enumerate(row):
+                    value=cell.get('userEnteredValue',{}).get('numberValue')
+                    if c+j in date_columns and isinstance(value,(int,float)) and 30000<value<80000:
+                        requests.append({'repeatCell':{'range':{'sheetId':sid,'startRowIndex':r+i-1,'endRowIndex':r+i,'startColumnIndex':c+j-1,'endColumnIndex':c+j},'cell':{'userEnteredFormat':{'numberFormat':{'type':'DATE','pattern':'dd/mm/yyyy'}}},'fields':'userEnteredFormat.numberFormat'}})
         if status is not None:
             meta = self.request('GET', source, params={'fields':'sheets.properties'})
             existing = next((s['properties'] for s in meta['sheets'] if s['properties']['title']=='IREPS Status Sync'), None)

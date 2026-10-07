@@ -185,8 +185,12 @@ async function collect(tab,config,notify) {
 chrome.runtime.onMessage.addListener((message,sender,reply)=>{
   const origin=sender.url&&new URL(sender.url).origin;
   if(origin!=='https://sbcnav-38t2.vercel.app')return;
-  if(message.action==='ping') {reply({ready:true,version:'1.0.0',running});return;}
+  if(message.action==='ping') {reply({ready:true,version:'1.0.1',running});return;}
   if(message.action==='open') {irepsTab(true).then(()=>reply({opened:true}),e=>reply({error:e.message}));return true;}
+  if(message.action==='session') {
+    if(running){reply({authenticated:true});return;}
+    irepsTab().then(tab=>read(tab,()=>({authenticated:! /session has expired|Login with Digital Signature|Sign In/i.test(document.body.innerText) && [...document.querySelectorAll('a,button')].some(e=>e.getClientRects().length&&/^(Contracts|Payments|Logout|Log Out)$/.test((e.innerText||'').trim()))}))).then(reply,()=>reply({authenticated:false}));return true;
+  }
   if(message.action!=='collect')return;
   if(running) {reply({error:'An IREPS check is already running in this browser.'});return;}
   running=true;reply({started:true});

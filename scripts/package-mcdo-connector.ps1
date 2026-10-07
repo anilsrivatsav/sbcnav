@@ -3,7 +3,7 @@ $taskRepoRoot = Split-Path $PSScriptRoot -Parent
 $taskConnectorRoot = Join-Path $taskRepoRoot 'browser-connector'
 $taskPublicRoot = Join-Path $taskRepoRoot 'frontend\public'
 New-Item -ItemType Directory -Force -Path $taskPublicRoot | Out-Null
-Compress-Archive -Path (Join-Path $taskConnectorRoot '*') -DestinationPath (Join-Path $taskPublicRoot 'mcdo-connector.zip') -Force
+Compress-Archive -Path @((Join-Path $taskConnectorRoot 'manifest.json'), (Join-Path $taskConnectorRoot 'worker.js'), (Join-Path $taskConnectorRoot 'bridge.js')) -DestinationPath (Join-Path $taskPublicRoot 'mcdo-connector.zip') -Force
 @'
 SBC NAV MCDO browser connector
 
@@ -11,9 +11,10 @@ SBC NAV MCDO browser connector
 2. Chrome: open chrome://extensions. Edge: open edge://extensions.
 3. Enable Developer mode, click Load unpacked, select the extracted folder.
 4. Reload https://sbcnav-38t2.vercel.app/?view=mcdo.
-5. Click Sign in to IREPS. Authenticate with your USB DSC token there.
-6. Return to MCDO, enter the operator key, click Check IREPS.
-7. Review the preview, then click Update sheets & Oracle.
+5. Sign in to the updater once using your operator access key.
+6. Click Update now. Authenticate on IREPS with your USB DSC token if requested.
+7. Click Update now. IREPS authentication is detected automatically;
+   validated changes flow through both sheets and Oracle without more clicks.
 
 Keep SBC NAV open while checking. Your DSC signer and token driver remain
 required by IREPS. The Windows IREPS Updater is not used by this workflow.
