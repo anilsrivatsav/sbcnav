@@ -97,7 +97,10 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
         if(stage===1){setWaiting(false);waitingRef.current=false;setBusy(false);setMessage("Authentication check paused. Play step 1 to continue.");}
         else if(stage===2)bridge("pause",{run_id:runId.current});
         else if(stage===6){refreshAbort.current?.abort();setRefreshing(false);setBusy(false);setMessage("Refresh paused. Play step 6 to retry.");}
-        else if(run){setRun(await api(`/runs/${run.run_id}/pause`,{}));setMessage("Pausing after the current write and verification. Completed work is saved.");}
+        else if(run){
+          try{setRun(await api(`/runs/${run.run_id}/pause`,{}));setMessage("Pausing after the current write and verification. Completed work is saved.");}
+          catch(e){const latest=await api(`/runs/${run.run_id}`);if(!["complete","paused"].includes(latest.state))throw e;setRun(latest);setBusy(false);setMessage(latest.state==="complete"?"The step completed and verified before the pause request. Play step 6 to refresh.":"Update is already paused. Progress is saved.");}
+        }
         return;
       }
       autoThrough.current=stage;
