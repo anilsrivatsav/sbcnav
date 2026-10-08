@@ -16,7 +16,7 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
   const [token,setToken]=useState(""),[authenticated,setAuthenticated]=useState(false),[connected,setConnected]=useState(false),[run,setRun]=useState<Run|null>(null),[history,setHistory]=useState<Run[]>([]);
   const [busy,setBusy]=useState(false),[scanning,setScanning]=useState(false),[waiting,setWaiting]=useState(false),[irepsReady,setIrepsReady]=useState(false),[refreshed,setRefreshed]=useState(false);
   const [message,setMessage]=useState(""),[error,setError]=useState(""),[revision,setRevision]=useState(0);
-  const [connectorVersion,setConnectorVersion]=useState("");
+  const [supportsPause,setSupportsPause]=useState(false);
   const [scanPaused,setScanPaused]=useState(false),[controlBusy,setControlBusy]=useState(false),[refreshing,setRefreshing]=useState(false);
   const refreshAbort=useRef<AbortController|null>(null);
   const autoThrough=useRef(6);
@@ -47,7 +47,7 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
     const listener=async(event:MessageEvent)=>{
       if(event.source!==window||event.origin!==window.location.origin||event.data?.channel!=="sbcnav-mcdo-response"||event.data.nonce!==nonce.current)return;
       const response=event.data;
-      if(response.ready){setConnected(true);setConnectorVersion(response.version||"");if(response.scan_run_id===runId.current&&response.running){setScanning(true);setBusy(true);setScanPaused(Boolean(response.scan_paused));if(attachedScan.current!==runId.current){attachedScan.current=runId.current;autoThrough.current=2;bridge("pause",{run_id:runId.current});}}}
+      if(response.ready){setConnected(true);setSupportsPause(Boolean(response.supports_pause||response.version==="1.0.4"));if(response.scan_run_id===runId.current&&response.running){setScanning(true);setBusy(true);setScanPaused(Boolean(response.scan_paused));if(attachedScan.current!==runId.current){attachedScan.current=runId.current;autoThrough.current=2;bridge("pause",{run_id:runId.current});}}}
       if(response.paused){setScanPaused(true);setMessage("IREPS scan paused. Play step 2 to continue.");}
       if(response.pause_requested){setMessage("Pausing after the current IREPS operation...");}
       if(response.resumed){setScanPaused(false);setBusy(true);setMessage("IREPS scan resumed...");}
@@ -135,11 +135,11 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
         return <li key={step.label} className="flex flex-wrap items-center gap-3 rounded-lg border border-line p-3">
           <span aria-hidden="true" className={`h-3 w-3 shrink-0 rounded-full ${done?"bg-green-600":step.active?"bg-amber-500 animate-pulse":"bg-slate-300"}`}/>
           <div className="min-w-0 flex-1"><p className={done?"font-bold text-green-700":"font-bold text-ink"}>{i+1}. {step.label}</p><p className="mt-1 text-xs text-muted">{skipped?"Skipped · existing sheets import":step.done?"Updated and verified":step.active?(run?.pause_requested?"Pausing after verification...":"Running"):paused?"Paused · progress saved":step.enabled?"Ready":"Waiting for previous step"}</p></div>
-          <Button variant="secondary" size="sm" aria-label={`${step.active?"Pause":"Play"} step ${i+1}: ${step.label}`} disabled={controlBusy||!authenticated||!summary?.configured||(i>=2&&!summary.stage_controls)||(i===1&&step.active&&connectorVersion!=="1.0.4")||skipped||step.done||(!step.active&&!step.enabled)||Boolean(step.active&&run?.pause_requested)} onClick={()=>stageControl(i+1,step.active)}>{step.done?<Check size={14}/>:step.active?<Pause size={14}/>:<Play size={14}/>} {step.done?"Complete":step.active?"Pause":"Play"}</Button>
+          <Button variant="secondary" size="sm" aria-label={`${step.active?"Pause":"Play"} step ${i+1}: ${step.label}`} disabled={controlBusy||!authenticated||!summary?.configured||(i>=2&&!summary.stage_controls)||(i===1&&step.active&&!supportsPause)||skipped||step.done||(!step.active&&!step.enabled)||Boolean(step.active&&run?.pause_requested)} onClick={()=>stageControl(i+1,step.active)}>{step.done?<Check size={14}/>:step.active?<Pause size={14}/>:<Play size={14}/>} {step.done?"Complete":step.active?"Pause":"Play"}</Button>
         </li>;
       })}</ol>
       {!summary?.stage_controls&&<p className="mt-2 text-xs text-amber-700">Individual sheet and Oracle controls become available after the Oracle backend update.</p>}
-      {connected&&connectorVersion!=="1.0.4"&&<p className="mt-2 text-xs text-amber-700">Reload the updated connector (1.0.4) to enable IREPS pause and resume.</p>}
+      {connected&&!supportsPause&&<p className="mt-2 text-xs text-amber-700">Reload the updated connector (1.0.5) to enable IREPS pause and resume.</p>}
       <p className="mt-2 text-xs text-muted">Update now runs all steps. Play runs one step; pause stops after the current operation finishes safely. Green means the result has been verified.</p>
       {message&&<p role="status" className="mt-4 text-sm font-bold text-ink">{message}</p>}
       {error&&<p role="alert" className="mt-4 rounded-lg border border-red-300 bg-red-500/10 p-3 text-sm text-red-700">{error}</p>}

@@ -2,6 +2,7 @@ const HOME='https://www.ireps.gov.in/epsn/home/showHome.do';
 const CATEGORIES=['Advertising','Misc-Static-Services','Misc-Mobile-Services','ATM/DBU/Banking e-Lobby','PMBJK','Parking','Hybrid NFR'];
 let running=false;
 let scan=null;
+let leaseTab=null;
 async function scanCheckpoint() {
   if(!scan?.pauseRequested)return;
   scan.notify({paused:true});
@@ -21,9 +22,10 @@ function day(v) {
 function relevant(v) {const s=key(v);return s.startsWith('PARKING')?s.includes('RADIOTAXI'):['ADVERTISING','MISC-STATIC','MISC-MOBILE','ATM','PMBJK','HYBRIDNFR'].some(p=>s.startsWith(p));}
 async function irepsTab(open=false) {
   const tabs=await chrome.tabs.query({url:'https://www.ireps.gov.in/*'});
-  if(tabs.length) {if(open)await chrome.tabs.update(tabs[0].id,{active:true});return tabs[0].id;}
+  const selected=tabs.find(t=>t.id===leaseTab)||tabs.find(t=>new URL(t.url).pathname===new URL(HOME).pathname);
+  if(selected) {leaseTab=selected.id;if(open)await chrome.tabs.update(selected.id,{active:true});return selected.id;}
   if(!open)throw new Error('Open IREPS and complete digital-token sign-in first.');
-  return (await chrome.tabs.create({url:HOME,active:true})).id;
+  leaseTab=(await chrome.tabs.create({url:HOME,active:true})).id;return leaseTab;
 }
 async function read(tab, func, args=[]) {
   await scanCheckpoint();
@@ -214,7 +216,7 @@ async function collect(tab,config,notify) {
 chrome.runtime.onMessage.addListener((message,sender,reply)=>{
   const origin=sender.url&&new URL(sender.url).origin;
   if(origin!=='https://sbcnav-38t2.vercel.app')return;
-  if(message.action==='ping') {reply({ready:true,version:'1.0.4',running,scan_run_id:scan?.runId,scan_paused:Boolean(scan?.pauseRequested)});return;}
+  if(message.action==='ping') {reply({ready:true,version:'1.0.5',supports_pause:true,running,scan_run_id:scan?.runId,scan_paused:Boolean(scan?.pauseRequested)});return;}
   if(['pause','resume'].includes(message.action)) {
     if(!scan||scan.owner!==sender.tab.id||scan.runId!==message.config?.run_id){reply({error:'No matching IREPS scan in this tab. Start a fresh check.'});return;}
     scan.nonce=message.nonce;
