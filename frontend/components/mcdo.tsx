@@ -76,7 +76,7 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
   },[year,revision]);
   useEffect(()=>{
     if(run?.state!=="applying"||!authenticated)return;let polling=false;
-    const timer=setInterval(async()=>{if(polling)return;polling=true;try{const next=await api(`/runs/${run.run_id}`);setRun(next);if(next.state!=="applying"){setBusy(false);if(next.state==="complete"){setMessage(autoThrough.current===6?"Update complete. Both sheets and Oracle verified.":"Oracle imported and verified. Play step 6 to refresh the app.");setRevision(v=>v+1);onUpdated?.();}if(next.error)setError(next.error);}}catch(e){setError(e instanceof Error?e.message:"Unable to read update status.");}finally{polling=false;}},3000);return()=>clearInterval(timer);
+    const timer=setInterval(async()=>{if(polling)return;polling=true;try{const next=await api(`/runs/${run.run_id}`);setRun(next);if(next.state!=="applying"){setBusy(false);if(next.state==="complete"){setMessage(autoThrough.current===6?"Update complete. Both sheets and Oracle verified.":"Oracle imported and verified. Play step 6 to refresh the app.");setRevision(v=>v+1);if(autoThrough.current===6)onUpdated?.();}if(next.error)setError(next.error);}}catch(e){setError(e instanceof Error?e.message:"Unable to read update status.");}finally{polling=false;}},3000);return()=>clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[run?.run_id,run?.state,authenticated]);
   async function operation(mode:"check"|"apply"|"sync"|"history"|"recover"){
@@ -93,7 +93,7 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
     setError("");setControlBusy(true);
     try{
       if(pauseStep){
-        autoThrough.current=stage;
+        autoThrough.current=stage===6?5:stage;
         if(stage===1){setWaiting(false);waitingRef.current=false;setBusy(false);setMessage("Authentication check paused. Play step 1 to continue.");}
         else if(stage===2)bridge("pause",{run_id:runId.current});
         else if(stage===6){refreshAbort.current?.abort();setRefreshing(false);setBusy(false);setMessage("Refresh paused. Play step 6 to retry.");}

@@ -195,6 +195,10 @@ def apply_worker(run_id,only_database=False):
                 if not locked:raise RuntimeError('Another MCDO update is running; resume after it finishes.')
             with SessionLocal() as session:
                 row=find_run(session,run_id);payload=row.payload;result=dict(row.result)
+            first_stage=5 if only_database or result.get('master_verified') else 4 if result.get('earnings_verified') else 3
+            if stop_at_checkpoint(run_id,first_stage,result):return
+            result['active_stage']=first_stage
+            checkpoint(run_id,'applying',result)
             sheets=Sheets()
             if not only_database:
                 if payload['end']!=today().strftime('%d/%m/%Y'):raise RuntimeError('This IREPS preview is from an earlier day. Start a fresh check.')
