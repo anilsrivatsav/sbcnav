@@ -55,7 +55,7 @@ class McdoTests(unittest.TestCase):
             api.apply_worker('test');self.assertEqual(self.state(),'complete');importer.assert_called_once()
         self.assertEqual(entered(fake.grids['earnings'][1][0]),'new');self.assertEqual(len(fake.grids['earnings']),2)
         earnings=[p for name,p in fake.calls if name=='earnings']
-        self.assertEqual(len(earnings[0]),1);self.assertEqual(earnings[1],[])
+        self.assertEqual(len(earnings[0]),1);self.assertEqual(len(earnings),1)
     def test_no_database_import_when_readback_fails(self):
         fake=FakeSheets(self.run_fixture());fake.fail_once=False
         original=fake.patches
@@ -77,7 +77,7 @@ class McdoTests(unittest.TestCase):
         with self.sessions.begin() as session:
             session.add(McdoSyncRun(run_id='test',state='needs_review',payload={'mode':'sheets_to_oracle'},result={}))
         tasks=BackgroundTasks()
-        api.apply('test',tasks)
+        api.apply('test',tasks,{})
         self.assertEqual(self.state(),'applying')
         self.assertEqual(tasks.tasks[0].args,('test',True))
 
@@ -91,6 +91,36 @@ class McdoTests(unittest.TestCase):
         self.assertEqual(tasks.tasks[0].args,(run_id,True))
         with self.sessions() as session:
             self.assertEqual(api.find_run(session,run_id).state,'applying')
+
+    def test_play_one_stage_stops_before_master_and_resumes(self):
+        from fastapi import BackgroundTasks
+        fake=FakeSheets(self.run_fixture());fake.fail_once=False
+        with self.sessions.begin() as session:api.find_run(session,'test').state='preview_ready'
+        with patch.object(api,'Sheets',return_value=fake),patch.object(api,'import_sources',return_value={'verified':True}) as importer:
+            api.apply('test',BackgroundTasks(),{'through_stage':3});api.apply_worker('test')
+            self.assertEqual(self.state(),'paused');self.assertEqual([n for n,_ in fake.calls],['earnings']);importer.assert_not_called()
+            api.apply('test',BackgroundTasks(),{'through_stage':4});api.apply_worker('test')
+            self.assertEqual(self.state(),'paused');self.assertEqual([n for n,_ in fake.calls],['earnings','master']);importer.assert_not_called()
+            api.apply('test',BackgroundTasks(),{'through_stage':5});api.apply_worker('test')
+            self.assertEqual(self.state(),'complete');importer.assert_called_once()
+
+    def test_pause_during_write_verifies_current_sheet_then_stops(self):
+        fake=FakeSheets(self.run_fixture());fake.fail_once=False
+        original=fake.patches
+        def pause_after_write(name,*args):
+            original(name,*args);api.pause_run('test')
+        with patch.object(api,'Sheets',return_value=fake),patch.object(fake,'patches',side_effect=pause_after_write),patch.object(api,'import_sources') as importer:
+            api.apply_worker('test');importer.assert_not_called()
+        self.assertEqual(self.state(),'paused');self.assertEqual([n for n,_ in fake.calls],['earnings'])
+        with self.sessions() as session:self.assertTrue(api.find_run(session,'test').result['earnings_verified'])
+
+    def test_play_cannot_skip_dependencies(self):
+        from fastapi import BackgroundTasks
+        self.run_fixture()
+        with self.sessions.begin() as session:api.find_run(session,'test').state='preview_ready'
+        for stage in (4,5):
+            with self.assertRaises(HTTPException) as err:api.apply('test',BackgroundTasks(),{'through_stage':stage})
+            self.assertEqual(err.exception.status_code,409)
 
     def test_admin_access_is_closed_by_default(self):
         with patch.dict(os.environ,{'MCDO_ADMIN_TOKEN':''}):

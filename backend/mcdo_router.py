@@ -5,7 +5,7 @@ import threading
 from collections import Counter
 from datetime import date, datetime, timezone
 from uuid import uuid4
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Query, Body
 from sqlalchemy import select, text, func
 from database import SessionLocal, engine
 from models import McdoSyncRun, ContractRegistryContract
@@ -48,7 +48,7 @@ def find_run(session, run_id, lock=False):
     return row
 
 def public_run(row):
-    return {'run_id':row.run_id,'state':row.state,'mode':row.payload.get('mode','ireps'),'created_at':row.created_at,'updated_at':row.updated_at,'summary':row.payload.get('plan',{}).get('summary',{}),'warnings':row.payload.get('warnings',[]),'result':row.result,'error':row.error,'overdue':row.payload.get('overdue',[])}
+    return {'run_id':row.run_id,'state':row.state,'mode':row.payload.get('mode','ireps'),'created_at':row.created_at,'updated_at':row.updated_at,'summary':row.payload.get('plan',{}).get('summary',{}),'warnings':row.payload.get('warnings',[]),'result':row.result,'error':row.error,'overdue':row.payload.get('overdue',[]),'evidence_verified':'plan' in row.payload,'pause_requested':row.payload.get('pause_requested',False)}
 
 def bridge_config(row):
     before=row.payload['before']
@@ -62,7 +62,7 @@ def mcdo(year: str | None=Query(None,pattern=r'^20\d{2}-\d{2}$')):
         rows,source=read_ledger(session)
         counts=session.execute(select(ContractRegistryContract.status,func.count()).where(ContractRegistryContract.source_system=='e_auction').group_by(ContractRegistryContract.status)).all()
     data=dashboard(rows,source,year)
-    return envelope({'earnings':data,'contracts':dict(counts),'deadlines':deadline_lists(list_registry_contracts(),today()),'sources':SOURCES,'configured':bool(os.getenv('MCDO_GOOGLE_CREDENTIALS')) and len(os.getenv('MCDO_ADMIN_TOKEN',''))>=32,'authentication':'IREPS digital-token sign-in in your browser'})
+    return envelope({'stage_controls':True,'earnings':data,'contracts':dict(counts),'deadlines':deadline_lists(list_registry_contracts(),today()),'sources':SOURCES,'configured':bool(os.getenv('MCDO_GOOGLE_CREDENTIALS')) and len(os.getenv('MCDO_ADMIN_TOKEN',''))>=32,'authentication':'IREPS digital-token sign-in in your browser'})
 
 @router.post('/runs',dependencies=[Depends(administrator)])
 def begin_run():
@@ -203,6 +203,11 @@ def apply_worker(run_id,only_database=False):
                 for name in SOURCES:
                     compatible(payload['before'][name]['grid'],current[name]['grid'],payload['plan'][name],SOURCES[name]['columns'])
                 for name in SOURCES:
+                    stage=3 if name=='earnings' else 4
+                    if result.get(name+'_verified'):continue
+                    if stop_at_checkpoint(run_id,stage,result):return
+                    result['active_stage']=stage
+                    checkpoint(run_id,'applying',result)
                     current[name]=sheets.read(name)
                     compatible(payload['before'][name]['grid'],current[name]['grid'],payload['plan'][name],SOURCES[name]['columns'])
                     todo=pending(payload['plan'][name],current[name]['grid'])
@@ -214,26 +219,57 @@ def apply_worker(run_id,only_database=False):
                     if pending([(1,1,payload['plan']['status'])],status['grid']):raise RuntimeError(name+' IREPS status report did not verify.')
                     result[name+'_verified']=True
                     checkpoint(run_id,'applying',result)
+            if stop_at_checkpoint(run_id,5,result):return
+            result['active_stage']=5
+            checkpoint(run_id,'applying',result)
             snapshots={name:sheets.read(name) for name in SOURCES}
             if not only_database:
                 for name in SOURCES:
                     compatible(payload['before'][name]['grid'],snapshots[name]['grid'],payload['plan'][name],SOURCES[name]['columns'])
                     if pending(payload['plan'][name],snapshots[name]['grid']):raise RuntimeError('A sheet changed before DB import; review the saved run.')
             result['database']=import_sources(snapshots)
+            result.pop('active_stage',None)
             checkpoint(run_id,'complete',result)
         except Exception as exc:
             checkpoint(run_id,'needs_review',error=str(exc))
         finally:
             if locked:connection.execute(text('SELECT pg_advisory_unlock(74281031)'))
 
-@router.post('/runs/{run_id}/apply',dependencies=[Depends(administrator)])
-def apply(run_id:str,tasks:BackgroundTasks):
+def stop_at_checkpoint(run_id,stage,result):
     with SessionLocal.begin() as session:
         row=find_run(session,run_id,True)
-        if row.state not in ('preview_ready','needs_review'):raise HTTPException(409,'Only a reviewed preview or interrupted run can be applied.')
+        if row.payload.get('pause_requested') or stage>row.payload.get('through_stage',5):
+            row.state='paused';row.result={**result,'active_stage':None}
+            row.updated_at=datetime.now(timezone.utc)
+            return True
+    return False
+
+
+@router.post('/runs/{run_id}/pause',dependencies=[Depends(administrator)])
+def pause_run(run_id:str):
+    with SessionLocal.begin() as session:
+        row=find_run(session,run_id,True)
+        if row.state!='applying':raise HTTPException(409,'Only an active sheet or Oracle step can be paused.')
+        row.payload={**row.payload,'pause_requested':True}
+        return envelope(public_run(row))
+
+
+@router.post('/runs/{run_id}/apply',dependencies=[Depends(administrator)])
+def apply(run_id:str,tasks:BackgroundTasks,control:dict=Body(default={})):
+    with SessionLocal.begin() as session:
+        row=find_run(session,run_id,True)
+        if row.state not in ('preview_ready','needs_review','paused'):raise HTTPException(409,'Only a verified preview, paused or interrupted run can be applied.')
         only_database=row.payload.get('mode')=='sheets_to_oracle'
         if not only_database and 'plan' not in row.payload:raise HTTPException(409,'A validated IREPS preview is required.')
+        stage=control.get('through_stage',5)
+        if type(stage) is not int or stage not in (3,4,5):raise HTTPException(422,'Choose step 3, 4 or 5.')
+        if only_database and stage!=5:raise HTTPException(409,'Existing sheets import starts at Oracle step 5.')
+        if 'through_stage' in control and not only_database:
+            if stage>=4 and not row.result.get('earnings_verified'):raise HTTPException(409,'Complete earnings step 3 first.')
+            if stage==5 and not row.result.get('master_verified'):raise HTTPException(409,'Complete Master step 4 first.')
+        row.payload={**row.payload,'through_stage':stage,'pause_requested':False}
         row.state='applying';row.error=None
+        row.updated_at=datetime.now(timezone.utc)
     tasks.add_task(apply_worker,run_id,only_database)
     return envelope({'run_id':run_id,'state':'applying'})
 

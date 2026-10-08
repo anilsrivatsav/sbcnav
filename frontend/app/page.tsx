@@ -38,6 +38,7 @@ import { BottomSheet, DataTable } from "../components/ui";
 import { Station360 } from "../components/station-360";
 import { StationQuickView } from "../components/station-quick-view";
 import { PublicityEarnings } from "../components/publicity-earnings";
+import { McdoEarningsReport } from "../components/mcdo-earnings-report";
 import { Mcdo } from "../components/mcdo";
 import { StationMetricsMaster } from "../components/station-metrics-master";
 import { ReportTemplatesPanel } from "../components/reports/report-templates-panel";
@@ -2905,7 +2906,7 @@ export default function Page() {
           {view === "contracts" ? (
             <div className="space-y-4">
               <Tabs
-                tabs={[{ value: "catering", label: "Catering", icon: Wallet }, { value: "publicity", label: loading && !stats ? "Publicity (…)" : `Publicity (${publicityContracts.length})`, icon: Megaphone }]}
+                tabs={[{ value: "catering", label: "Catering", icon: Wallet }, { value: "publicity", label: loading && !stats ? "Publicity (…)" : `Publicity (${publicityContracts.length})`, icon: Megaphone }, { value: "receipts", label: "Earnings", icon: TrendingUp }]}
                 value={contractFamily}
                 onChange={(value) => {
                   setContractFamily(value);
@@ -2927,9 +2928,8 @@ export default function Page() {
                   }
                 }}
               />
-              {contractFamily === "publicity" ? (
+              {contractFamily === "receipts" ? <div className="space-y-4"><McdoEarningsReport /><PublicityEarnings /></div> : contractFamily === "publicity" ? (
                 <>
-                  <PublicityEarnings />
                   <div className="soft-surface grid gap-3 rounded-xl border border-line p-3 md:grid-cols-4 md:items-end">
                     <label className="grid gap-1 text-xs font-black text-muted"><span className="text-[11px] uppercase tracking-[0.14em]">Status</span><select value={publicityStatus} onChange={(event) => setPublicityStatus(event.target.value)} className="soft-inset h-10 rounded-lg border border-line px-3 text-sm font-bold text-ink outline-none focus:border-accent">{["all", "running", "completed", "cancelled"].map((status) => <option key={status} value={status}>{status === "all" ? `All contracts (${publicityContracts.length})` : `${pretty(status)} (${publicityContracts.filter((row) => normalizeText(row.status) === status).length})`}</option>)}</select></label>
                     <label className="grid gap-1 text-xs font-black text-muted"><span className="text-[11px] uppercase tracking-[0.14em]">Policy</span><select value={publicityPolicy} onChange={(event) => setPublicityPolicy(event.target.value)} className="soft-inset h-10 rounded-lg border border-line px-3 text-sm font-bold text-ink outline-none focus:border-accent"><option value="all">All policies</option>{publicityPolicyOptions.map((policy) => <option key={policy} value={policy}>{policy}</option>)}</select></label>

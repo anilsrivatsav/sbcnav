@@ -4,7 +4,7 @@ const assert=require('node:assert/strict');
 const test=require('node:test');
 function worker(pages,controls=[]) {
   let page=0,stamp=1;
-  const context={URL,AbortSignal,Uint8Array,Set,Map,console,setTimeout,clearTimeout,chrome:{runtime:{onMessage:{addListener(){}}},tabs:{async get(){return {url:'https://www.ireps.gov.in/epsn/home/showHome.do'};}},scripting:{async executeScript({func,args}){return [{result:await func(...args)}];}}}};
+  const context={URL,AbortSignal,Uint8Array,Set,Map,console,setTimeout,clearTimeout,setInterval,clearInterval,chrome:{runtime:{onMessage:{addListener(){}}},tabs:{async get(){return {url:'https://www.ireps.gov.in/epsn/home/showHome.do'};}},scripting:{async executeScript({func,args}){return [{result:await func(...args)}];}}}};
   context.performance={get timeOrigin(){return stamp;}};
   const cell=t=>({innerText:t});
   for(const control of controls){control.getAttribute??=()=>null;control.querySelectorAll??=()=>[];}
@@ -15,9 +15,18 @@ function worker(pages,controls=[]) {
     return [];
   }};
   vm.createContext(context);vm.runInContext(fs.readFileSync(__dirname+'/worker.js','utf8'),context);
-  return vm.runInContext('({allRows,relevant,day,pdf,click})',context);
+  return vm.runInContext('({allRows,relevant,day,pdf,click,scanCheckpoint,setScan(value){scan=value;}})',context);
 }
 const contract=n=>['SBC-'+n,'01/01/2026','Firm','Advertising','SBC','01/01/2026','31/12/2026','Running',''];
+
+test('paused scan blocks at checkpoint until explicitly resumed',async()=>{
+  const w=worker([{total:0,rows:[]}]);const notices=[];
+  const scan={pauseRequested:true,notify:data=>notices.push(data),resume:null};w.setScan(scan);
+  let continued=false;const waiting=w.scanCheckpoint().then(()=>{continued=true;});
+  await new Promise(resolve=>setTimeout(resolve,10));
+  assert.equal(continued,false);assert.equal(notices[0].paused,true);
+  scan.pauseRequested=false;scan.resume();await waiting;assert.equal(continued,true);
+});
 test('reads every contract page',async()=>{
   const w=worker([{total:12,rows:Array.from({length:10},(_,n)=>contract(n))},{total:12,rows:[contract(10),contract(11)]}]);
   assert.equal((await w.allRows(1,'contracts',[])).length,12);

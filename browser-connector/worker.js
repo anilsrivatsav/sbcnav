@@ -1,6 +1,16 @@
 const HOME='https://www.ireps.gov.in/epsn/home/showHome.do';
 const CATEGORIES=['Advertising','Misc-Static-Services','Misc-Mobile-Services','ATM/DBU/Banking e-Lobby','PMBJK','Parking','Hybrid NFR'];
 let running=false;
+let scan=null;
+async function scanCheckpoint() {
+  if(!scan?.pauseRequested)return;
+  scan.notify({paused:true});
+  // A Chrome API heartbeat keeps the paused service worker alive without
+  // reading or navigating IREPS. Evidence remains in memory until resumed.
+  const keepAlive=setInterval(()=>chrome.runtime.getPlatformInfo(),20000);
+  try{await new Promise(resolve=>{scan.resume=resolve;});}
+  finally{clearInterval(keepAlive);}
+}
 const key=v=>String(v||'').replace(/\s+/g,'').toUpperCase();
 function day(v) {
   if(typeof v==='number') return Math.round(v);
@@ -16,6 +26,7 @@ async function irepsTab(open=false) {
   return (await chrome.tabs.create({url:HOME,active:true})).id;
 }
 async function read(tab, func, args=[]) {
+  await scanCheckpoint();
   const target=await chrome.tabs.get(tab);
   if(new URL(target.url).origin!=='https://www.ireps.gov.in')throw new Error('IREPS navigated outside its approved origin.');
   const result=await chrome.scripting.executeScript({target:{tabId:tab},world:'MAIN',func,args});
@@ -203,7 +214,14 @@ async function collect(tab,config,notify) {
 chrome.runtime.onMessage.addListener((message,sender,reply)=>{
   const origin=sender.url&&new URL(sender.url).origin;
   if(origin!=='https://sbcnav-38t2.vercel.app')return;
-  if(message.action==='ping') {reply({ready:true,version:'1.0.3',running});return;}
+  if(message.action==='ping') {reply({ready:true,version:'1.0.4',running,scan_run_id:scan?.runId,scan_paused:Boolean(scan?.pauseRequested)});return;}
+  if(['pause','resume'].includes(message.action)) {
+    if(!scan||scan.owner!==sender.tab.id||scan.runId!==message.config?.run_id){reply({error:'No matching IREPS scan in this tab. Start a fresh check.'});return;}
+    scan.nonce=message.nonce;
+    scan.pauseRequested=message.action==='pause';
+    if(!scan.pauseRequested){const resume=scan.resume;scan.resume=null;resume?.();}
+    reply({pause_requested:scan.pauseRequested,resumed:!scan.pauseRequested});return;
+  }
   if(message.action==='open') {irepsTab(true).then(()=>reply({opened:true}),e=>reply({error:e.message}));return true;}
   if(message.action==='session') {
     if(running){reply({authenticated:true});return;}
@@ -212,6 +230,8 @@ chrome.runtime.onMessage.addListener((message,sender,reply)=>{
   if(message.action!=='collect')return;
   if(running) {reply({error:'An IREPS check is already running in this browser.'});return;}
   running=true;reply({started:true});
-  const notify=progress=>chrome.tabs.sendMessage(sender.tab.id,{channel:'sbcnav-mcdo-response',nonce:message.nonce,progress}).catch(()=>{});
-  irepsTab().then(tab=>collect(tab,message.config,notify)).then(evidence=>chrome.tabs.sendMessage(sender.tab.id,{channel:'sbcnav-mcdo-response',nonce:message.nonce,evidence})).catch(error=>chrome.tabs.sendMessage(sender.tab.id,{channel:'sbcnav-mcdo-response',nonce:message.nonce,error:error.message})).finally(()=>{running=false;});
+  scan={owner:sender.tab.id,runId:message.config.run_id,nonce:message.nonce,pauseRequested:false,resume:null};
+  scan.notify=data=>chrome.tabs.sendMessage(scan.owner,{channel:'sbcnav-mcdo-response',nonce:scan.nonce,...data}).catch(()=>{});
+  const notify=progress=>scan.notify({progress});
+  irepsTab().then(tab=>collect(tab,message.config,notify)).then(async evidence=>{await scanCheckpoint();await scan.notify({evidence});}).catch(error=>scan.notify({error:error.message})).finally(()=>{running=false;scan=null;});
 });
