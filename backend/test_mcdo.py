@@ -122,6 +122,19 @@ class McdoTests(unittest.TestCase):
             with self.assertRaises(HTTPException) as err:api.apply('test',BackgroundTasks(),{'through_stage':stage})
             self.assertEqual(err.exception.status_code,409)
 
+    def test_pause_while_reading_sources_stops_before_database_import(self):
+        from fastapi import BackgroundTasks
+        with self.sessions.begin() as session:
+            session.add(McdoSyncRun(run_id='test',state='applying',payload={'mode':'sheets_to_oracle'},result={}))
+        fake=FakeSheets({name:[] for name in api.SOURCES});original=fake.read
+        def pause_during_read(*args):
+            api.pause_run('test');return original(*args)
+        with patch.object(api,'Sheets',return_value=fake),patch.object(fake,'read',side_effect=pause_during_read),patch.object(api,'import_sources') as importer:
+            api.apply_worker('test',True);self.assertEqual(self.state(),'paused');importer.assert_not_called()
+        with patch.object(api,'Sheets',return_value=fake),patch.object(api,'import_sources',return_value={'verified':True}) as importer:
+            api.apply('test',BackgroundTasks(),{'through_stage':5});api.apply_worker('test',True)
+            self.assertEqual(self.state(),'complete');importer.assert_called_once()
+
     def test_admin_access_is_closed_by_default(self):
         with patch.dict(os.environ,{'MCDO_ADMIN_TOKEN':''}):
             with self.assertRaises(HTTPException) as err:api.administrator(None)

@@ -231,6 +231,7 @@ def apply_worker(run_id,only_database=False):
                 for name in SOURCES:
                     compatible(payload['before'][name]['grid'],snapshots[name]['grid'],payload['plan'][name],SOURCES[name]['columns'])
                     if pending(payload['plan'][name],snapshots[name]['grid']):raise RuntimeError('A sheet changed before DB import; review the saved run.')
+            if stop_at_checkpoint(run_id,5,result):return
             result['database']=import_sources(snapshots)
             result.pop('active_stage',None)
             checkpoint(run_id,'complete',result)
