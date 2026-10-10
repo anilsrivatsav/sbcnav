@@ -65,7 +65,7 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
       if(response.operator_authenticated){setAuthenticated(true);authenticatedRef.current=true;operatorResolve.current?.(true);}
       if(response.operator_login_failed||response.operator_setup_required){operatorResolve.current?.(false);}
       if(response.ready){setPaired(Boolean(response.operator_paired));pairedRef.current=Boolean(response.operator_paired);if(response.operator_paired&&!authenticatedRef.current&&!operatorResolve.current){void connectOperator().then(async ok=>{if(ok){try{await restoreRun();setMessage("This computer is connected. Choose Update earnings and contracts.");}catch(e){setError(e instanceof Error?e.message:"Unable to restore progress.");}}else setError("Computer setup needs attention. See Connection setup below.");});}setConnected(true);setSupportsPause(Boolean(response.supports_pause||response.version==="1.0.4"));if(response.scan_run_id===runId.current&&response.running){setScanning(true);setBusy(true);setScanPaused(Boolean(response.scan_paused));if(attachedScan.current!==runId.current){attachedScan.current=runId.current;autoThrough.current=2;bridge("pause",{run_id:runId.current});}}}
-      if(response.paused){setScanPaused(true);setMessage("IREPS scan paused. Play step 2 to continue.");}
+      if(response.paused){setScanPaused(true);setMessage("Update paused. Choose Continue saved update.");}
       if(response.pause_requested){setMessage("Pausing after the current IREPS operation...");}
       if(response.resumed){setScanPaused(false);setBusy(true);setMessage("IREPS scan resumed...");}
       if(response.opened)setMessage("Complete token sign-in on IREPS. This update continues automatically.");
