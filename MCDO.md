@@ -11,6 +11,24 @@ Report filters and connection/recovery controls are collapsed. An optional
 **Import existing sheets only** action skips IREPS collection. Only Earnings
 Master **Main Sheet** and Master **E Auction** are managed.
 
+The main page now has **Update earnings and contracts**, **Continue saved
+update**, and one safe **Pause after current operation** control. Numbered
+progress is read-only by default. Individual controls and manual administrator
+sign-in are under Connection setup and other options, with descriptions of
+what the alternate actions do.
+
+Connector 1.0.6 can reconnect an authorized computer automatically, including
+after an eight-hour web session expires. Prepare its private folder with
+`scripts/pair-mcdo-connector.py --key-file <existing-private-operator-key>
+--destination <private-folder-outside-this-repository>` and load that folder
+once in Chrome/Edge. The pairing file stays on the computer; never commit,
+publish, email or share it. The public ZIP contains an empty pairing file.
+The extension sends the existing operator key only to the fixed SBC NAV
+HTTPS session endpoint; it never returns the key to page JavaScript. Backend
+authentication remains required. Only the credential-bearing session endpoint
+accepts the extension's cross-origin login; all write endpoints retain the
+same-origin and verified-session guards.
+
 IREPS requires the user's physical DSC token and signer. Ordinary web pages
 cannot read another site's authenticated tabs. The browser connector provides
 that connection without a Windows updater. Sign in directly on IREPS; the

@@ -3,7 +3,7 @@ $taskRepoRoot = Split-Path $PSScriptRoot -Parent
 $taskConnectorRoot = Join-Path $taskRepoRoot 'browser-connector'
 $taskPublicRoot = Join-Path $taskRepoRoot 'frontend\public'
 New-Item -ItemType Directory -Force -Path $taskPublicRoot | Out-Null
-Compress-Archive -Path @((Join-Path $taskConnectorRoot 'manifest.json'), (Join-Path $taskConnectorRoot 'worker.js'), (Join-Path $taskConnectorRoot 'bridge.js')) -DestinationPath (Join-Path $taskPublicRoot 'mcdo-connector.zip') -Force
+Compress-Archive -Path @((Join-Path $taskConnectorRoot 'manifest.json'), (Join-Path $taskConnectorRoot 'worker.js'), (Join-Path $taskConnectorRoot 'bridge.js'), (Join-Path $taskConnectorRoot 'device-access.js')) -DestinationPath (Join-Path $taskPublicRoot 'mcdo-connector.zip') -Force
 @'
 SBC NAV MCDO browser connector
 
@@ -11,15 +11,20 @@ SBC NAV MCDO browser connector
 2. Chrome: open chrome://extensions. Edge: open edge://extensions.
 3. Enable Developer mode, click Load unpacked, select the extracted folder.
 4. Reload https://sbcnav-38t2.vercel.app/?view=mcdo.
-5. Sign in to the updater once using your operator access key.
+5. Use your administrator-prepared connector folder on an authorized computer.
+   It connects automatically; you do not type an operator access key each day.
+   The public download is unpaired. Manual administrator sign-in remains in
+   Advanced setup for another computer.
 6. Click Update now. Authenticate on IREPS with your USB DSC token if requested.
 7. IREPS authentication is detected automatically;
    validated changes flow through both sheets and Oracle without more clicks.
 
 Keep SBC NAV open while checking. Your DSC signer and token driver remain
 required by IREPS. The Windows IREPS Updater is not used by this workflow.
-The connector reads IREPS business records only. It does not receive the
-operator key or read passwords, token PINs, cookies or private keys.
+The paired connector keeps its operator credential in its private local folder,
+and sends it only to SBC NAV's existing operator sign-in endpoint over HTTPS.
+It never sends that credential to the page. Do not share your paired folder.
+It does not read IREPS passwords, token PINs, cookies or private keys.
 Its scripting permission is limited to https://www.ireps.gov.in.
 Sheet and Oracle writes require configured operator access on the backend.
 '@ | Set-Content -Encoding utf8 (Join-Path $taskPublicRoot 'mcdo-connector-setup.txt')

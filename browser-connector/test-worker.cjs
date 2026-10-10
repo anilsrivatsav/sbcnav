@@ -22,6 +22,32 @@ function worker(pages,controls=[],tabs=[]) {
 }
 const contract=n=>['SBC-'+n,'01/01/2026','Firm','Advertising','SBC','01/01/2026','31/12/2026','Running',''];
 
+function deviceWorker(credential,fetcher){
+  let listener;
+  const context={URL,AbortSignal,setTimeout,clearTimeout,setInterval,clearInterval,fetch:fetcher,
+    chrome:{runtime:{onMessage:{addListener(fn){listener=fn;}}}}};
+  vm.createContext(context);
+  context.importScripts=()=>vm.runInContext('operatorKey='+JSON.stringify(credential),context);
+  vm.runInContext(fs.readFileSync(__dirname+'/worker.js','utf8'),context);
+  return {auth:vm.runInContext('operatorAuth',context),listener};
+}
+test('unpaired public connector never authenticates or exposes a key',async()=>{
+  let calls=0;const w=deviceWorker('',async()=>{calls++;});
+  assert.deepEqual(JSON.parse(JSON.stringify(await w.auth())),{operator_setup_required:true});assert.equal(calls,0);
+});
+test('paired credential goes only to sign-in endpoint and never enters the reply',async()=>{
+  const secret='fixture-private-operator-credential';let calls=0;
+  const w=deviceWorker(secret,async(url,options)=>{calls++;assert.equal(url,'https://sbcnav-38t2.vercel.app/api/mcdo/session');assert.equal(options.headers.Authorization,'Bearer '+secret);assert.equal(options.credentials,'include');return {ok:true};});
+  const result=await w.auth();assert.equal(result.operator_authenticated,true);assert.equal(JSON.stringify(result).includes(secret),false);assert.equal(calls,1);
+});
+test('foreign page cannot request operator authentication',()=>{
+  let calls=0;const w=deviceWorker('fixture-secret',async()=>{calls++;});
+  w.listener({action:'operator-auth'},{url:'https://other.example/'},()=>{throw Error('Unexpected reply');});assert.equal(calls,0);
+});
+test('revoked credential cannot produce a successful sign-in reply',async()=>{
+  const w=deviceWorker('fixture-secret',async()=>({ok:false}));await assert.rejects(()=>w.auth(),/could not connect/);
+});
+
 test('paused scan blocks at checkpoint until explicitly resumed',async()=>{
   const w=worker([{total:0,rows:[]}]);const notices=[];
   const scan={pauseRequested:true,notify:data=>notices.push(data),resume:null};w.setScan(scan);

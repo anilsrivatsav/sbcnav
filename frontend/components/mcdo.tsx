@@ -17,16 +17,31 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
   const [busy,setBusy]=useState(false),[scanning,setScanning]=useState(false),[waiting,setWaiting]=useState(false),[irepsReady,setIrepsReady]=useState(false),[refreshed,setRefreshed]=useState(false);
   const [message,setMessage]=useState(""),[error,setError]=useState(""),[revision,setRevision]=useState(0);
   const [supportsPause,setSupportsPause]=useState(false);
+  const [paired,setPaired]=useState(false),[connecting,setConnecting]=useState(false),[advanced,setAdvanced]=useState(false);
+  const pairedRef=useRef(false),authenticatedRef=useRef(false),operatorResolve=useRef<((value:boolean)=>void)|null>(null),operatorPromise=useRef<Promise<boolean>|null>(null);
+  authenticatedRef.current=authenticated;
   const [scanPaused,setScanPaused]=useState(false),[controlBusy,setControlBusy]=useState(false),[refreshing,setRefreshing]=useState(false);
   const refreshAbort=useRef<AbortController|null>(null);
   const autoThrough=useRef(6);
   const attachedScan=useRef(""),scanActive=useRef(false);
   const nonce=useRef(""),runId=useRef(""),waitingRef=useRef(false),launching=useRef(false),keyRef=useRef("");
   waitingRef.current=waiting;keyRef.current=token;scanActive.current=scanning;
+  async function connectOperator(){
+    if(operatorPromise.current)return await operatorPromise.current;
+    setConnecting(true);
+    operatorPromise.current=new Promise<boolean>(resolve=>{
+      const timeout=setTimeout(()=>{operatorResolve.current=null;setConnecting(false);resolve(false);},22000);
+      operatorResolve.current=value=>{clearTimeout(timeout);operatorResolve.current=null;setConnecting(false);resolve(value);};
+      bridge("operator-auth");
+    }).finally(()=>{operatorPromise.current=null;});
+    return await operatorPromise.current;
+  }
   async function api(path:string,body?:unknown) {
-    const response=await fetch(`${window.location.origin}/api/mcdo${path}`,{cache:"no-store",method:body===undefined?"GET":"POST",headers:{"Content-Type":"application/json",...(path==="/session"&&body!==undefined?{Authorization:`Bearer ${keyRef.current}`}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})});
+    const request=()=>fetch(`${window.location.origin}/api/mcdo${path}`,{cache:"no-store",method:body===undefined?"GET":"POST",headers:{"Content-Type":"application/json",...(path==="/session"&&body!==undefined?{Authorization:`Bearer ${keyRef.current}`}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})});
+    let response=await request();
+    if(response.status===401&&pairedRef.current&&path!=="/session"&&await connectOperator())response=await request();
     const json=await response.json();
-    if(response.status===401){setAuthenticated(false);setBusy(false);setScanning(false);setWaiting(false);waitingRef.current=false;}
+    if(response.status===401&&(path!=="/session"||!authenticatedRef.current)){setAuthenticated(false);setBusy(false);setScanning(false);setWaiting(false);waitingRef.current=false;}
     if(!response.ok||json.success===false)throw new Error(typeof json.detail==="string"?json.detail:json.message||`Update request failed (${response.status}).`);
     return json.data;
   }
@@ -41,13 +56,15 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
     catch(e){setError(e instanceof Error?e.message:"Unable to start update.");setBusy(false);}
     finally{launching.current=false;}
   }
-  async function signIn(){setError("");try{await api("/session",{});setAuthenticated(true);setToken("");await restoreRun();setMessage("Updater signed in. Click Update now.");}catch(e){setError(e instanceof Error?e.message:"Sign-in failed.");}}
+  async function signIn(){setError("");try{await api("/session",{});setAuthenticated(true);setToken("");await restoreRun();setMessage("Connected. Choose Update earnings and contracts.");}catch(e){setError(e instanceof Error?e.message:"Sign-in failed.");}}
   useEffect(()=>{
     nonce.current=crypto.randomUUID();
     const listener=async(event:MessageEvent)=>{
       if(event.source!==window||event.origin!==window.location.origin||event.data?.channel!=="sbcnav-mcdo-response"||event.data.nonce!==nonce.current)return;
       const response=event.data;
-      if(response.ready){setConnected(true);setSupportsPause(Boolean(response.supports_pause||response.version==="1.0.4"));if(response.scan_run_id===runId.current&&response.running){setScanning(true);setBusy(true);setScanPaused(Boolean(response.scan_paused));if(attachedScan.current!==runId.current){attachedScan.current=runId.current;autoThrough.current=2;bridge("pause",{run_id:runId.current});}}}
+      if(response.operator_authenticated){setAuthenticated(true);authenticatedRef.current=true;operatorResolve.current?.(true);}
+      if(response.operator_login_failed||response.operator_setup_required){operatorResolve.current?.(false);}
+      if(response.ready){setPaired(Boolean(response.operator_paired));pairedRef.current=Boolean(response.operator_paired);if(response.operator_paired&&!authenticatedRef.current&&!operatorResolve.current){void connectOperator().then(async ok=>{if(ok){try{await restoreRun();setMessage("This computer is connected. Choose Update earnings and contracts.");}catch(e){setError(e instanceof Error?e.message:"Unable to restore progress.");}}else setError("Computer setup needs attention. See Connection setup below.");});}setConnected(true);setSupportsPause(Boolean(response.supports_pause||response.version==="1.0.4"));if(response.scan_run_id===runId.current&&response.running){setScanning(true);setBusy(true);setScanPaused(Boolean(response.scan_paused));if(attachedScan.current!==runId.current){attachedScan.current=runId.current;autoThrough.current=2;bridge("pause",{run_id:runId.current});}}}
       if(response.paused){setScanPaused(true);setMessage("IREPS scan paused. Play step 2 to continue.");}
       if(response.pause_requested){setMessage("Pausing after the current IREPS operation...");}
       if(response.resumed){setScanPaused(false);setBusy(true);setMessage("IREPS scan resumed...");}
@@ -61,9 +78,9 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
         catch(e){setError(e instanceof Error?e.message:"Evidence validation failed.");setBusy(false);}
       }
     };
-    window.addEventListener("message",listener);bridge("ping");void api("/session").then(async()=>{setAuthenticated(true);try{await restoreRun();}catch(e){setError(e instanceof Error?e.message:"Unable to restore update history.");}}).catch(()=>setAuthenticated(false));
+    window.addEventListener("message",listener);bridge("ping");void api("/session").then(async()=>{authenticatedRef.current=true;setAuthenticated(true);try{await restoreRun();}catch(e){setError(e instanceof Error?e.message:"Unable to restore update history.");}}).catch(()=>{if(!authenticatedRef.current)setAuthenticated(false);});
     const heartbeat=setInterval(()=>bridge("ping"),15000);
-    return()=>{if(scanActive.current)bridge("pause",{run_id:runId.current});refreshAbort.current?.abort();window.removeEventListener("message",listener);clearInterval(heartbeat);};
+    return()=>{operatorResolve.current?.(false);if(scanActive.current)bridge("pause",{run_id:runId.current});refreshAbort.current?.abort();window.removeEventListener("message",listener);clearInterval(heartbeat);};
     // Callbacks read current run and access values from refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[]);
@@ -117,20 +134,25 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
   }
   const evidenceVerified=Boolean(run?.evidence_verified);
   const steps=[
-    {label:"IREPS authenticated",done:irepsReady||evidenceVerified,active:waiting,enabled:connected&&!busy},
-    {label:"IREPS records verified",done:evidenceVerified,active:scanning&&!scanPaused,enabled:(irepsReady||scanPaused)&&(!busy||scanPaused)},
+    {label:"IREPS sign-in checked",done:irepsReady||evidenceVerified,active:waiting,enabled:connected&&!busy},
+    {label:"New payments and contract status checked",done:evidenceVerified,active:scanning&&!scanPaused,enabled:(irepsReady||scanPaused)&&(!busy||scanPaused)},
     {label:"Earnings sheet updated and verified",done:Boolean(run?.result?.earnings_verified),active:run?.state==="applying"&&run.result?.active_stage===3,enabled:evidenceVerified&&!busy},
     {label:"Master sheet updated and verified",done:Boolean(run?.result?.master_verified),active:run?.state==="applying"&&run.result?.active_stage===4,enabled:Boolean(run?.result?.earnings_verified)&&!busy},
-    {label:"Oracle Master and earnings imported and verified",done:run?.state==="complete",active:run?.state==="applying"&&run.result?.active_stage===5,enabled:(Boolean(run?.result?.master_verified)||run?.mode==="sheets_to_oracle")&&!busy},
-    {label:"Web app refreshed",done:refreshed,active:refreshing,enabled:run?.state==="complete"&&!busy}
+    {label:"Dashboard records updated and verified",done:run?.state==="complete",active:run?.state==="applying"&&run.result?.active_stage===5,enabled:(Boolean(run?.result?.master_verified)||run?.mode==="sheets_to_oracle")&&!busy},
+    {label:"Latest report ready",done:refreshed,active:refreshing,enabled:run?.state==="complete"&&!busy}
   ];
   return <div className="space-y-4">
-    <Panel title="Update from IREPS" subtitle="One update: IREPS, Google Sheets and Oracle.">
-      <p className="mb-4 text-sm text-muted">One click checks IREPS, updates both Sheets and imports verified data into Oracle. Authenticate with your digital token only if IREPS requests it.</p>
-      <Button onClick={()=>operation(run&&["preview_ready","needs_review","paused"].includes(run.state)?"apply":"check")} disabled={busy||!authenticated||(!connected&&!(run&&["preview_ready","needs_review","paused"].includes(run.state)))||!summary?.configured}><RefreshCw size={15}/>{busy?"Updating...":run&&["preview_ready","needs_review","paused"].includes(run.state)?"Resume update":"Update now"}</Button>
+    <Panel title="Update earnings and contracts" subtitle="One button updates IREPS earnings, both Google Sheets and the dashboard.">
+      <p className="mb-4 text-sm text-muted">Connect your digital token, then choose Update. Dates come from your sheet automatically. If IREPS opens a login screen, sign in there; the update continues on its own.</p>
+      <p className="mb-4 text-xs text-muted">Latest recorded receipt: {summary?.earnings.latest_receipt_date?new Date(summary.earnings.latest_receipt_date).toLocaleDateString("en-IN"):"Read automatically from the earnings register"}. {run?.created_at?`Last saved update: ${new Date(run.created_at).toLocaleString("en-IN")}.`:""}</p>
+      <Button onClick={()=>{if(scanPaused){autoThrough.current=6;setScanPaused(false);bridge("resume",{run_id:runId.current});}else void operation(run&&["preview_ready","needs_review","paused"].includes(run.state)?"apply":"check");}} disabled={(busy&&!scanPaused)||!authenticated||(!connected&&!(run&&["preview_ready","needs_review","paused"].includes(run.state)))||!summary?.configured}><RefreshCw size={15}/>{scanPaused?"Continue saved update":busy?waiting?"Waiting for IREPS sign-in…":"Updating — please keep this page open":run&&["preview_ready","needs_review","paused"].includes(run.state)?"Continue saved update":"Update earnings and contracts"}</Button>
       {summary&&!summary.configured&&<p role="alert" className="mt-3 text-sm text-amber-700">Oracle updater setup is not ready. IREPS sign-in alone cannot update Sheets.</p>}
-      {summary?.configured&&!authenticated&&<details open className="mt-4 rounded-lg border border-line p-3"><summary className="cursor-pointer text-sm font-bold">Sign in to updater once</summary><label className="mt-3 grid max-w-md gap-1 text-xs font-bold text-muted">Operator access key<input type="password" autoComplete="off" value={token} onChange={e=>setToken(e.target.value)} className="soft-inset rounded-lg border border-line p-3 text-sm text-ink"/></label><Button onClick={signIn} disabled={!token||busy} className="mt-3">Sign in</Button><p className="mt-2 text-xs text-muted">Session lasts eight hours. The key is not saved in browser storage.</p></details>}
-      <details className="mt-4 rounded-lg border border-line p-3"><summary className="cursor-pointer text-sm font-bold">Connection setup and recovery</summary><p className="mt-3 text-sm text-muted">{connected?"Browser connector connected.":"Install the connector once in Chrome or Edge and reload SBC NAV."} <a className="font-bold text-blue underline" href="/mcdo-connector.zip" download>Download connector</a> · <a className="font-bold text-blue underline" href="/mcdo-connector-setup.txt" target="_blank" rel="noreferrer">Instructions</a></p><div className="mt-3 flex flex-wrap gap-2"><Button variant="secondary" onClick={()=>operation("sync")} disabled={busy||!authenticated||!summary?.configured}>Import existing sheets only</Button><Button variant="secondary" onClick={()=>operation("history")} disabled={busy||!authenticated}>Update history</Button>{run&&["preview_ready","needs_review","paused"].includes(run.state)&&<Button variant="secondary" onClick={()=>operation("check")} disabled={busy||!authenticated||!connected}>Start fresh check</Button>}{run?.state==="applying"&&run.updated_at&&Date.now()-new Date(run.updated_at).getTime()>300000?<Button variant="secondary" onClick={()=>operation("recover")} disabled={!authenticated||scanning}>Recover interrupted update</Button>:null}</div></details>
+      <p role="status" className="mt-3 text-sm font-bold text-ink">{connecting?"Connecting this computer automatically…":!connected?"Next: connect this browser once using the prepared connector folder.":!authenticated?paired?"Reconnecting this computer…":"Next: use the administrator-prepared connector for automatic sign-in.":busy?waiting?"Next: complete IREPS login in the tab that opened. No more buttons are needed here.":"Working automatically. You may pause safely; verified work is kept.":"Ready. Update reads new payments, checks contract status, updates both sheets and refreshes this dashboard."}</p>
+      {busy&&steps.some(s=>s.active)&&<Button variant="secondary" className="mt-3" onClick={()=>stageControl(steps.findIndex(s=>s.active)+1,true)} disabled={controlBusy||Boolean(run?.pause_requested)||(scanning&&!supportsPause)}>Pause after current operation</Button>}
+      <details className="mt-4 rounded-lg border border-line p-3"><summary className="cursor-pointer text-sm font-bold">Connection setup and other options</summary><p className="mt-3 text-sm text-muted">{connected?"Browser connector connected.":"On this computer, load the prepared SBC NAV connector folder once in Chrome or Edge, then reload this page."} <a className="font-bold text-blue underline" href="/mcdo-connector.zip" download>Download connector</a> · <a className="font-bold text-blue underline" href="/mcdo-connector-setup.txt" target="_blank" rel="noreferrer">Instructions</a></p><div className="mt-3 flex flex-wrap gap-2"><Button variant="secondary" onClick={()=>operation("sync")} disabled={busy||!authenticated||!summary?.configured}>Refresh dashboard from existing sheets</Button><Button variant="secondary" onClick={()=>operation("history")} disabled={busy||!authenticated}>View previous updates</Button>{run&&["preview_ready","needs_review","paused"].includes(run.state)&&<Button variant="secondary" onClick={()=>operation("check")} disabled={busy||!authenticated||!connected}>Start fresh check</Button>}{run?.state==="applying"&&run.updated_at&&Date.now()-new Date(run.updated_at).getTime()>300000?<Button variant="secondary" onClick={()=>operation("recover")} disabled={!authenticated||scanning}>Recover interrupted update</Button>:null}</div><p className="mt-2 text-xs text-muted">Refresh dashboard copies existing sheet records into Oracle; it does not check IREPS. Previous updates shows saved results.</p>
+        <details className="mt-3"><summary className="cursor-pointer text-sm font-bold">Administrator sign-in for another computer</summary><p className="mt-2 text-xs text-muted">Prepared computers connect automatically. Use this only if an administrator gave you a key for a different computer.</p><label className="mt-3 grid max-w-md gap-1 text-xs font-bold text-muted">Operator access key<input type="password" autoComplete="off" value={token} onChange={e=>setToken(e.target.value)} className="soft-inset rounded-lg border border-line p-3 text-sm text-ink"/></label><Button onClick={signIn} disabled={!token||busy} className="mt-3">Connect this session</Button></details>
+        <label className="mt-3 flex items-center gap-2 text-sm text-muted"><input type="checkbox" checked={advanced} onChange={e=>setAdvanced(e.target.checked)}/> Show individual step controls (advanced)</label>
+      </details>
       <ol aria-label="Update progress" aria-live="polite" className="mt-4 space-y-2 text-sm">{steps.map((step,i)=>{
         const skipped=run?.mode==="sheets_to_oracle"&&i<4;
         const done=step.done&&!skipped;
@@ -138,12 +160,12 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
         return <li key={step.label} className="flex flex-wrap items-center gap-3 rounded-lg border border-line p-3">
           <span aria-hidden="true" className={`h-3 w-3 shrink-0 rounded-full ${done?"bg-green-600":step.active?"bg-amber-500 animate-pulse":"bg-slate-300"}`}/>
           <div className="min-w-0 flex-1"><p className={done?"font-bold text-green-700":"font-bold text-ink"}>{i+1}. {step.label}</p><p className="mt-1 text-xs text-muted">{skipped?"Skipped · existing sheets import":step.done?"Updated and verified":step.active?(run?.pause_requested?"Pausing after verification...":"Running"):paused?"Paused · progress saved":step.enabled?"Ready":"Waiting for previous step"}</p></div>
-          <Button variant="secondary" size="sm" aria-label={`${step.active?"Pause":"Play"} step ${i+1}: ${step.label}`} disabled={controlBusy||!authenticated||!summary?.configured||(i>=2&&!summary.stage_controls)||(i===1&&step.active&&!supportsPause)||skipped||step.done||(!step.active&&!step.enabled)||Boolean(step.active&&run?.pause_requested)} onClick={()=>stageControl(i+1,step.active)}>{step.done?<Check size={14}/>:step.active?<Pause size={14}/>:<Play size={14}/>} {step.done?"Complete":step.active?"Pause":"Play"}</Button>
+          {advanced&&<Button variant="secondary" size="sm" aria-label={`${step.active?"Pause":"Play"} step ${i+1}: ${step.label}`} disabled={controlBusy||!authenticated||!summary?.configured||(i>=2&&!summary.stage_controls)||(i===1&&step.active&&!supportsPause)||skipped||step.done||(!step.active&&!step.enabled)||Boolean(step.active&&run?.pause_requested)} onClick={()=>stageControl(i+1,step.active)}>{step.done?<Check size={14}/>:step.active?<Pause size={14}/>:<Play size={14}/>} {step.done?"Complete":step.active?"Pause":"Run this step"}</Button>}
         </li>;
       })}</ol>
       {summary&&!summary.stage_controls&&<p className="mt-2 text-xs text-amber-700">Individual sheet and Oracle controls become available after the Oracle backend update.</p>}
-      {connected&&!supportsPause&&<p className="mt-2 text-xs text-amber-700">Reload the updated connector (1.0.5) to enable IREPS pause and resume.</p>}
-      <p className="mt-2 text-xs text-muted">Update now runs all steps. Play runs one step; pause stops after the current operation finishes safely. Green means the result has been verified.</p>
+      {connected&&!supportsPause&&<p className="mt-2 text-xs text-amber-700">Reload the updated connector (1.0.6) to enable IREPS pause and resume.</p>}
+      <p className="mt-2 text-xs text-muted">All six stages run automatically. Green means verified. Pause keeps completed work; Continue saved update resumes it.</p>
       {message&&<p role="status" className="mt-4 text-sm font-bold text-ink">{message}</p>}
       {error&&<p role="alert" className="mt-4 rounded-lg border border-red-300 bg-red-500/10 p-3 text-sm text-red-700">{error}</p>}
       {run&&<div className="mt-4 rounded-lg border border-line p-4"><p className="font-black text-ink">{states[run.state]||run.state}</p><div className="mt-2 flex flex-wrap gap-4 text-sm text-muted"><span>{run.summary?.new_invoices??0} new invoices</span><span>{run.summary?.new_contracts??0} new contracts</span><span>{money(run.summary?.earnings_amount)} earnings</span><span>{run.summary?.failed_payments??0} source payment failures</span></div>{run.warnings?.map((w,i)=><p key={i} className="mt-2 text-xs text-amber-700">{w}</p>)}{run.error&&<p className="mt-2 text-sm text-red-700">{run.error}</p>}{Boolean(run.overdue?.length)&&<div className="mt-3 overflow-auto"><table className="w-full text-left text-xs"><caption className="mb-2 text-left font-bold">IREPS-listed dues beyond seven-day grace</caption><thead><tr>{["Contract","Contractor","Amount due","Due date","Grace ends","Days past grace"].map(h=><th key={h} className="p-2">{h}</th>)}</tr></thead><tbody>{run.overdue?.map((r,i)=><tr key={i}>{r.map((c,j)=><td key={j} className="border-t border-line p-2">{String(c)}</td>)}</tr>)}</tbody></table></div>}</div>}

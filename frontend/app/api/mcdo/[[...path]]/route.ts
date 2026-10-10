@@ -7,7 +7,10 @@ async function proxy(request:NextRequest,{params}:{params:Promise<{path?:string[
   const parts=(await params).path||[];
   if(parts.some(p=>!/^[-a-zA-Z0-9]+$/.test(p)))return NextResponse.json({detail:"Invalid updater route."},{status:400});
   const path=parts.join("/");
-  if(request.method!=="GET"&&request.headers.get("origin")!==new URL(request.url).origin)return NextResponse.json({detail:"Untrusted updater request."},{status:403});
+  // A paired extension may renew a session using its existing operator key.
+  // Writes still require a same-origin request and the verified HttpOnly session.
+  const deviceLogin=path==="session"&&request.method==="POST"&&request.headers.get("authorization")?.startsWith("Bearer ");
+  if(request.method!=="GET"&&!deviceLogin&&request.headers.get("origin")!==new URL(request.url).origin)return NextResponse.json({detail:"Untrusted updater request."},{status:403});
   if(request.method==="DELETE"&&path==="session"){
     const response=NextResponse.json({success:true,data:{authenticated:false}});response.cookies.set(cookieName,"",{path:"/api/mcdo",maxAge:0});return response;
   }

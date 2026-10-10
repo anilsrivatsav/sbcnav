@@ -1,4 +1,19 @@
 const HOME='https://www.ireps.gov.in/epsn/home/showHome.do';
+// Personalized locally; the published connector has an empty device key.
+let operatorKey='';
+try { importScripts('device-access.js'); } catch {}
+let operatorLogin=null;
+async function operatorAuth() {
+  if(!operatorKey)return {operator_setup_required:true};
+  if(!operatorLogin)operatorLogin=(async()=>{
+    const response=await fetch('https://sbcnav-38t2.vercel.app/api/mcdo/session',{
+      method:'POST',credentials:'include',headers:{'Content-Type':'application/json',Authorization:'Bearer '+operatorKey},
+      body:'{}',signal:AbortSignal.timeout(20000)});
+    if(!response.ok)throw new Error('This computer could not connect to the updater. Check administrator setup.');
+    return {operator_authenticated:true};
+  })().finally(()=>{operatorLogin=null;});
+  return operatorLogin;
+}
 const CATEGORIES=['Advertising','Misc-Static-Services','Misc-Mobile-Services','ATM/DBU/Banking e-Lobby','PMBJK','Parking','Hybrid NFR'];
 let running=false;
 let scan=null;
@@ -216,7 +231,8 @@ async function collect(tab,config,notify) {
 chrome.runtime.onMessage.addListener((message,sender,reply)=>{
   const origin=sender.url&&new URL(sender.url).origin;
   if(origin!=='https://sbcnav-38t2.vercel.app')return;
-  if(message.action==='ping') {reply({ready:true,version:'1.0.5',supports_pause:true,running,scan_run_id:scan?.runId,scan_paused:Boolean(scan?.pauseRequested)});return;}
+  if(message.action==='ping') {reply({ready:true,version:'1.0.6',operator_paired:Boolean(operatorKey),supports_pause:true,running,scan_run_id:scan?.runId,scan_paused:Boolean(scan?.pauseRequested)});return;}
+  if(message.action==='operator-auth') {operatorAuth().then(reply,()=>reply({operator_login_failed:true}));return true;}
   if(['pause','resume'].includes(message.action)) {
     if(!scan||scan.owner!==sender.tab.id||scan.runId!==message.config?.run_id){reply({error:'No matching IREPS scan in this tab. Start a fresh check.'});return;}
     scan.nonce=message.nonce;
