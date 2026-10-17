@@ -34,7 +34,7 @@ class Deskflow:
         self.cancelled=threading.Event();self.process=None
         self.previews={}
         self.userdir=self.store.path.parent
-        self.state={'phase':'ready','message':'Collect pending lots, then review their evidence.','error':None}
+        self.state={'phase':'ready','message':'Ready to update local workbooks.','error':None}
         previous=self.store.evidence('__workspace__','workbook_update')
         if previous:
             report=previous[-1];pending=len(report.get('pending',[]))
@@ -117,6 +117,7 @@ class Deskflow:
                 result.missing=public_text(result.missing)
             events=record['auctions']
             batches[group].append({'lot':lot,'inputs':inputs,'contract':record['contract'],'last':max(events,key=lambda a:a['date']) if events else {},'result':result})
+        if not revisions:raise ValueError('No current pending lots were collected. No workbook was changed.')
         staged=[];saved=[]
         try:
             for group,items in batches.items():
