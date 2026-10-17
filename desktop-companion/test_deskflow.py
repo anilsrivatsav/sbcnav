@@ -39,6 +39,32 @@ class ReviewTests(unittest.TestCase):
     def test_conditions_review_required(self):
         draft=self.draft();draft['inputs']['conditions_reviewed']=False
         self.assertFalse(self.d.save(draft)['result']['ready'])
+    def test_progress_has_no_collected_records(self):
+        self.d.updater=Mock();self.d.updater.snapshot.return_value={'busy':False}
+        self.d.state={'phase':'ready','message':'Ready','error':None}
+        self.assertEqual(set(self.d.progress()),{'phase','message','error','busy','updater_busy'})
+    def test_pending_refresh_preserves_existing_value_and_is_idempotent(self):
+        import shutil
+        from rp.review import WorkbookPreview,cells
+        from rp.rules import Result
+        from rp.excel_io import _sheet_path,_strings,_text,Q
+        import zipfile
+        from lxml import etree as E
+        target=Path(self.temp.name)/'commercial.xlsx';shutil.copy2('D:/ANIL/UK/Prk PnU.xlsx',target)
+        with zipfile.ZipFile(target) as z:
+            ss=_strings(z);root=E.fromstring(z.read(_sheet_path(z,'Table1')))
+            for row in root.find(Q('sheetData')):
+                cs={''.join(filter(str.isalpha,c.get('r'))):c for c in row}
+                if int(row.get('r'))>5 and _text(cs.get('L'),ss) and _text(cs.get('N'),ss) and _text(cs.get('E'),ss):break
+            lot={'lot':_text(cs['L'],ss),'catalogue':_text(cs['N'],ss),'rate_unit':_text(cs.get('G'),ss),'start':'2026-11-01'}
+        before=cells(target,'Table1');address='E'+row.get('r')
+        record={'lot':lot,'inputs':{'family':'Parking / Pay & Use'},'result':Result(False,missing='Verify contract termination date.')}
+        for _ in range(2):
+            p=WorkbookPreview(target,'commercial',[record],allow_existing=True,preserve_pending=True)
+            p.commit();p.close()
+        after=cells(target,'Table1')
+        self.assertEqual(before[address],after[address])
+        self.assertEqual(after['F'+row.get('r')].count('Deskflow update:'),1)
     def test_duplicate_and_future_auctions_rejected(self):
         draft=self.draft();row={'date':'2026-10-01','outcome':'No Bids','source':'fixture'};draft['auctions']=[row,dict(row)]
         with self.assertRaisesRegex(ValueError,'Duplicate'):self.d.save(draft)

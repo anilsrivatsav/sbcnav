@@ -273,6 +273,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self.permitted():
             return self.respond(403, {'error': 'Origin not allowed.'})
+        if self.path == '/deskflow/progress':
+            return self.respond(200, deskflow.progress())
         if self.path == '/deskflow/status':
             return self.respond(200, deskflow.snapshot())
         if self.path != '/status':

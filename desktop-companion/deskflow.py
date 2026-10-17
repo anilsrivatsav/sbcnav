@@ -35,6 +35,10 @@ class Deskflow:
         self.previews={}
         self.userdir=self.store.path.parent
         self.state={'phase':'ready','message':'Collect pending lots, then review their evidence.','error':None}
+        previous=self.store.evidence('__workspace__','workbook_update')
+        if previous:
+            report=previous[-1];pending=len(report.get('pending',[]))
+            self.state.update(phase='needs_evidence' if pending else 'complete',message=f"Last update: {len(report.get('saved',[]))} local workbooks saved. {report.get('calculated',0)} values calculated; {pending} rows need evidence. See workbook notes.")
 
     def result(self,lot,auctions,contract,inputs):
         if not inputs.get('conditions_reviewed'):
@@ -64,6 +68,81 @@ class Deskflow:
                     'families':FAMILIES,'units':UNITS,'states':CONTRACT_STATES,
                     'conditions_by_state':{state:review({'status':state}) for state in CONTRACT_STATES}}
 
+    def progress(self):
+        # The page receives only progress, never the collected commercial records.
+        return {**self.state,'busy':bool(self.thread and self.thread.is_alive()),
+                'updater_busy':self.updater.snapshot()['busy']}
+
+    def update_workbooks(self):
+        try:
+            while self.updater.snapshot()['busy']:
+                self.state.update(phase='waiting',message='Waiting for the earnings updater to finish…',error=None)
+                if self.cancelled.wait(1):raise ValueError('Update stopped.')
+            end=date.today().isoformat()
+            for action in ('collect','history','contracts'):
+                self.work(action,'2023-01-01',end)
+                if self.state.get('error'):return
+            self.write_workbooks()
+        except Exception as exc:
+            self.state.update(phase='error',message='Workbook update stopped. Backups and saved evidence are retained.',error=str(exc)[:1400])
+
+    def write_workbooks(self):
+        from rp.excel_io import _sheet_path,_strings,_text,Q
+        from lxml import etree as E
+        import zipfile
+        self.state.update(phase='writing',message='Calculating supported values and saving the local workbooks…',error=None)
+        selection=WorkbookSelection(self.userdir/'workbooks.json')
+        targets={group:selection.target('D:/ANIL/UK',group) for group in SPECS}
+        identities={}
+        for group,path in targets.items():
+            lotcol,catcol={'commercial':('L','N'),'parcel':('Q','R'),'catering':('N','P')}[group]
+            with zipfile.ZipFile(path) as z:
+                ss=_strings(z);root=E.fromstring(z.read(_sheet_path(z,SPECS[group]['sheet'])))
+                for row in root.find(Q('sheetData')):
+                    cs={re.match('[A-Z]+',c.get('r'))[0]:c for c in row}
+                    identity=(_text(cs.get(lotcol),ss),_text(cs.get(catcol),ss))
+                    if identity[0]:identities.setdefault(identity,set()).add(group)
+        batches={g:[] for g in SPECS};ready=0;pending=[];revisions={}
+        for key,lot in self.store.current_lots():
+            record=self.detail(key);revisions[key]=record['revision'];inputs=dict(record['inputs'])
+            family=inputs.get('family') or ('Parcel' if lot.get('category','').startswith('Parcel') else 'Catering / MPS' if any(v in lot.get('category','') for v in ('Catering','Multipurpose')) else 'Food truck' if 'food truck' in lot.get('description','').lower() else 'Parking / Pay & Use')
+            inputs['family']=family
+            matches=identities.get((lot['lot'],lot.get('catalogue','')),set())
+            if len(matches)>1:raise ValueError('The same lot and catalogue appear in multiple workbooks; resolve the duplicate before updating.')
+            group=next(iter(matches)) if matches else family_group(family)
+            result=Result(**record['result'])
+            if result.ready:ready+=1;result.justification=public_text(result.justification)
+            else:
+                pending.append({'lot':lot['lot'],'reason':public_text(result.missing)})
+                result.missing=public_text(result.missing)
+            events=record['auctions']
+            batches[group].append({'lot':lot,'inputs':inputs,'contract':record['contract'],'last':max(events,key=lambda a:a['date']) if events else {},'result':result})
+        staged=[];saved=[]
+        try:
+            for group,items in batches.items():
+                if items:staged.append(WorkbookPreview(targets[group],group,items,allow_existing=True,preserve_pending=True))
+            for key,revision in revisions.items():
+                if self.detail(key)['revision']!=revision:raise ValueError('Evidence changed during calculation; retry the workbook update.')
+            for preview in staged:
+                preview.check_lock()
+                if digest(preview.path)!=preview.original_hash:raise ValueError('A workbook changed during calculation; retry the update.')
+            for preview in staged:
+                backup=preview.commit();saved.append({'workbook':str(preview.path),'backup':backup,'changes':len(preview.changes)})
+                with self.store.connect() as c:self.store.log(c,'excel_saved',saved[-1])
+            report={'saved':saved,'calculated':ready,'pending':pending,'at':datetime.now().isoformat()}
+            self.store.save_evidence('__workspace__','workbook_update',report)
+            message=f'{len(saved)} local workbooks saved with backups. {ready} values calculated.'
+            if pending:message+=f' {len(pending)} rows need evidence; existing values were preserved. Reasons are saved in the workbooks.'
+            self.state.update(phase='needs_evidence' if pending else 'complete',message=message,error=None)
+            return report
+        except Exception as exc:
+            message=str(exc)
+            if saved:message=f'{len(saved)} workbook(s) saved before stopping. '+message
+            self.state.update(phase='error',message='Workbook update stopped.',error=message)
+            raise
+        finally:
+            for preview in staged:preview.close()
+
     def save(self,data):
         with self.lock:
             if self.thread and self.thread.is_alive():raise ValueError('Wait for collection before editing evidence.')
@@ -92,6 +171,13 @@ class Deskflow:
             return self.detail(key)
 
     def command(self,action,data):
+        if action=='update':
+            with self.lock,self.updater.lock:
+                if self.thread and self.thread.is_alive():return self.progress()
+                self.cancelled.clear()
+                self.state.update(phase='starting',message='Starting the local workbook update…',error=None)
+                self.thread=threading.Thread(target=self.update_workbooks,daemon=True);self.thread.start()
+            return self.progress()
         if action in ('excel-preview','excel-save','excel-export'):
             return self.excel(action,data)
         if action=='cancel':
@@ -189,9 +275,11 @@ class Deskflow:
                     for key,lot in self.store.current_lots():
                         for row in rows:
                             if row['lot']==lot['lot']:
+                                existing=self.store.evidence(key,'auction')
+                                changed=not any(all(a.get(field)==row.get(field) for field in ('date','catalogue','lot','outcome','bid_rate','rate_unit')) for a in existing)
                                 self.store.save_evidence(key,'auction',{**row,'captured':True,'previous_lot':row['lot']},row['date']+'|'+row.get('catalogue','')+'|'+row['lot'])
                                 previous=self.store.evidence(key,'inputs')
-                                if previous:self.store.save_evidence(key,'inputs',{**previous[-1],'identity_verified':False})
+                                if previous and changed:self.store.save_evidence(key,'inputs',{**previous[-1],'identity_verified':False})
                 else:
                     self.store.save_evidence('__workspace__','web_contract_candidates',{'rows':[{'raw':r,'fields':candidate_fields(r)} for r in rows]})
                 self.state.update(phase='complete',message=f'{len(rows)} records collected. Review the exact asset, dates and sources before calculating.',error=None)

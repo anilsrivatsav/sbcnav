@@ -30,14 +30,14 @@ def cells(path,sheet):
         return out
 
 class WorkbookPreview:
-    def __init__(self,path,group,records,allow_existing=False):
+    def __init__(self,path,group,records,allow_existing=False,preserve_pending=False):
         self.path=Path(path);self.sheet=SPECS[group]['sheet'];self.temp=TemporaryDirectory(prefix='deskflow-review-')
         try:
             self.original_hash=digest(self.path)
             self.staged=Path(self.temp.name)/self.path.name;shutil.copy2(self.path,self.staged)
             if digest(self.staged)!=self.original_hash:raise ValueError('Workbook changed while preparing the preview. Try again.')
             before=cells(self.staged,self.sheet)
-            append_existing(self.staged,group,records,allow_existing=allow_existing)
+            append_existing(self.staged,group,records,allow_existing=allow_existing,preserve_pending=preserve_pending)
             after=cells(self.staged,self.sheet)
             self.changes=[(address,before.get(address,''),after.get(address,''))for address in sorted(set(before)|set(after),key=lambda a:(int(''.join(filter(str.isdigit,a))),len(''.join(filter(str.isalpha,a))),a))if before.get(address,'')!=after.get(address,'')and not str(after.get(address,'')).startswith('RPAssistant:')]
             self.staged_hash=digest(self.staged)

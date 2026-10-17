@@ -33,7 +33,7 @@ def _text(c,ss):
     if c.get('t')=='inlineStr':return''.join(c.find(Q('is')).itertext())
     v=c.find(Q('v'));return v.text if v is not None else''
 
-def append_existing(path, group, records, allow_existing=False):
+def append_existing(path, group, records, allow_existing=False, preserve_pending=False):
     """Update only app-owned rows; refuse collisions with a user's prior records."""
     path=Path(path)
     from .identifiers import references
@@ -110,11 +110,17 @@ def append_existing(path, group, records, allow_existing=False):
             except ValueError:day=d
             rate=float(calc.rp)if calc.ready else None
             if group=='commercial':
-                fields={'A':day,'B':record['inputs']['family'],'C':lot.get('station',''),'D':lot.get('description',''),'E':rate,'F':calc.justification if calc.ready else'Value pending: '+calc.missing,'G':lot.get('rate_unit',''),'H':record.get('contract',{}).get('lar',''),'I':record.get('last',{}).get('outcome',''),'J':record.get('contract',{}).get('status',''),'K':record['inputs']['family'],'L':lot['lot'],'N':lot.get('catalogue',''),'P':'Proposed value (app)','Q':'Captured and reviewed in DeskFlow; see application audit history','R':float(calc.base)if calc.ready else None,'S':float(calc.multiplier)if calc.ready else None}
+                fields={'A':day,'B':record['inputs']['family'],'C':lot.get('station',''),'D':lot.get('description',''),'E':rate,'F':calc.justification if calc.ready else'Value pending: '+calc.missing,'G':lot.get('rate_unit',''),'H':record.get('contract',{}).get('lar',''),'I':record.get('last',{}).get('outcome',''),'J':record.get('contract',{}).get('status',''),'K':record['inputs']['family'],'L':lot['lot'],'N':lot.get('catalogue',''),'P':'Proposed value (app)','Q':('Calculated from verified evidence' if calc.ready else 'Pending evidence; existing value is not reverified')+'; see Deskflow audit history','R':float(calc.base)if calc.ready else None,'S':float(calc.multiplier)if calc.ready else None}
             elif group=='parcel':fields={'A':day,'C':lot.get('train')or references(lot)['train'],'F':lot['lot'],'G':record.get('contract',{}).get('lar',''),'M':rate,'N':lot.get('trips_days',''),'P':calc.justification if calc.ready else'Value pending: '+calc.missing,'Q':lot['lot'],'R':lot.get('catalogue',''),'S':lot.get('rate_unit',''),'U':'Value pending','V':lot.get('description',''),'W':lot.get('category',''),'Y':float(calc.base)if calc.ready else None,'Z':float(calc.multiplier)if calc.ready else None}
             else:fields={'A':day,'C':lot['lot'],'D':lot.get('station',''),'F':record['inputs']['family'],'J':record['inputs'].get('finance_fee',''),'L':rate,'M':calc.justification if calc.ready else'Value pending: '+calc.missing,'N':lot['lot'],'O':'Value pending','P':lot.get('catalogue',''),'Q':lot.get('rate_unit',''),'R':lot.get('trips_days',''),'U':lot.get('category',''),'V':'DeskFlow proposal; not fixed on IREPS','W':float(calc.base)if calc.ready else None,'X':float(calc.multiplier)if calc.ready else None}
             fields[metadata_col]=marker
-            if rn in reviewed_existing:fields={k:v for k,v in fields.items() if k in (rpcol,notecol,basecol,factorcol,metadata_col)}
+            if rn in reviewed_existing:
+                fields={k:v for k,v in fields.items() if k in (rpcol,notecol,basecol,factorcol,metadata_col)}
+                if preserve_pending and not calc.ready:
+                    # An unresolved refresh must never erase the user's existing value or workings.
+                    oldnote=_text(next((c for c in row if c.get('r')==notecol+str(rn)),None),ss)
+                    original=oldnote.split('\nDeskflow update:')[0]
+                    fields={notecol:original+'\nDeskflow update: '+calc.missing,metadata_col:marker}
             for c in list(row):
                 if re.match('[A-Z]+',c.get('r'))[0]in fields:row.remove(c)
             for col,value in sorted(fields.items(),key=lambda x:(len(x[0]),x[0])):cell(row,col,value,formula if col==rpcol else None,templates.get(rpcol)if col in(basecol,factorcol)else None)
