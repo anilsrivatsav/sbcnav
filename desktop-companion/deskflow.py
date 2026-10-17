@@ -60,6 +60,7 @@ class Deskflow:
             return {**self.state,'busy':bool(self.thread and self.thread.is_alive()),
                     'updater_busy':updater_busy,'records':records,
                     'candidates':candidates[-1]['rows'] if candidates else [],
+                    'collection_warning':('IREPS counts include rows it does not display. '+str(len(candidates[-1]['rows']))+' visible contracts were saved. Verify any unmatched contract in IREPS.' if candidates and candidates[-1].get('warnings') else ''),
                     'families':FAMILIES,'units':UNITS,'states':CONTRACT_STATES,
                     'conditions_by_state':{state:review({'status':state}) for state in CONTRACT_STATES}}
 

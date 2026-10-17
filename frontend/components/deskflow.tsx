@@ -3,7 +3,7 @@ import {useCallback,useEffect,useState} from "react";
 import {Button,Panel} from "./ui";
 type Values=Record<string,any>;
 type RecordItem={key:string;revision:string;lot:Values;auctions:Values[];contract:Values;inputs:Values;result:Values;conditions:string[]};
-type Status={busy:boolean;updater_busy:boolean;message:string;phase:string;error?:string;records:RecordItem[];candidates:{raw:Values;fields:Values}[];families:string[];units:string[];states:string[];conditions_by_state:Record<string,string[]>};
+type Status={busy:boolean;updater_busy:boolean;message:string;phase:string;error?:string;collection_warning?:string;records:RecordItem[];candidates:{raw:Values;fields:Values}[];families:string[];units:string[];states:string[];conditions_by_state:Record<string,string[]>};
 const LOCAL="http://127.0.0.1:48722/deskflow";
 const rupees=(value:string)=>Number(value).toLocaleString("en-IN",{style:"currency",currency:"INR"});
 const fieldClass="mt-1 w-full rounded-lg border border-line bg-surface p-2 text-sm text-ink";
@@ -34,6 +34,7 @@ export function Deskflow(){
       <div className="mt-4 flex flex-wrap gap-3"><Button disabled={disabled||dirty} onClick={()=>command("collect")}>{status?.phase==="login"&&status.busy?"Waiting for IREPS sign-in…":"1. Sign in & collect pending lots"}</Button>{status?.busy&&<Button variant="secondary" disabled={sending} onClick={()=>command("cancel")}>Stop collection</Button>}<Button variant="secondary" disabled={disabled||!status?.records.length||dirty} onClick={()=>command("excel-export")}>Download Excel review</Button></div>
       <p className="mt-3 text-sm font-bold" role="status" aria-live="polite">{status?.updater_busy?"MCDO is updating. Deskflow can collect once it finishes.":reachable?status?.message:"Connecting to this computer…"}</p>
       {(error||status?.error)&&<p role="alert" className="mt-3 rounded-lg border border-red-300 p-3 text-sm text-red-700">{error||status?.error}</p>}
+      {status?.collection_warning&&<p className="mt-3 text-sm text-amber-700">{status.collection_warning}</p>}
       <details className="mt-4 rounded-lg border border-line p-3"><summary className="cursor-pointer text-sm font-bold">Collect previous auctions and contracts</summary><div className="my-3 grid max-w-lg grid-cols-2 gap-3"><Field label="History from" type="date" value={from} onChange={setFrom}/><Field label="History through" type="date" value={to} onChange={setTo}/></div><div className="flex flex-wrap gap-3"><Button variant="secondary" disabled={disabled||!status?.records.length||dirty} onClick={()=>command("history",{from_date:from,to_date:to})}>Read closed auctions</Button><Button variant="secondary" disabled={disabled||dirty} onClick={()=>command("contracts",{from_date:from,to_date:to})}>Read contracts</Button></div><p className="mt-2 text-xs text-muted">History collection matches exact lot numbers. For renamed lots, add the verified earlier evidence in the review. Saved evidence refreshes automatically after collection.</p></details>
     </Panel>
     <div className="grid items-start gap-5 xl:grid-cols-[340px_minmax(0,1fr)]">
