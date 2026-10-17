@@ -1,5 +1,39 @@
 # MCDO source updater
 
+## Current Windows-backed web workflow (17 October 2026)
+
+The MCDO page now controls `desktop-companion/server.py` on the operator's PC.
+It uses the working Python IREPS collector in `desktop-companion/engine`, including
+pagination recovery and PDF retries. It sends original evidence to the existing
+Oracle validation/apply endpoints. Google Sheets API writes preserve filters;
+the old desktop clipboard writer is not used by the web workflow.
+
+Install once with `scripts/install-mcdo-desktop.ps1 -Python <existing-updater-python>
+-KeyFile <private-operator-key-file>`. This creates a desktop shortcut, Windows
+sign-in shortcut and `sbcnav-updater://open` launcher. The private key remains
+under LocalAppData and is never returned to browser JavaScript. No extension is
+needed. Chrome may ask for local network access to reach the desktop connection.
+
+The local server listens only on 127.0.0.1:48721, validates the exact Host and
+production Origin, and requires JSON for commands. It accepts only four fixed
+actions and cannot proxy arbitrary API paths or execute page-supplied code.
+On another PC the helper must be installed and privately configured there.
+
+The primary button is **Check for new payments**. Authentication takes place in
+the same dedicated Chrome profile as the Windows updater. Dates are read afresh
+from Sheets by Oracle. Original rows and invoice PDFs are validated before writes.
+Progress and complete evidence persist locally; server write checkpoints persist
+in Oracle. Closing the web page does not stop the job. Resume checks the server
+before retrying a write. After a PC restart, incomplete collection requires a fresh
+check; complete evidence and partial writes can be resumed. Payment scans use the
+desktop collector's full installment range and filter actual receipt dates; this
+avoids losing late payments on old installment schedules.
+
+Verification: `python -m unittest discover -s desktop-companion -p test_server.py -v`
+and the frontend production build. A real IREPS token sign-in remains necessary to
+verify a new end-to-end collection. The sections below describe the retained legacy
+extension/server implementation; the extension UI is no longer the primary entry.
+
 SBC NAV has an MCDO navigation tab and a standalone `/mcdo` page. Vercel hosts
 the UI. The existing Oracle FastAPI/PostgreSQL service owns previews, writes,
 verification, import history and the receipt ledger. Supabase is not used.

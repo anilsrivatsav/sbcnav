@@ -1,0 +1,12 @@
+{
+  "earnings_id": "1Sprl2AehF_yMaV1HMrbkMfT-0BWq6XDZx8yZlnnqnfw",
+  "earnings_tab": "Main Sheet",
+  "earnings_gid": 400635290,
+  "master_id": "17VH0P5ENgUxYfh42sB6c4GPM21esBSbHAdXtC0fj6SI",
+  "master_tab": "E Auction",
+  "master_gid": 329757725,
+  "status_tab": "IREPS Status Sync",
+  "categories": ["Advertising", "Misc-Static-Services", "Misc-Mobile-Services", "ATM/DBU/Banking e-Lobby", "PMBJK", "Parking", "Hybrid NFR"],
+  "contract_scan_from": "01/01/2020",
+  "browser_channel": "chrome"
+}
