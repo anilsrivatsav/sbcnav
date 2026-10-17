@@ -118,6 +118,8 @@ class Controller:
 
     def command(self, action):
         with self.lock:
+            if 'deskflow' in globals() and deskflow.thread and deskflow.thread.is_alive():
+                raise RuntimeError('Deskflow is collecting IREPS evidence. Wait for it to finish.')
             active = self.thread and self.thread.is_alive()
             if action == 'pause':
                 if not active:
@@ -239,6 +241,8 @@ class Controller:
 
 
 controller = Controller()
+from deskflow import Deskflow
+deskflow = Deskflow(controller, app, sync_playwright, Ireps)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -267,6 +271,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self.permitted():
             return self.respond(403, {'error': 'Origin not allowed.'})
+        if self.path == '/deskflow/status':
+            return self.respond(200, deskflow.snapshot())
         if self.path != '/status':
             return self.respond(404, {'error': 'Not found.'})
         self.respond(200, controller.snapshot())
@@ -274,6 +280,15 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.permitted() or self.headers.get('Content-Type') != 'application/json':
             return self.respond(403, {'error': 'Origin or content type not allowed.'})
+        if self.path.startswith('/deskflow/'):
+            try:
+                length = int(self.headers.get('Content-Length', '0'))
+                if not 0 < length <= 2_000_000: raise ValueError('Invalid request size.')
+                data = json.loads(self.rfile.read(length))
+                if not isinstance(data, dict): raise ValueError('Expected a JSON object.')
+                return self.respond(200, deskflow.command(self.path.rsplit('/',1)[-1], data))
+            except (ValueError, KeyError, TypeError, RuntimeError) as exc:
+                return self.respond(400, {'error': str(exc)})
         if self.path not in ('/start', '/resume', '/pause', '/sync'):
             return self.respond(404, {'error': 'Not found.'})
         try:

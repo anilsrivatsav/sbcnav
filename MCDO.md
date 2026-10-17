@@ -15,8 +15,10 @@ under LocalAppData and is never returned to browser JavaScript. No extension is
 needed. Chrome may ask for local network access to reach the desktop connection.
 
 The local server listens only on 127.0.0.1:48722, validates the exact Host and
-production Origin, and requires JSON for commands. It accepts only four fixed
-actions and cannot proxy arbitrary API paths or execute page-supplied code.
+production Origin, and requires JSON for commands. MCDO accepts four fixed
+actions. The same connection also serves the fixed Deskflow review/collection
+actions described in DESKFLOW.md. It cannot proxy arbitrary API paths or execute
+page-supplied code.
 On another PC the helper must be installed and privately configured there.
 
 The primary button is **Check for new payments**. Authentication takes place in
