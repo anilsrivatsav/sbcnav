@@ -1,7 +1,7 @@
 """Persistent RP review workspace served by the existing desktop connection."""
 import json, os, subprocess, threading, uuid, hashlib, tempfile
 from pathlib import Path
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from dataclasses import asdict
 from rp.store import Store
 from rp.rules import calculate, FAMILIES, UNITS, CONTRACT_STATES
@@ -121,15 +121,31 @@ class Deskflow:
                 self.state.update(phase='collecting',message='Reading IREPS catalogues. Keep the updater Chrome window open.')
                 if action=='contracts':
                     reader.navigate('Contracts')
-                    reader.search('---All---',start=date.fromisoformat(start).strftime('%d/%m/%Y'),end=date.fromisoformat(end).strftime('%d/%m/%Y'))
-                    entries=reader.all_rows('contracts');rows=[]
+                    def window(first,last):
+                        self.state.update(message=f'Reading contracts dated {first} to {last}…')
+                        reader.search('---All---',start=first.strftime('%d/%m/%Y'),end=last.strftime('%d/%m/%Y'))
+                        try:return reader.all_rows('contracts')
+                        except RuntimeError as exc:
+                            if last<=first or not any(text in str(exc) for text in ('repeated a page','pagination stopped','row count mismatch')):raise
+                            middle=first+(last-first)//2
+                            return window(first,middle)+window(middle+timedelta(days=1),last)
+                    first,last=date.fromisoformat(start),date.fromisoformat(end);entries=[]
+                    while first<=last:
+                        until=min(first+timedelta(days=59),last)
+                        entries.extend(window(first,until));first=until+timedelta(days=1)
+                    rows=[];seen=set()
                     for entry in entries:
                         c=entry['cells']
                         if len(c)!=9:raise ValueError('Contract list columns changed. No candidates imported.')
+                        identity=tuple(c[:8])
+                        if identity in seen:continue
+                        seen.add(identity)
                         raw=dict(zip(['Contract No.','Contract Date','Contractor','Category','Asset Id','CP Start','CP End','Status','Actions'],c));raw['source']=page.url
                         fields=candidate_fields(raw)
                         for field in ('start','end'):
-                            if fields.get(field):fields[field]=parse_day(fields[field])
+                            if fields.get(field):
+                                try:fields[field]=parse_day(fields[field])
+                                except ValueError:fields[field]=''
                         rows.append({'raw':raw,'fields':fields})
                     self.store.save_evidence('__workspace__','web_contract_candidates',{'rows':rows,'from_date':start,'to_date':end,'warnings':reader.warnings})
                     self.state.update(phase='complete',message=f'{len(rows)} contract candidates collected. Verify the exact asset before using a candidate.',error=None)

@@ -79,5 +79,29 @@ class ReviewTests(unittest.TestCase):
     def test_web_wording_is_neutral(self):
         from deskflow import public_text
         self.assertEqual(public_text({'message':'RP pending; reserve price','cells':[('E1','RP','RP 100')]}),{'message':'value pending; proposed value','cells':[['E1','value','value 100']]})
+    def test_excel_download_has_live_formula_and_neutral_wording(self):
+        import base64,io,re,openpyxl
+        self.d.save(self.draft())
+        output=self.d.excel('excel-export',{})
+        raw=base64.b64decode(output['content'])
+        book=openpyxl.load_workbook(io.BytesIO(raw),read_only=True,data_only=False)
+        self.assertTrue(book['Review']['F2'].value.startswith('='))
+        self.assertFalse(any(re.search(r'\bRP\b',str(v)) for row in book['Review'].values for v in row if v is not None))
+        book.close();book=openpyxl.load_workbook(io.BytesIO(raw),read_only=True,data_only=True)
+        self.assertEqual(book['Review']['F2'].value,1000);book.close()
+    def test_existing_user_row_changes_only_calculation_cells(self):
+        import shutil,json
+        from rp.review import cells
+        target=Path(self.temp.name)/'commercial.xlsx';shutil.copy2('D:/ANIL/UK/Prk PnU.xlsx',target)
+        before=cells(target,'Table1')
+        row=next(str(n) for n in range(6,1650) if before.get('L'+str(n)) and before.get('N'+str(n)) and before.get('G'+str(n))=='Annual Licensing Fee')
+        self.key=self.d.store.save_lot({'catalogue':before['N'+row],'lot':before['L'+row],'start':'2026-12-01','status':'RP Pending','rate_unit':'Annual Licensing Fee'})
+        (self.d.userdir/'workbooks.json').write_text(json.dumps({'commercial':str(target)}))
+        draft=self.d.save(self.draft());preview=self.d.excel('excel-preview',{'key':self.key,'revision':draft['revision']})
+        self.assertTrue(all(c[0] in {col+row for col in ('E','F','R','S')} for c in preview['changes']))
+        self.d.excel('excel-save',{'preview_id':preview['preview_id']})
+        after=cells(target,'Table1')
+        for address,value in before.items():
+            if address not in {col+row for col in ('E','F','R','S')}:self.assertEqual(after[address],value)
 
 if __name__=='__main__':unittest.main()
