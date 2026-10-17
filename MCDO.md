@@ -14,7 +14,7 @@ sign-in shortcut and `sbcnav-updater://open` launcher. The private key remains
 under LocalAppData and is never returned to browser JavaScript. No extension is
 needed. Chrome may ask for local network access to reach the desktop connection.
 
-The local server listens only on 127.0.0.1:48721, validates the exact Host and
+The local server listens only on 127.0.0.1:48722, validates the exact Host and
 production Origin, and requires JSON for commands. It accepts only four fixed
 actions and cannot proxy arbitrary API paths or execute page-supplied code.
 On another PC the helper must be installed and privately configured there.

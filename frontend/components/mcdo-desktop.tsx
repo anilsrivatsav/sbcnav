@@ -8,7 +8,7 @@ import {McdoDeadlines,type Deadlines} from "./mcdo-deadlines";
 type Run={run_id:string;state:string;mode?:string;summary?:Record<string,number>;result?:Record<string,unknown>;warnings?:string[];overdue?:unknown[][];error?:string};
 type Status={configured:boolean;busy:boolean;phase:string;message:string;error?:string;start?:string;end?:string;run?:Run;logs:string[]};
 type Summary={deadlines?:Deadlines;earnings:{latest_receipt_date:string|null;source:{row_count:number}|null}};
-const LOCAL="http://127.0.0.1:48721";
+const LOCAL="http://127.0.0.1:48722";
 const money=(v:number|undefined)=>v===undefined?"—":v.toLocaleString("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:2});
 const date=(v:string|null|undefined)=>v?new Date(v).toLocaleDateString("en-IN",{timeZone:"Asia/Kolkata"}):"Not yet checked";
 

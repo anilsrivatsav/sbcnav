@@ -7,7 +7,7 @@ import webbrowser
 
 folder = pathlib.Path(__file__).resolve().parent
 try:
-    req = urllib.request.Request('http://127.0.0.1:48721/status', headers={'Origin': 'https://sbcnav-38t2.vercel.app'})
+    req = urllib.request.Request('http://127.0.0.1:48722/status', headers={'Origin': 'https://sbcnav-38t2.vercel.app'})
     with urllib.request.urlopen(req, timeout=2) as response:
         response.read()
 except Exception:

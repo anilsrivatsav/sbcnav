@@ -57,11 +57,20 @@ class ControllerTests(unittest.TestCase):
 
     def test_origin_and_dns_rebinding_protection(self):
         handler = object.__new__(server.Handler)
-        handler.headers = {'Host': '127.0.0.1:48721', 'Origin': server.ORIGIN}
+        handler.headers = {'Host': f'127.0.0.1:{server.PORT}', 'Origin': server.ORIGIN}
         self.assertTrue(handler.permitted())
-        for host, origin in [('evil.test:48721',server.ORIGIN),('127.0.0.1:48721','https://evil.test'),('127.0.0.1:48721',None)]:
+        for host, origin in [(f'evil.test:{server.PORT}',server.ORIGIN),(f'127.0.0.1:{server.PORT}','https://evil.test'),(f'127.0.0.1:{server.PORT}',None)]:
             handler.headers = {'Host': host, 'Origin': origin}
             self.assertFalse(handler.permitted())
+
+    def test_sheet_serial_due_dates_are_normalized_for_existing_invoices(self):
+        from incremental import invoice_needed
+        from datetime import date
+        due = server.collector_due_dates({'SBC-RT-YPR': 46344, 'EMPTY': None})
+        self.assertEqual(due['SBC-RT-YPR'], date(2026, 11, 18))
+        self.assertIsNone(due['EMPTY'])
+        self.assertFalse(invoice_needed('ES26OLD','SBC-RT-YPR','19/08/2026',{'ES26OLD'},due))
+        self.assertTrue(invoice_needed('ES26OLD','SBC-RT-YPR','18/11/2026',{'ES26OLD'},due))
 
 
 if __name__ == '__main__':

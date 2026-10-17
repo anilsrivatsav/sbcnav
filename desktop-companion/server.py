@@ -22,7 +22,7 @@ from core import day, key
 from ireps import Ireps, HOME
 from playwright.sync_api import sync_playwright
 
-PORT = 48721
+PORT = 48722
 ORIGIN = 'https://sbcnav-38t2.vercel.app'
 API = 'https://sbcnav.137-23-58-53.sslip.io/api/mcdo'
 STATE = app.STATE / 'Web companion'
@@ -75,6 +75,12 @@ class EvidenceReader(Ireps):
         return rows
 
 
+def collector_due_dates(values):
+    """Oracle sends Sheet serials; the desktop collector compares Python dates."""
+    return {key(contract): day(value) if value not in (None, '') else None
+            for contract, value in values.items()}
+
+
 class Controller:
     def __init__(self):
         self.lock = threading.RLock()
@@ -99,7 +105,7 @@ class Controller:
     def snapshot(self):
         with self.lock:
             return {**self.state, 'busy': bool(self.thread and self.thread.is_alive()),
-                    'connected': True, 'version': '2.0.0', 'configured': (STATE / 'operator.key').exists()}
+                    'connected': True, 'version': '2.0.1', 'configured': (STATE / 'operator.key').exists()}
 
     def log(self, message):
         message = str(message).split('\nCall log:', 1)[0]
@@ -194,7 +200,7 @@ class Controller:
                     statuses = reader.contracts(categories, '01/01/2020', cfg['end'])
                     failures = reader.failures(categories)
                     records = reader.payments(categories, cfg['start'], cfg['end'],
-                        existing=set(cfg['existing_invoices']), known_due=cfg['known_due'])
+                        existing=set(cfg['existing_invoices']), known_due=collector_due_dates(cfg['known_due']))
                     pdfs = {}
                     folder = STATE / ('Invoices-' + run['run_id'])
                     folder.mkdir(exist_ok=True)
