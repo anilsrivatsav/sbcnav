@@ -7,6 +7,17 @@ from rp.store import Store
 from rp.rules import calculate, FAMILIES, UNITS, CONTRACT_STATES
 from rp.standard_conditions import review, annual_fee
 from rp.contract_fields import candidate_fields
+from rp.rules import Result
+from rp.workbooks import WorkbookSelection, family_group, SPECS
+from rp.review import WorkbookPreview, digest
+import re, base64
+
+def public_text(value):
+    if isinstance(value,str):
+        return re.sub(r'\bRP\b','value',re.sub(r'reserve[- ]price','proposed value',value,flags=re.I),flags=re.I).replace('RPAssistant','Deskflow')
+    if isinstance(value,(list,tuple)):return [public_text(v) for v in value]
+    if isinstance(value,dict):return {k:public_text(v) for k,v in value.items()}
+    return value
 
 def parse_day(value):
     text=str(value or '').strip().split(' ')[0]
@@ -21,6 +32,8 @@ class Deskflow:
         self.store=Store(Path(os.environ.get('LOCALAPPDATA',str(Path.home())))/'RPAssistant'/'rpassistant.sqlite')
         self.lock=threading.RLock();self.thread=None
         self.cancelled=threading.Event();self.process=None
+        self.previews={}
+        self.userdir=self.store.path.parent
         self.state={'phase':'ready','message':'Collect pending lots, then review their evidence.','error':None}
 
     def result(self,lot,auctions,contract,inputs):
@@ -78,6 +91,8 @@ class Deskflow:
             return self.detail(key)
 
     def command(self,action,data):
+        if action in ('excel-preview','excel-save','excel-export'):
+            return self.excel(action,data)
         if action=='cancel':
             self.cancelled.set()
             if self.process and self.process.poll() is None:self.process.kill()
@@ -104,6 +119,21 @@ class Deskflow:
                 reader=self.reader(browser.contexts[0],lambda message:self.state.update(message=message),self.cancelled.is_set)
                 page=reader.page;page.bring_to_front();reader.login()
                 self.state.update(phase='collecting',message='Reading IREPS catalogues. Keep the updater Chrome window open.')
+                if action=='contracts':
+                    reader.navigate('Contracts')
+                    reader.search('---All---',start=date.fromisoformat(start).strftime('%d/%m/%Y'),end=date.fromisoformat(end).strftime('%d/%m/%Y'))
+                    entries=reader.all_rows('contracts');rows=[]
+                    for entry in entries:
+                        c=entry['cells']
+                        if len(c)!=9:raise ValueError('Contract list columns changed. No candidates imported.')
+                        raw=dict(zip(['Contract No.','Contract Date','Contractor','Category','Asset Id','CP Start','CP End','Status','Actions'],c));raw['source']=page.url
+                        fields=candidate_fields(raw)
+                        for field in ('start','end'):
+                            if fields.get(field):fields[field]=parse_day(fields[field])
+                        rows.append({'raw':raw,'fields':fields})
+                    self.store.save_evidence('__workspace__','web_contract_candidates',{'rows':rows,'from_date':start,'to_date':end,'warnings':reader.warnings})
+                    self.state.update(phase='complete',message=f'{len(rows)} contract candidates collected. Verify the exact asset before using a candidate.',error=None)
+                    page.close();return
                 endpoint=json.loads((self.engine.STATE/'browser.json').read_text())['port']
                 runtime=Path.home()/'.cache/codex-runtimes/codex-primary-runtime/dependencies/node'
                 job={'id':uuid.uuid4().hex,'action':{'collect':'scheduled','history':'closed','contracts':'contracts'}[action]}
@@ -151,3 +181,45 @@ class Deskflow:
                 page.close();page=None
         except Exception as exc:
             self.state.update(phase='error',error=str(exc).split('Call log:')[0][:1400],message='Collection stopped. Previously saved evidence is retained.')
+
+    def excel(self,action,data):
+        with self.lock:
+            if self.thread and self.thread.is_alive():raise ValueError('Finish collection before preparing Excel changes.')
+            if action=='excel-save':
+                token=data.get('preview_id');entry=self.previews.get(token)
+                if not entry:raise ValueError('Prepare a fresh workbook preview.')
+                key,revision,preview=entry
+                if self.detail(key)['revision']!=revision:raise ValueError('Evidence changed after preview. Prepare a fresh workbook preview.')
+                backup=preview.commit()
+                with self.store.connect() as c:self.store.log(c,'excel_saved',{'key':key,'workbook':str(preview.path),'backup':backup})
+                preview.close();del self.previews[token]
+                return {'message':'Workbook saved and verified. A backup of the original is retained.','backup':public_text(backup)}
+            record=self.detail(data['key']) if action=='excel-preview' else None
+            if record:
+                if record.get('revision')!=data.get('revision'):raise ValueError('Evidence changed. Reopen the lot before preparing Excel.')
+                group=family_group(record['inputs'].get('family'))
+                target=WorkbookSelection(self.userdir/'workbooks.json').target('D:/ANIL/UK',group)
+                previous=self.store.evidence(record['key'],'auction')
+                result=calculate(record['lot'],previous,record['contract'],record['inputs'])
+                if not record['result'].get('ready'):raise ValueError('Complete the missing evidence and save the calculation before writing this row.')
+                result.justification=public_text(result.justification)
+                item={'lot':record['lot'],'inputs':record['inputs'],'contract':record['contract'],'last':max(previous,key=lambda a:a['date']) if previous else {},'result':result}
+                for old in self.previews.values():old[2].close()
+                self.previews.clear()
+                preview=WorkbookPreview(target,group,[item],allow_existing=True);token=uuid.uuid4().hex
+                self.previews[token]=(record['key'],record['revision'],preview)
+                return {'preview_id':token,'workbook':SPECS[group]['name'],'sheet':preview.sheet,'changes':public_text(preview.changes),'message':'Review these cell changes, then save the workbook. A backup is created automatically.'}
+            rows=[]
+            for key,_ in self.store.current_lots():
+                r=self.detail(key);lot,c,events,inputs=r['lot'],r['contract'],r['auctions'],r['inputs'];result=r['result'];ready=result.get('ready')
+                last=max(events,key=lambda a:a['date']) if events else {};sold=[a for a in events if a['outcome']=='Sold'];s=max(sold,key=lambda a:a['date']) if sold else {}
+                values=[lot.get('start'),inputs.get('family',''),lot['lot'],lot.get('station',''),lot.get('rate_unit',''),float(result['rp']) if ready else None,public_text(result.get('justification') or result.get('missing')),float(result['base']) if ready else None,float(result['multiplier']) if ready else None,'Proposed value ready' if ready else 'Pending evidence',last.get('date',''),last.get('outcome',''),s.get('bid_rate',''),s.get('awardee',''),c.get('status',''),c.get('award_date',''),c.get('start',''),c.get('end',''),c.get('closed',''),lot.get('catalogue',''),public_text(inputs.get('benchmark_source','')+'; '+lot.get('source','')),'2026-10-17']
+                rows.append({'values':values,'formula':result.get('formula','') if ready else '', 'expected':result.get('rp','')})
+            runtime=Path.home()/'.cache/codex-runtimes/codex-primary-runtime/dependencies/node'
+            folder=self.userdir/'Reviews';folder.mkdir(exist_ok=True)
+            output=folder/('Deskflow-value-review-'+datetime.now().strftime('%Y%m%d-%H%M%S')+'.xlsx')
+            with tempfile.TemporaryDirectory() as temp:
+                request=Path(temp)/'export.json';request.write_text(json.dumps({'module_root':str(runtime/'node_modules'),'output':str(output),'rows':rows}),encoding='utf-8')
+                proc=subprocess.run([str(runtime/'bin/node.exe'),str(Path(__file__).parent/'rp/excel_export.mjs'),str(request)],capture_output=True,text=True,timeout=120,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+                if proc.returncode:raise ValueError('The Excel review could not be created: '+proc.stderr[-700:])
+            return {'filename':output.name,'content':base64.b64encode(output.read_bytes()).decode(),'message':'Excel review created. Missing evidence remains visible and uncalculated.'}

@@ -23,6 +23,7 @@ class ReviewTests(unittest.TestCase):
         self.d=object.__new__(Deskflow)
         import threading
         self.d.lock=threading.RLock();self.d.thread=None;self.d.store=Store(Path(self.temp.name)/'test.sqlite')
+        self.d.previews={};self.d.userdir=Path(self.temp.name)
         self.key=self.d.store.save_lot({'catalogue':'C','lot':'L','start':'2026-11-01','status':'RP Pending','rate_unit':'Annual Licensing Fee'})
     def draft(self):
         d=self.d.detail(self.key)
@@ -50,5 +51,33 @@ class ReviewTests(unittest.TestCase):
     def test_cancellation_needs_actual_decision(self):
         draft=self.draft();draft['contract']={'status':'Not signed'}
         self.assertIn('decision',self.d.save(draft)['result']['missing'])
+    def test_round_trip_site_label_is_a_rate_alias(self):
+        from rp.rules import calculate
+        draft=self.draft();draft['lot']['rate_unit']='Per Round Trip ( Two Way )'
+        result=calculate(draft['lot'],[],{},draft['inputs'])
+        self.assertTrue(result.ready);self.assertEqual(result.rp,'1000.00')
+    def test_excel_preview_and_commit_preserve_other_cells(self):
+        import shutil,json
+        from rp.review import cells,digest
+        target=Path(self.temp.name)/'commercial.xlsx';shutil.copy2('D:/ANIL/UK/Prk PnU.xlsx',target)
+        (self.d.userdir/'workbooks.json').write_text(json.dumps({'commercial':str(target)}))
+        draft=self.d.save(self.draft());before=digest(target);old=cells(target,'Table1')
+        preview=self.d.excel('excel-preview',{'key':self.key,'revision':draft['revision']})
+        self.assertEqual(before,digest(target));self.assertTrue(preview['changes'])
+        self.d.excel('excel-save',{'preview_id':preview['preview_id']})
+        after=cells(target,'Table1')
+        for address,value in old.items():self.assertEqual(after[address],value)
+        draft=self.d.detail(self.key);draft['inputs']['initial_rp']='1200';draft=self.d.save(draft)
+        preview=self.d.excel('excel-preview',{'key':self.key,'revision':draft['revision']})
+        self.assertTrue(any(c[0].startswith('R') and c[2]=='1200.0' for c in preview['changes']))
+        self.d.excel('excel-save',{'preview_id':preview['preview_id']})
+        import openpyxl
+        book=openpyxl.load_workbook(target,read_only=True,data_only=True)
+        self.assertEqual(list(book['Table1'].values)[-1][4],1200)
+        book.close()
+        with self.assertRaisesRegex(ValueError,'fresh'):self.d.excel('excel-save',{'preview_id':preview['preview_id']})
+    def test_web_wording_is_neutral(self):
+        from deskflow import public_text
+        self.assertEqual(public_text({'message':'RP pending; reserve price','cells':[('E1','RP','RP 100')]}),{'message':'value pending; proposed value','cells':[['E1','value','value 100']]})
 
 if __name__=='__main__':unittest.main()

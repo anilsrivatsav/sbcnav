@@ -9,6 +9,12 @@ FAMILIES = ['Parking / Pay & Use', 'Parcel', 'Publicity', 'Catering / MPS', 'Foo
 UNITS = ['Annual Licensing Fee', 'Per Trip Licensing Fee', 'Per Round Trip Licensing Fee', 'Full Contract value']
 CONTRACT_STATES = ['No previous contract','Running','Completed','Foreclosed','Not commenced','Not signed','Cancelled (reason unknown)','Unknown']
 
+def canonical_unit(value):
+    text=' '.join(str(value or '').split())
+    if text.casefold() in ('per round trip ( two way )','per round trip (two way)'):
+        return 'Per Round Trip Licensing Fee'
+    return text
+
 def number(value):
     try:
         n = Decimal(str(value).replace(',', '').strip())
@@ -40,6 +46,9 @@ class Result:
 def calculate(lot, auctions, contract, inputs):
     """Excel formula uses H = base, I = factor; {r} is filled at export."""
     try:
+        lot={**lot,'rate_unit':canonical_unit(lot.get('rate_unit'))}
+        auctions=[{**a,'rate_unit':canonical_unit(a.get('rate_unit'))} for a in auctions]
+        if contract:contract={**contract,'rate_unit':canonical_unit(contract.get('rate_unit'))}
         result = _calculate(lot, auctions, contract, inputs)
         if result.ready:
             result.justification += ' RP authority: ' + inputs['benchmark_source'] + '. SCC v2.0 clause 11 concerns existing-contract fees, not this re-auction RP.'

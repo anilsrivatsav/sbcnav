@@ -40,7 +40,6 @@ import { StationQuickView } from "../components/station-quick-view";
 import { PublicityEarnings } from "../components/publicity-earnings";
 import { McdoEarningsReport } from "../components/mcdo-earnings-report";
 import { Mcdo } from "../components/mcdo";
-import { Deskflow } from "../components/deskflow";
 import { StationMetricsMaster } from "../components/station-metrics-master";
 import { ReportTemplatesPanel } from "../components/reports/report-templates-panel";
 import { API_URL, aiQueryUrl, amenityFindingsUrl, cateringSyncUrl, commercialContractDetailUrl, commercialContractStatementUrl, contractRegistryDetailUrl, dataQualityCheckUrl, dataQualityResolveUrl, fetchJson, importCommercialContractsUrl, importPassengerAmenitiesUrl, importPfExtensionUrl, importSanctionedWorksUrl, previewPassengerAmenitiesUrl, previewSanctionedWorksUrl, reportPresetRunUrl, reportPresetsUrl, stationDetailUrl, workExpenditureUrl, workProgressUrl } from "../lib/api";
@@ -778,7 +777,7 @@ export default function Page() {
 
   useEffect(() => {
     const requestedView = new URLSearchParams(window.location.search).get("view");
-    if (["dashboard", "stations", "contracts", "commercial", "units", "earnings", "works", "amenities", "masters", "reports", "ai", "settings", "mcdo", "deskflow"].includes(requestedView)) {
+    if (["dashboard", "stations", "contracts", "commercial", "units", "earnings", "works", "amenities", "masters", "reports", "ai", "settings", "mcdo"].includes(requestedView)) {
       setView(requestedView);
     }
     setViewReady(true);
@@ -1954,7 +1953,6 @@ export default function Page() {
         filters: [],
       };
     }
-    if (view === "deskflow") return {title:"Deskflow",subtitle:"IREPS evidence and reserve-price proposals.",filters:[]};
     if (view === "mcdo") return {title:"MCDO",subtitle:"Monthly commercial report and IREPS source updates.",filters:[]};
     return { title: "Dashboard", subtitle: "KPI cards and high-level trends across the dataset.", filters: [] };
   })();
@@ -2537,7 +2535,6 @@ export default function Page() {
             <NavButton active={view === "amenities"} icon={TrainFront} label="Amenity Infra" hint="Norms, platforms, wheel chairs, trolley paths" onClick={() => setView("amenities")} />
             <NavButton active={view === "works"} icon={Wrench} label="Sanctioned Works" hint="PA sanctioned works and station links" onClick={() => setView("works")} />
             <NavButton active={view === "reports"} icon={FileText} label="Reports" hint="License fee and unit alerts" onClick={() => setView("reports")} />
-            <NavButton active={view === "deskflow"} icon={FileText} label="Deskflow" hint="IREPS evidence and RP working" onClick={() => setView("deskflow")} />
             <NavButton active={view === "mcdo"} icon={RefreshCw} label="MCDO" hint="IREPS, Google Sheets and Oracle updates" onClick={() => setView("mcdo")} />
             <NavButton active={view === "ai"} icon={Bot} label="Ask AI" hint="Talk to any table safely" onClick={() => setView("ai")} />
             <NavButton active={view === "settings"} icon={SettingsIcon} label="Settings" hint="Fetch, sync, import, and database controls" onClick={() => setView("settings")} />
@@ -2584,7 +2581,6 @@ export default function Page() {
             <StationMetricsMaster stations={stations} onActivity={setActivityStatus} />
           ) : null}
 
-          {view === "deskflow" ? <Deskflow /> : null}
           {view === "mcdo" ? <Mcdo onUpdated={loadData} /> : null}
           {view === "settings" ? (
             <div className="space-y-4">

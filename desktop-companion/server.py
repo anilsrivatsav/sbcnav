@@ -241,7 +241,7 @@ class Controller:
 
 
 controller = Controller()
-from deskflow import Deskflow
+from deskflow import Deskflow, public_text
 deskflow = Deskflow(controller, app, sync_playwright, Ireps)
 
 
@@ -253,6 +253,8 @@ class Handler(BaseHTTPRequestHandler):
         return self.headers.get('Host') == f'127.0.0.1:{PORT}' and self.headers.get('Origin') == ORIGIN
 
     def respond(self, status, value):
+        if self.path.startswith('/deskflow/'):
+            value=public_text(value)
         self.send_response(status)
         if self.permitted():
             self.send_header('Access-Control-Allow-Origin', ORIGIN)

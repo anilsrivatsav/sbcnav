@@ -1,6 +1,7 @@
-# Deskflow RP review
+# Deskflow calculations
 
-Open the **Deskflow** navigation tab, `/?view=deskflow`, or `/deskflow`.
+Open `/deskflow` directly. There is no navigation entry, and `?view=deskflow`
+does not open it. Screens and new review exports use proposed-value wording.
 On the configured Windows PC, open SBC NAV Updater and connect the digital token.
 Choose **Sign in & collect pending lots**, then sign in to IREPS if asked.
 The shared desktop connection handles IREPS; no browser extension or operator key
@@ -12,8 +13,14 @@ matches exact lot numbers; renamed assets require sourced earlier evidence in th
 review. A contract candidate is a suggestion and must be verified against the lot.
 Review the benchmark, accepted bid rate, outcome, awardee, dates, rate unit and
 applicable conditions, then **Save evidence & calculate RP**. Missing evidence is
-reported instead of generating a proposal. **Download saved RP review** exports
-all current proposals and missing evidence as an Excel-compatible CSV.
+reported instead of generating a proposal. **Download Excel review** creates
+an `.xlsx` with calculation formulas, inputs, justifications and missing evidence.
+For a ready selected record, **Preview workbook changes** chooses the configured
+commercial, parcel or catering workbook. Review the exact cells, then choose
+**Save these changes to workbook**. A backup is retained. Changed evidence/files,
+Excel locks, ambiguous duplicates and incompatible units prevent a stale save.
+Existing exact lot/catalogue rows are updated only in their calculation cells.
+Original workbook headers, unrelated rows, formulas and native features are preserved.
 
 Evidence and audit entries persist in `%LOCALAPPDATA%/RPAssistant/rpassistant.sqlite`,
 the existing desktop workspace. Reviews use revision checks to prevent overwriting
