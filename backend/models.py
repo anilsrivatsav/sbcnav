@@ -886,6 +886,14 @@ class DeskflowRelay(Base):
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class DeskflowWorkbookArchive(Base):
+    """Opaque, application-encrypted snapshot of the three source workbooks."""
+
+    __tablename__ = 'deskflow_workbook_archive'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ciphertext: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 class MobileDeviceState(Base):
     """Latest cache and sync summary reported by each inspection device."""
 

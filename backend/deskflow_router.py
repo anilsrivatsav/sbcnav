@@ -10,12 +10,13 @@ import time
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query
 from sqlalchemy import select
 
 from database import SessionLocal
 from mcdo.auth import administrator
-from models import DeskflowRelay
+from models import DeskflowRelay, DeskflowWorkbookArchive
+from deskflow_archive import decrypt_archive
 
 router = APIRouter(prefix='/api/deskflow', tags=['Deskflow'])
 _attempt_lock = threading.Lock()
@@ -87,6 +88,40 @@ def software_update():
     with SessionLocal() as session:
         row = session.get(DeskflowRelay, 1)
         return row.software_update if row and row.software_update else {'phase': 'waiting', 'message': 'Waiting for the Windows desktop companion.'}
+
+
+@router.get('/workbook-history', dependencies=[Depends(_browser)])
+def workbook_history(book: str = '', q: str = Query('', max_length=120), page: int = Query(1, ge=1), limit: int = Query(30, ge=1, le=100), view: str = 'records'):
+    if book not in ('', 'parcels', 'catering', 'others') or view not in ('records', 'rows'):
+        raise HTTPException(400, 'Invalid workbook history filter.')
+    with SessionLocal() as session:
+        row = session.get(DeskflowWorkbookArchive, 1)
+        if row is None:
+            return {'available': False, 'books': [], 'items': [], 'total': 0, 'page': page, 'limit': limit}
+        try:
+            archive = decrypt_archive(row.ciphertext)
+        except RuntimeError as exc:
+            raise HTTPException(503, str(exc)) from exc
+    needle = q.strip().lower()
+    books = [{'id': item['id'], 'portfolio': item['portfolio'], 'file': item['file'], 'rows': item['rowCount'], 'cells': item['cellCount']} for item in archive['workbooks']]
+    if view == 'records':
+        candidates = (item for item in archive['auctionRecords'] if not book or item['bookId'] == book)
+        items = [item for item in candidates if not needle or needle in item['search']]
+    else:
+        items = []
+        for workbook in archive['workbooks']:
+            if book and workbook['id'] != book:
+                continue
+            for sheet in workbook['sheets']:
+                for source_row in sheet['rows']:
+                    if not needle or needle in source_row['s']:
+                        items.append({'bookId': workbook['id'], 'file': workbook['file'], 'sheet': sheet['name'], 'row': source_row})
+    offset = (page - 1) * limit
+    return {
+        'available': True, 'books': books, 'items': items[offset:offset + limit],
+        'total': len(items), 'page': page, 'limit': limit, 'view': view,
+        'generatedAt': archive['generatedAt'], 'sourceManifest': archive['sourceManifest'],
+    }
 
 
 @router.post('/{action}', dependencies=[Depends(_browser)])
