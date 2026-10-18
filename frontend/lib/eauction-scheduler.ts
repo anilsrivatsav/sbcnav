@@ -1,5 +1,5 @@
 export type Holiday = { date: string; name: string };
-export type Booking = { id: string; date: string; time: string; category: string; subject: string; status: 'scheduled' | 'cancelled' | 'withdrawn'; noticeDate?: string; scheduleId?: string; catalogueId?: string; source?: boolean; sourceFile?: string; sheetRow?: number; sheetTab?: string; syncedAt?: string };
+export type Booking = { id: string; date: string; time: string; category: string; subject: string; status: 'scheduled' | 'cancelled' | 'withdrawn'; noticeDate?: string; scheduleId?: string; catalogueId?: string; manualScheduleId?: boolean; manualCatalogueId?: boolean; source?: boolean; sourceFile?: string; sheetRow?: number; sheetTab?: string; syncedAt?: string };
 export type Proposal = { earliest: string; date: string; time: string; skipped: { date: string; reason: string }[]; daysAfterNotice: number; category: string; subject: string; noticeDate: string };
 
 export const categories = [
@@ -49,10 +49,10 @@ function idCategory(value: string): string {
   return value;
 }
 
-function scheduleNumber(value?: string): number {
+export function scheduleNumber(value?: string): number {
   return Number(value?.match(/(?:EA|FT)[-\s]*(\d+)/i)?.[1] || 0);
 }
-function catalogueNumber(value?: string): number {
+export function catalogueNumber(value?: string): number {
   return Math.max(0, ...(value?.match(/\d+/g) || []).map(Number).filter(n => n >= 500 && (n < 2000 || n > 2100)));
 }
 
@@ -126,6 +126,27 @@ export function findDate(input: {noticeDate:string; time:string; holidays:Holida
     return {earliest:iso(earliest),date,time:input.time,skipped,daysAfterNotice:15+offset,category:input.category,subject:input.subject,noticeDate:input.noticeDate};
   }
   throw new Error('No free date was found within ten years.');
+}
+
+export function auctionDateError(date: string, noticeDate: string, time: string, holidays: Holiday[], bookings: Booking[]): string | null {
+  const selected = parseISO(date), notice = parseISO(noticeDate);
+  if (!selected || !notice) return 'Enter a valid auction date.';
+  if (date < iso(addDays(notice, 15))) return 'Auction date must be at least 15 days from today.';
+  if ([0, 6].includes(selected.getUTCDay())) return 'Auction date cannot be Saturday or Sunday.';
+  if (holidays.some(item => item.date === date)) return 'Auction date is a listed holiday.';
+  if (bookings.some(item => item.status === 'scheduled' && item.date === date && item.time === time)) return 'This date and time are already booked.';
+  return null;
+}
+
+export function identifierError(scheduleId: string, catalogueId: string, category: string, bookings: Booking[]): string | null {
+  const schedule = scheduleId.trim(), catalogue = catalogueId.trim();
+  if (!schedule || schedule.length > 100 || !scheduleNumber(schedule)) return 'Enter a valid EA Schedule ID with a number.';
+  if (!catalogue || catalogue.length > 100 || !catalogueNumber(catalogue)) return 'Enter a valid Catalogue ID with an auction number.';
+  if (bookings.some(item => item.scheduleId?.trim().toLowerCase() === schedule.toLowerCase()
+    || (idCategory(item.category) === idCategory(category) && scheduleNumber(item.scheduleId) === scheduleNumber(schedule)))) return 'EA Schedule ID is already used for this category.';
+  if (bookings.some(item => item.catalogueId?.trim().toLowerCase() === catalogue.toLowerCase()
+    || catalogueNumber(item.catalogueId) === catalogueNumber(catalogue))) return 'Catalogue auction number is already used.';
+  return null;
 }
 
 export function readCSV(text: string): string[][] {

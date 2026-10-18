@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
-import { Booking, Holiday, Proposal, categories, sourceBookings, findDate, labelDate, labelTime, normalizeDate, normalizeTime, readCSV, csv, nextIdentifiers } from '../../lib/eauction-scheduler';
+import { Booking, Holiday, Proposal, auctionDateError, identifierError, categories, sourceBookings, findDate, labelDate, labelTime, normalizeDate, normalizeTime, readCSV, csv, nextIdentifiers } from '../../lib/eauction-scheduler';
 import './eauction.css';
 
 type Stored = { holidays: Holiday[]; bookings: Booking[]; showSource: boolean };
@@ -16,6 +16,10 @@ export default function AuctionSchedulePage() {
   const [data,setData]=useState<Stored>(initial);
   const [loaded,setLoaded]=useState(false);
   const [category,setCategory]=useState('');
+  const [editAutomatic,setEditAutomatic]=useState(false);
+  const [editedDate,setEditedDate]=useState<string|null>(null);
+  const [editedScheduleId,setEditedScheduleId]=useState<string|null>(null);
+  const [editedCatalogueId,setEditedCatalogueId]=useState<string|null>(null);
   const [currentDate,setCurrentDate]=useState('');
   const [proposal,setProposal]=useState<Proposal|null>(null);
   const [holidayDate,setHolidayDate]=useState('');
@@ -25,7 +29,12 @@ export default function AuctionSchedulePage() {
   const [syncing,setSyncing]=useState<string|null>(null);
   const time=categories.find(item=>item.name===category)?.time||'';
   const bookings=useMemo(()=>[...(data.showSource?sourceBookings:[]),...data.bookings],[data]);
-  const identifiers=useMemo(()=>category&&currentDate?nextIdentifiers(category,bookings,Number(currentDate.slice(0,4))):null,[category,bookings,currentDate]);
+  const auctionDate=editedDate??proposal?.date??'';
+  const identifiers=useMemo(()=>category&&currentDate?nextIdentifiers(category,bookings,Number((auctionDate||currentDate).slice(0,4))):null,[category,bookings,currentDate,auctionDate]);
+  const scheduleId=editedScheduleId??identifiers?.scheduleId??'';
+  const catalogueId=editedCatalogueId??identifiers?.catalogueId??'';
+  const dateError=proposal?auctionDateError(auctionDate,currentDate,time,data.holidays,bookings):null;
+  const idError=proposal?identifierError(scheduleId,catalogueId,category,bookings):null;
   const sortedBookings=[...bookings].sort((a,b)=>a.date.localeCompare(b.date)||a.time.localeCompare(b.time));
   const sortedHolidays=[...data.holidays].sort((a,b)=>a.date.localeCompare(b.date));
 
@@ -37,10 +46,13 @@ export default function AuctionSchedulePage() {
     if(!proposal)return;
     const today=todayISO();
     const current=findDate({noticeDate:today,category:proposal.category,time:proposal.time,subject:'',holidays:data.holidays,bookings});
-    if(current.date!==proposal.date||today!==proposal.noticeDate){setCurrentDate(today);setProposal(current);setMessage('Date updated. Review it before saving.');return;}
-    const {scheduleId,catalogueId}=nextIdentifiers(proposal.category,bookings,Number(today.slice(0,4)));
-    const booking:Booking={id:crypto.randomUUID(),date:proposal.date,time:proposal.time,category:proposal.category,subject:'',status:'scheduled',noticeDate:today,scheduleId,catalogueId};
+    if(today!==proposal.noticeDate||(!editAutomatic&&current.date!==proposal.date)){setCurrentDate(today);setProposal(current);setMessage('Date updated. Review it before saving.');return;}
+    const error=auctionDateError(auctionDate,today,time,data.holidays,bookings)||identifierError(scheduleId,catalogueId,category,bookings);
+    if(error){setMessage(error);return;}
+    const automatic=nextIdentifiers(category,bookings,Number(auctionDate.slice(0,4)));
+    const booking:Booking={id:crypto.randomUUID(),date:auctionDate,time:proposal.time,category:proposal.category,subject:'',status:'scheduled',noticeDate:today,scheduleId,catalogueId,manualScheduleId:editAutomatic&&scheduleId!==automatic.scheduleId,manualCatalogueId:editAutomatic&&catalogueId!==automatic.catalogueId};
     setData(value=>({...value,bookings:[...value.bookings,booking]}));
+    setEditedDate(null);setEditedScheduleId(null);setEditedCatalogueId(null);
     setMessage('Schedule row saved.');
   }
   function changeStatus(booking:Booking,status:Booking['status']){setData(value=>({...value,bookings:value.bookings.map(item=>item.id===booking.id?{...item,status,syncedAt:undefined}:item)}));setMessage(`${status==='scheduled'?'Scheduled':status==='cancelled'?'Cancelled':'Withdrawn'} locally.${booking.sourceFile?' Imported rows cannot be sent from this app.':' Use Send to Google Sheet to update the workbook.'}`);}
@@ -48,7 +60,7 @@ export default function AuctionSchedulePage() {
     if(!syncKey.trim()){setMessage('Enter the Sheet sync key below before sending.');return;}
     setSyncing(booking.id);setMessage('Sending row to Google Sheet…');
     try{
-      const response=await fetch('/api/eauction/sheets',{method:'POST',headers:{'Content-Type':'application/json','x-sync-key':syncKey},body:JSON.stringify({booking})});
+      const response=await fetch('/api/eauction/sheets',{method:'POST',headers:{'Content-Type':'application/json','x-sync-key':syncKey},body:JSON.stringify({booking,holidays:data.holidays})});
       const result=await response.json();
       if(!response.ok)throw new Error(result.error||'Could not send the row.');
       setData(value=>({...value,bookings:value.bookings.map(item=>item.id===booking.id?{...item,scheduleId:result.scheduleId,catalogueId:result.catalogueId,sheetRow:result.row,sheetTab:result.tab,syncedAt:result.syncedAt}:item)}));
@@ -67,18 +79,19 @@ export default function AuctionSchedulePage() {
     <section className="work-area">
       <div className="section-title"><h2>New row</h2><span>Choose a category. Date and time fill automatically.</span></div>
       <div className="entry-form">
-        <label className="category-field">1. Category<select value={category} onChange={event=>setCategory(event.target.value)}><option value="">Select category</option>{categories.map(item=><option key={item.name}>{item.name}</option>)}</select></label>
+        <label className="category-field">1. Category<select value={category} onChange={event=>{setCategory(event.target.value);setEditedDate(null);setEditedScheduleId(null);setEditedCatalogueId(null);}}><option value="">Select category</option>{categories.map(item=><option key={item.name}>{item.name}</option>)}</select></label>
         <div className="auto-field"><span>2. Today</span><strong>{currentDate?labelDate(currentDate):'—'}</strong></div>
-        <div className="auto-field"><span>Auction date</span><strong>{proposal?labelDate(proposal.date):'—'}</strong></div>
+        <div className="auto-field"><span>Auction date</span>{editAutomatic?<input type="date" aria-label="Auction date" value={auctionDate} onChange={event=>setEditedDate(event.target.value)} disabled={!proposal}/>:<strong>{proposal?labelDate(auctionDate):'—'}</strong>}</div>
         <div className="auto-field"><span>Time</span><strong>{time?labelTime(time):'—'}</strong></div>
       </div>
-      {proposal&&<div className="result-line"><span className="valid">✓ Available</span><span>{proposal.daysAfterNotice} days from today{proposal.skipped.length?' · '+proposal.skipped.length+' unavailable date(s) skipped':''}</span><span>Saturday, Sunday and listed holidays excluded</span></div>}
-      <div className="id-row"><label>EA Schedule ID <small>Next number for this category</small><input value={identifiers?.scheduleId||''} placeholder="Select category" readOnly /></label><label>Catalogue ID <small>Next number across all auctions</small><input value={identifiers?.catalogueId||''} placeholder="Select category" readOnly /></label><button className="button primary" disabled={!proposal} onClick={save}>Add to schedule</button></div>
+      <label className="edit-toggle"><input type="checkbox" checked={editAutomatic} onChange={event=>{setEditAutomatic(event.target.checked);setEditedDate(null);setEditedScheduleId(null);setEditedCatalogueId(null);setMessage('');}}/> Edit auction date and IDs</label>
+      {proposal&&<div className="result-line"><span className={dateError||idError?'invalid':'valid'}>{dateError||idError||'✓ Available'}</span>{!editAutomatic&&<span>{proposal.daysAfterNotice} days from today{proposal.skipped.length?' · '+proposal.skipped.length+' unavailable date(s) skipped':''}</span>}<span>Saturday, Sunday and listed holidays excluded</span></div>}
+      <div className="id-row"><label>EA Schedule ID <small>Next number for this category</small><input value={scheduleId} placeholder="Select category" readOnly={!editAutomatic} onChange={event=>setEditedScheduleId(event.target.value)} /></label><label>Catalogue ID <small>Next number across all auctions</small><input value={catalogueId} placeholder="Select category" readOnly={!editAutomatic} onChange={event=>setEditedCatalogueId(event.target.value)} /></label><button className="button primary" disabled={!proposal||!!dateError||!!idError} onClick={save}>Add to schedule</button></div>
       {message&&<p className="message" role="status">{message}</p>}
       <div className="table-heading"><h2>Schedule</h2><div><label className="button outline file-button">Import CSV<input type="file" accept=".csv,text/csv" onChange={importBookings} hidden /></label><button className="button text" onClick={()=>setData(value=>({...value,showSource:!value.showSource}))}>{data.showSource?'Hide':'Show'} sheet snapshot</button></div></div>
       <div className="table-scroll"><table className="grid"><thead><tr><th className="row-number">#</th><th>Date</th><th>Time</th><th>Category</th><th>EA Schedule ID</th><th>Catalogue ID</th><th>Status</th><th>Actions</th></tr></thead><tbody>{sortedBookings.map((item,index)=><tr key={item.id} className={item.status==='scheduled'?'scheduled':'inactive'}><td className="row-number">{index+1}</td><td>{item.date}</td><td>{labelTime(item.time)}</td><td>{item.category}</td><td>{item.scheduleId||'—'}</td><td>{item.catalogueId||'—'}</td><td><strong>{item.status==='scheduled'?'Scheduled':item.status==='cancelled'?'Cancelled':'Withdrawn'}</strong>{!item.source&&!item.sourceFile&&<small className="sync-state">{item.syncedAt?' · In Google Sheet':' · Not sent'}</small>}</td><td className="actions-cell">{!item.source&&!item.sourceFile&&<button className="row-action send-action" disabled={syncing===item.id} onClick={()=>syncBooking(item)}>{syncing===item.id?'Sending…':'Send to Google Sheet'}</button>}{!item.source&&(item.status==='scheduled'?<><button className="row-action danger" onClick={()=>changeStatus(item,'cancelled')}>Cancel</button><button className="row-action danger" onClick={()=>changeStatus(item,'withdrawn')}>Withdraw</button></>:<button className="row-action" onClick={()=>changeStatus(item,'scheduled')}>Restore</button>)}</td></tr>)}{!sortedBookings.length&&<tr><td colSpan={8} className="empty">No schedule rows yet.</td></tr>}</tbody></table></div>
       <div className="sheet-sync"><label>Google Sheet sync key <input type="password" autoComplete="off" value={syncKey} onChange={event=>setSyncKey(event.target.value)} placeholder="Enter key to send rows" /></label><span>Only rows created in this app can be sent. A changed status is sent when you press the row’s button again.</span></div>
-      <p className="hint">ID numbers start from the linked sheet snapshot and include saved or imported rows. On send, the server checks the live workbook and assigns the latest available IDs. CSV columns: Date, Time, Category, EA Schedule ID, Catalogue ID, Status.</p>
+      <p className="hint">ID numbers start from the linked sheet snapshot and include saved or imported rows. On send, the server checks the live workbook; IDs edited with the checkbox are kept if available. CSV columns: Date, Time, Category, EA Schedule ID, Catalogue ID, Status.</p>
       <details className="holidays"><summary>Holidays <span>{sortedHolidays.length} dates</span></summary><div className="holiday-content"><p>Add the official holidays applicable to your auctions. These dates are excluded automatically.</p><form onSubmit={addHoliday} className="holiday-form"><input type="date" value={holidayDate} onChange={event=>setHolidayDate(event.target.value)} required /><input value={holidayName} onChange={event=>setHolidayName(event.target.value)} placeholder="Holiday name" required /><button className="button outline" type="submit">Add</button></form><div className="holiday-actions"><label className="button outline file-button">Import holidays CSV<input type="file" accept=".csv,text/csv" onChange={importHolidays} hidden /></label><button className="button text" onClick={exportHolidays}>Download holidays CSV</button></div>{sortedHolidays.map(item=><div className="holiday-row" key={item.date}><span>{item.date}</span><span>{item.name}</span><button className="row-action" onClick={()=>setData(value=>({...value,holidays:value.holidays.filter(holiday=>holiday.date!==item.date)}))}>Remove</button></div>)}{!sortedHolidays.length&&<p className="hint">No holidays entered. Add your official list before finalizing dates.</p>}</div></details>
     </section><footer>Saved in this browser · Source: Auction Schedule workbook · First available date at least 15 calendar days from today</footer>
   </main>;

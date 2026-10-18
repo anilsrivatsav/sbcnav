@@ -36,8 +36,12 @@
 .eauction-sheet .auto-field{display:flex;flex-direction:column;gap:8px;background:#fbfcfb}
 .eauction-sheet .auto-field span{font-size:11px;font-weight:600;color:#697782}
 .eauction-sheet .auto-field strong{font-size:15px;font-weight:700;color:#1b6734;white-space:nowrap}
+.eauction-sheet .auto-field input{max-width:190px}
+.eauction-sheet .edit-toggle{display:inline-flex;align-items:center;gap:8px;margin-top:12px;color:#44515c;font-size:12px;font-weight:600;cursor:pointer}
+.eauction-sheet .edit-toggle input{width:16px;height:16px;accent-color:#188038;cursor:pointer}
 .eauction-sheet .result-line{display:flex;align-items:center;flex-wrap:wrap;gap:13px;min-height:35px;padding:9px 0;color:#71808b;font-size:11px}
 .eauction-sheet .result-line .valid{color:#188038;font-weight:700}
+.eauction-sheet .result-line .invalid{color:#a12626;font-weight:700}
 .eauction-sheet .id-row{display:flex;align-items:end;gap:12px;margin:14px 0 30px}
 .eauction-sheet .id-row label{flex:1;max-width:240px}
 .eauction-sheet .id-row small{font-size:10px;color:#9da7b0;font-weight:400}

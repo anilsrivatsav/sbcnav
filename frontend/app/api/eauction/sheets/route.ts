@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import { GoogleAuth } from 'google-auth-library';
-import { Booking, categories, nextIdentifiers, normalizeDate, normalizeTime, parseISO } from '../../../../lib/eauction-scheduler';
+import { Booking, Holiday, auctionDateError, identifierError, categories, nextIdentifiers, normalizeDate, normalizeTime, parseISO } from '../../../../lib/eauction-scheduler';
 
 export const runtime = 'nodejs';
 
@@ -43,7 +43,15 @@ function invalidBooking(value: unknown): value is Booking {
   const item = value as Partial<Booking>;
   return typeof item.id === 'string' && !!parseISO(item.date || '') && !!normalizeTime(item.time || '')
     && categories.some(category => category.name === item.category)
-    && ['scheduled', 'cancelled', 'withdrawn'].includes(item.status || '');
+    && ['scheduled', 'cancelled', 'withdrawn'].includes(item.status || '')
+    && (item.manualScheduleId === undefined || typeof item.manualScheduleId === 'boolean')
+    && (item.manualCatalogueId === undefined || typeof item.manualCatalogueId === 'boolean');
+}
+
+function todayIndia(): string {
+  const parts = new Intl.DateTimeFormat('en-GB', {timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());
+  const get = (type: string) => parts.find(part => part.type === type)?.value || '';
+  return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
 export async function POST(request: Request) {
@@ -53,10 +61,12 @@ export async function POST(request: Request) {
   if (!sameSecret(request.headers.get('x-sync-key'), syncKey)) return Response.json({ error: 'Invalid sync key.' }, { status: 401 });
 
   let booking: Booking;
+  let holidays: Holiday[] = [];
   try {
     const body = await request.json();
     if (!invalidBooking(body.booking)) throw new Error('Invalid schedule row.');
     booking = body.booking;
+    if (Array.isArray(body.holidays)) holidays = body.holidays.filter((item: unknown): item is Holiday => !!item && typeof item === 'object' && typeof (item as Holiday).date === 'string' && typeof (item as Holiday).name === 'string').slice(0, 1000);
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : 'Invalid request.' }, { status: 400 });
   }
@@ -103,18 +113,24 @@ export async function POST(request: Request) {
       return Response.json({ row: existing.index, tab: existing.sheet.title, scheduleId: booking.scheduleId, catalogueId: booking.catalogueId, syncedAt: new Date().toISOString() });
     }
 
-    const existingBookings = rowsBySheet.flatMap(sheet => sheet.rows.map((row, index) => ({
-      id: `${sheet.sheetId}-${index}`, date: '', time: '', category: row[2] || '', subject: '',
+    const existingBookings: Booking[] = rowsBySheet.flatMap(sheet => sheet.rows.map((row, index) => ({
+      id: `${sheet.sheetId}-${index}`, date: normalizeDate(row[0] || '') || '', time: normalizeTime(row[1] || '') || '', category: row[2] || '', subject: '',
       status: /cancelled|withdrawn/i.test(row[5] || '') ? 'cancelled' as const : 'scheduled' as const,
       scheduleId: row[3] || '', catalogueId: row[4] || '',
     })));
+    const dateError = auctionDateError(booking.date, todayIndia(), booking.time, holidays, existingBookings);
+    if (dateError) return Response.json({ error: dateError }, { status: 409 });
     const identifiers = nextIdentifiers(booking.category, existingBookings, Number(booking.date.slice(0, 4)));
+    const scheduleId = booking.manualScheduleId ? booking.scheduleId || '' : identifiers.scheduleId;
+    const catalogueId = booking.manualCatalogueId ? booking.catalogueId || '' : identifiers.catalogueId;
+    const idError = identifierError(scheduleId, catalogueId, booking.category, existingBookings);
+    if (idError) return Response.json({ error: idError }, { status: 409 });
     const [year, month, day] = booking.date.split('-');
-    const values = [[`${day}-${month}-${year}`, String(Number(booking.time.slice(0, 2))), booking.category, identifiers.scheduleId, identifiers.catalogueId, booking.status === 'scheduled' ? 'Scheduled' : booking.status === 'cancelled' ? 'Cancelled' : 'Withdrawn']];
+    const values = [[`${day}-${month}-${year}`, String(Number(booking.time.slice(0, 2))), booking.category, scheduleId, catalogueId, booking.status === 'scheduled' ? 'Scheduled' : booking.status === 'cancelled' ? 'Cancelled' : 'Withdrawn']];
     const appended = await sheetsRequest<{ updates?: { updatedRange?: string } }>(`${base}/values/${encodeURIComponent(sheetRange(target.title, 'A:F'))}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, token, { method: 'POST', body: JSON.stringify({ values }) });
     const row = Number(appended.updates?.updatedRange?.match(/![A-Z]+(\d+)/)?.[1]);
     if (!row) throw new Error('Google Sheet accepted the row but did not return its position. Check the sheet before retrying.');
-    return Response.json({ row, tab: target.title, ...identifiers, syncedAt: new Date().toISOString() });
+    return Response.json({ row, tab: target.title, scheduleId, catalogueId, syncedAt: new Date().toISOString() });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : 'Could not sync the row.' }, { status: 502 });
   }
