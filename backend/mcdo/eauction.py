@@ -1,11 +1,15 @@
 """Auction Schedule workbook access using the existing Oracle service account."""
 import re
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from threading import Lock
 from urllib.parse import quote
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
+from sqlalchemy import text
+from database import engine
 from mcdo.sheets_api import Sheets
 
 WORKBOOK = '1n_aQpueOSE8OYl5y5KW3_NuYFg7Knlw3BYslllEp1zk'
@@ -13,6 +17,25 @@ MONTHS = {name: index for index, name in enumerate(('jan','feb','mar','apr','may
 TIMES = {'Parking':'15:00','Parcel':'11:00','Catering':'11:00','MPS':'15:00','Miscellaneous':'12:00','Pay & Use':'15:00','Advertising':'12:00','ATM':'15:00','PMBJAK':'12:00','CLK / SMVB':'15:00','Food truck':'12:00','Other':'12:00'}
 FORMATS = {'Parking':('SBC-PRK-EA','SBC-PRK',170),'Parcel':('SBC-Parcel-EA','SBC-PRCL',156),'Catering':('SBC-CATG-EA','SBC-CTG',189),'MPS':('SBC-MPS-EA','SBC-MPS',187),'Miscellaneous':('SBC-Misc-EA','SBC-Misc',136),'Pay & Use':('SBC-PnU-EA','SBC-PnU',75),'Advertising':('SBC-ADVT-EA','SBC-Advt',87),'ATM':('SBC-ATM-EA','SBC-ATM',31),'PMBJAK':('SBC-PMBJAK-EA','SBC-PMBJK',3),'CLK / SMVB':('SBC-CLK-EA','SBC-CLK',68),'Food truck':('SBC-Misc-FT-','SBC-FoodTruck',119)}
 _write_lock = Lock()
+
+@contextmanager
+def _sync_lock():
+    with _write_lock:
+        if engine.dialect.name == 'postgresql':
+            # Serialize check-and-append across all API workers.
+            with engine.begin() as connection:
+                connection.execute(text('SELECT pg_advisory_xact_lock(:key)'), {'key': 1939091527})
+                yield
+        else:
+            yield
+
+def _sync_id(value):
+    try:return str(UUID(str(value)))
+    except (ValueError, AttributeError, TypeError):return ''
+
+def _paint_status(sheets, row, status):
+    color = {'scheduled':(0.91, 0.97, 0.93), 'cancelled':(1, 0.91, 0.91), 'withdrawn':(1, 0.91, 0.91)}[status]
+    _request(sheets, 'POST', ':batchUpdate', json={'requests':[{'repeatCell':{'range':{'sheetId':row['sheetId'],'startRowIndex':row['sheetRow']-1,'endRowIndex':row['sheetRow'],'startColumnIndex':0,'endColumnIndex':6},'cell':{'userEnteredFormat':{'backgroundColor':{'red':color[0],'green':color[1],'blue':color[2]}}},'fields':'userEnteredFormat.backgroundColor'}}]})
 
 def _request(sheets, method, suffix='', **kwargs):
     response = sheets.session.request(method, f'https://sheets.googleapis.com/v4/spreadsheets/{WORKBOOK}{suffix}', timeout=90, **kwargs)
@@ -52,16 +75,16 @@ def _rows(sheets):
     tabs = [item['properties'] for item in meta.get('sheets', []) if _month(item.get('properties', {}).get('title', '')) >= 0]
     if not tabs:raise HTTPException(502, 'No monthly Auction Schedule tab was found.')
     tabs.sort(key=lambda item:_month(item['title']))
-    params = [('ranges', f"'{tab['title'].replace(chr(39), chr(39)*2)}'!A:F") for tab in tabs]
+    params = [('ranges', f"'{tab['title'].replace(chr(39), chr(39)*2)}'!A:G") for tab in tabs]
     response = _request(sheets, 'GET', '/values:batchGet', params=params)
     entries = []
     for tab, value_range in zip(tabs, response.get('valueRanges', [])):
         for row_number, values in enumerate(value_range.get('values', []), 1):
-            values = (values + [''] * 6)[:6]
+            values = (values + [''] * 7)[:7]
             day, hour = _date(values[0]), _time(values[1])
             if not day or not hour or not values[2]:continue
             status = 'withdrawn' if re.search('withdrawn', values[5], re.I) else 'cancelled' if re.search('cancelled', values[5], re.I) else 'scheduled'
-            entries.append({'id':f"sheet-{tab['sheetId']}-{row_number}",'date':day,'time':hour,'category':values[2],'subject':'','scheduleId':values[3],'catalogueId':values[4],'status':status,'source':True,'sheetRow':row_number,'sheetTab':tab['title']})
+            entries.append({'id':f"sheet-{tab['sheetId']}-{row_number}",'date':day,'time':hour,'category':values[2],'subject':'','scheduleId':values[3],'catalogueId':values[4],'status':status,'source':True,'sheetRow':row_number,'sheetTab':tab['title'],'sheetId':tab['sheetId'],'syncId':_sync_id(values[6])})
     return tabs, entries
 
 def live_schedule():
@@ -111,22 +134,28 @@ def save_schedule(payload):
     if _date(booking.get('date')) != booking.get('date') or _time(booking.get('time')) != booking.get('time'):
         raise HTTPException(400, 'Invalid auction date or time.')
     if booking.get('sourceFile'):raise HTTPException(400, 'Imported CSV rows cannot be sent to the linked workbook.')
-    with _write_lock:
+    sync_id = _sync_id(booking.get('id'))
+    with _sync_lock():
         sheets = Sheets()
         tabs, entries = _rows(sheets)
-        match = None
-        if booking.get('sheetRow') and booking.get('sheetTab'):
+        match = next((row for row in entries if sync_id and row['syncId'] == sync_id), None)
+        if match and any(match[key] != booking.get(key) for key in ('category','date','time')):
+            raise HTTPException(409, 'The linked sheet row changed. Refresh the schedule and try again.')
+        if not match and booking.get('sheetRow') and booking.get('sheetTab'):
             match = next((row for row in entries if row['sheetTab'] == booking['sheetTab'] and row['sheetRow'] == booking['sheetRow']), None)
             if not match or any(match[key] != booking.get(key) for key in ('catalogueId','category','date','time')):
                 raise HTTPException(409, 'The linked sheet row changed. Refresh the schedule and try again.')
-        else:
+        elif not match:
             match = next((row for row in entries if row['catalogueId'] == booking.get('catalogueId') and row['date'] == booking['date'] and row['time'] == booking['time'] and row['category'] == category), None)
         if match:
-            status_text = status.capitalize()
-            _request(sheets, 'PUT', f"/values/{_range(match['sheetTab'], 'F' + str(match['sheetRow']))}", params={'valueInputOption':'RAW'}, json={'values':[[status_text]]})
+            if match['status'] != status:
+                _request(sheets, 'PUT', f"/values/{_range(match['sheetTab'], 'F' + str(match['sheetRow']))}", params={'valueInputOption':'RAW'}, json={'values':[[status.capitalize()]]})
+            _paint_status(sheets, match, status)
             return {'row':match['sheetRow'],'tab':match['sheetTab'],'scheduleId':match['scheduleId'],'catalogueId':match['catalogueId'],'syncedAt':datetime.now(timezone.utc).isoformat()}
         if booking.get('source') or status != 'scheduled':
             raise HTTPException(409, 'This source row was not found in the live sheet. Refresh before changing it.')
+        if not sync_id:
+            raise HTTPException(400, 'Refresh the app before creating an auction row.')
         if booking['time'] != TIMES[category]:
             raise HTTPException(400, 'Invalid time for this auction category.')
         auction = date.fromisoformat(booking['date'])
@@ -152,9 +181,10 @@ def save_schedule(payload):
         if not target_tab:
             raise HTTPException(409, f'No Auction Schedule tab exists for {auction.strftime("%B %Y")}. Add that monthly tab before sending this auction.')
         tab = target_tab['title']
-        values = [[auction.strftime('%d-%m-%Y'), str(int(booking['time'][:2])), category, schedule_id, catalogue_id, 'Scheduled']]
-        result = _request(sheets, 'POST', f"/values/{_range(tab, 'A:F')}:append", params={'valueInputOption':'RAW','insertDataOption':'INSERT_ROWS'}, json={'values':values})
+        values = [[auction.strftime('%d-%m-%Y'), str(int(booking['time'][:2])), category, schedule_id, catalogue_id, 'Scheduled', sync_id]]
+        result = _request(sheets, 'POST', f"/values/{_range(tab, 'A:G')}:append", params={'valueInputOption':'RAW','insertDataOption':'INSERT_ROWS'}, json={'values':values})
         updated = result.get('updates', {}).get('updatedRange', '')
         row_match = re.search(r'![A-Z]+(\d+)', updated)
         if not row_match:raise HTTPException(502, 'Google accepted the row but did not return its position. Check the sheet before retrying.')
+        _paint_status(sheets, {'sheetId':target_tab['sheetId'],'sheetRow':int(row_match[1])}, status)
         return {'row':int(row_match[1]),'tab':tab,'scheduleId':schedule_id,'catalogueId':catalogue_id,'syncedAt':datetime.now(timezone.utc).isoformat()}
