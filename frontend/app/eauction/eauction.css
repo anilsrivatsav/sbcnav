@@ -1,0 +1,85 @@
+.eauction-sheet a.back-link{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border:1px solid #d5dce5;border-radius:6px;color:#188038}
+.eauction-sheet{font-family:Inter,Arial,sans-serif}
+.eauction-sheet{font-family:Inter,Arial,sans-serif;color:#202124;background:#f7f9fc}
+.eauction-sheet *{box-sizing:border-box}
+.eauction-sheet{margin:0}
+.eauction-sheet button, .eauction-sheet input, .eauction-sheet select{font:inherit}
+.eauction-sheet button{cursor:pointer}
+.eauction-sheet.sheet{max-width:1500px;min-height:100vh;margin:auto;background:#fff;box-shadow:0 0 28px #1f3a5c0c}
+.eauction-sheet .sheet-header{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:20px 32px 18px;border-bottom:1px solid #e6e9ee}
+.eauction-sheet .title{display:flex;align-items:center;gap:15px}
+.eauction-sheet .file-icon{display:grid;place-items:center;width:42px;height:42px;border-radius:8px;background:#188038;color:white;font-size:27px;font-weight:700}
+.eauction-sheet h1{font-size:20px;line-height:1.3;font-weight:600;margin:0}
+.eauction-sheet .title p{font-size:12px;color:#6d7785;margin:3px 0 0}
+.eauction-sheet .button{display:inline-flex;align-items:center;justify-content:center;min-height:36px;padding:8px 14px;border-radius:5px;border:1px solid #d5dce5;background:#fff;color:#344054;font-size:12px;font-weight:600;white-space:nowrap;text-decoration:none}
+.eauction-sheet .button:hover{background:#f4f7fb}
+.eauction-sheet .button.primary{background:#188038;border-color:#188038;color:#fff;min-height:40px}
+.eauction-sheet .button.primary:hover{background:#11692d}
+.eauction-sheet .button.primary:disabled{opacity:.5;cursor:not-allowed}
+.eauction-sheet .button.text{border-color:transparent;color:#287348}
+.eauction-sheet .button.text:hover{background:#eff7f0}
+.eauction-sheet .tabs{display:flex;align-items:end;gap:25px;height:43px;padding:0 32px;border-bottom:1px solid #dfe4ea;color:#7a8491;font-size:12px;font-weight:500}
+.eauction-sheet .tabs span{height:100%;display:flex;align-items:center}
+.eauction-sheet .tabs .selected{color:#188038;font-weight:700;border-bottom:3px solid #188038}
+.eauction-sheet .work-area{padding:28px 32px 18px}
+.eauction-sheet .section-title{display:flex;align-items:baseline;gap:15px;margin:0 0 17px}
+.eauction-sheet h2{font-size:15px;font-weight:700;margin:0}
+.eauction-sheet .section-title span{color:#7c8794;font-size:12px}
+.eauction-sheet .entry-form{display:grid;grid-template-columns:minmax(180px,1.5fr) minmax(165px,1fr) minmax(220px,1.25fr) minmax(130px,.7fr);gap:0;border:1px solid #cdd8d1;border-radius:6px;overflow:hidden}
+.eauction-sheet .entry-form>*{min-width:0;min-height:86px;padding:15px 16px;border-right:1px solid #e0e6e3}
+.eauction-sheet .entry-form>*:last-child{border-right:0}
+.eauction-sheet .entry-form label, .eauction-sheet .id-row label{display:flex;flex-direction:column;gap:8px;font-size:11px;font-weight:600;color:#697782}
+.eauction-sheet .entry-form .category-field{background:#f1f8f2;color:#23633b}
+.eauction-sheet .entry-form select, .eauction-sheet .entry-form input, .eauction-sheet .id-row input{width:100%;height:36px;padding:0 10px;border:1px solid #d5dfe0;border-radius:4px;background:#fff;color:#24333b;outline:0;font-size:13px}
+.eauction-sheet .entry-form select:focus, .eauction-sheet .entry-form input:focus, .eauction-sheet .id-row input:focus, .eauction-sheet .holiday-form input:focus{border-color:#188038;box-shadow:0 0 0 2px #1880381c}
+.eauction-sheet .entry-form select{font-weight:700}
+.eauction-sheet .auto-field{display:flex;flex-direction:column;gap:8px;background:#fbfcfb}
+.eauction-sheet .auto-field span{font-size:11px;font-weight:600;color:#697782}
+.eauction-sheet .auto-field strong{font-size:15px;font-weight:700;color:#1b6734;white-space:nowrap}
+.eauction-sheet .result-line{display:flex;align-items:center;flex-wrap:wrap;gap:13px;min-height:35px;padding:9px 0;color:#71808b;font-size:11px}
+.eauction-sheet .result-line .valid{color:#188038;font-weight:700}
+.eauction-sheet .id-row{display:flex;align-items:end;gap:12px;margin:14px 0 30px}
+.eauction-sheet .id-row label{flex:1;max-width:240px}
+.eauction-sheet .id-row small{font-size:10px;color:#9da7b0;font-weight:400}
+.eauction-sheet .id-row .button{margin-left:auto}
+.eauction-sheet .message{margin:-17px 0 24px;padding:9px 12px;background:#edf7ee;border-left:3px solid #188038;font-size:12px;color:#245c35}
+.eauction-sheet .table-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px 0 12px;border-top:1px solid #e5e9ee}
+.eauction-sheet .table-heading>div{display:flex;align-items:center;gap:7px}
+.eauction-sheet .table-scroll{overflow:auto;max-height:540px;border:1px solid #dce2e8}
+.eauction-sheet .grid{width:100%;border-collapse:separate;border-spacing:0;font-size:12px}
+.eauction-sheet .grid th, .eauction-sheet .grid td{min-width:105px;text-align:left;padding:10px 12px;border-right:1px solid #e5e9ec;border-bottom:1px solid #e8ecef;white-space:nowrap}
+.eauction-sheet .grid th{position:sticky;top:0;z-index:1;background:#f2f5f7;color:#5a6673;font-size:11px;font-weight:700}
+.eauction-sheet .grid th:last-child, .eauction-sheet .grid td:last-child{border-right:0;min-width:75px}
+.eauction-sheet .grid .row-number{min-width:42px;width:42px;text-align:center;background:#f7f9fa;color:#84909b}
+.eauction-sheet .grid tbody tr.scheduled td{background:#e9f6eb;color:#215d36}
+.eauction-sheet .grid tbody tr.scheduled:hover td{background:#dcf0e0}
+.eauction-sheet .grid tbody tr.inactive td{background:#fdeaea;color:#a12626}
+.eauction-sheet .grid tbody tr.inactive:hover td{background:#fbdcdc}
+.eauction-sheet .grid tbody tr.scheduled .row-number{background:#dff0e2}
+.eauction-sheet .grid tbody tr.inactive .row-number{background:#f9dddd}
+.eauction-sheet .grid .empty{text-align:center;color:#7f8b95;padding:26px}
+.eauction-sheet .row-action{border:0;background:none;color:#147a37;font-size:11px;font-weight:600;padding:3px}
+.eauction-sheet .row-action:hover{text-decoration:underline}
+.eauction-sheet .row-action:disabled{opacity:.5;cursor:wait}
+.eauction-sheet .row-action.danger{color:#a12626}
+.eauction-sheet .actions-cell{min-width:260px!important}
+.eauction-sheet .actions-cell .row-action{margin-right:8px;white-space:nowrap}
+.eauction-sheet .sync-state{display:block;font-size:10px;font-weight:500;opacity:.8;margin-top:2px}
+.eauction-sheet .sheet-sync{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:13px 0 0;font-size:11px;color:#6d7785}
+.eauction-sheet .sheet-sync label{display:flex;align-items:center;gap:9px;font-weight:600;color:#44515c}
+.eauction-sheet .sheet-sync input{height:32px;width:190px;padding:0 9px;border:1px solid #cad6cf;border-radius:4px;font-size:12px}
+.eauction-sheet .hint{font-size:11px;line-height:1.5;color:#87939e;margin:9px 0 0}
+.eauction-sheet .holidays{margin-top:25px;border:1px solid #dce4e2;border-radius:6px}
+.eauction-sheet .holidays summary{display:flex;justify-content:space-between;align-items:center;cursor:pointer;padding:13px 15px;font-size:13px;font-weight:700;list-style:none}
+.eauction-sheet .holidays summary::-webkit-details-marker{display:none}
+.eauction-sheet .holidays summary:after{content:'▾';color:#7b8983;margin-left:12px}
+.eauction-sheet .holidays[open] summary:after{content:'▴'}
+.eauction-sheet .holidays summary span{margin-left:auto;color:#8b969e;font-size:11px;font-weight:500}
+.eauction-sheet .holiday-content{padding:0 15px 16px;border-top:1px solid #e7ece9}
+.eauction-sheet .holiday-content>p:first-child{font-size:12px;color:#687781}
+.eauction-sheet .holiday-form, .eauction-sheet .holiday-actions{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:11px 0}
+.eauction-sheet .holiday-form input{height:36px;border:1px solid #d5dfe0;border-radius:4px;padding:0 10px;font-size:12px}
+.eauction-sheet .holiday-row{display:grid;grid-template-columns:115px 1fr auto;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid #edf0f2;font-size:12px}
+.eauction-sheet footer{padding:17px 32px 26px;color:#9aa5af;font-size:11px}
+@media(max-width:900px){.eauction-sheet .entry-form{grid-template-columns:repeat(2,minmax(0,1fr))}.eauction-sheet .entry-form>*:nth-child(2){border-right:0}.eauction-sheet .entry-form>*:nth-child(-n+2){border-bottom:1px solid #e0e6e3}}
+@media(max-width:600px){.eauction-sheet .sheet-header{padding:16px;align-items:flex-start}.eauction-sheet .sheet-header>.button{font-size:10px;padding:7px}.eauction-sheet .title{gap:9px}.eauction-sheet .file-icon{width:34px;height:34px;font-size:22px}.eauction-sheet h1{font-size:16px}.eauction-sheet .tabs{padding:0 16px;gap:17px;font-size:11px}.eauction-sheet .work-area{padding:20px 16px}.eauction-sheet .section-title{display:block}.eauction-sheet .section-title span{display:block;margin-top:5px}.eauction-sheet .entry-form{grid-template-columns:1fr}.eauction-sheet .entry-form>*{min-height:71px;border-right:0!important;border-bottom:1px solid #e0e6e3}.eauction-sheet .entry-form>*:last-child{border-bottom:0}.eauction-sheet .id-row{flex-wrap:wrap}.eauction-sheet .id-row label{max-width:none;min-width:calc(50% - 6px)}.eauction-sheet .id-row .button{width:100%}.eauction-sheet .table-heading{align-items:flex-start}.eauction-sheet .table-heading>div{flex-wrap:wrap;justify-content:flex-end}.eauction-sheet footer{padding:15px 16px 22px}}

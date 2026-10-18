@@ -9,6 +9,7 @@ const nextConfig: NextConfig = {
     return [
       { source: "/", headers: [{ key: "Cache-Control", value: "no-store, max-age=0" }] },
       { source: "/contracts", headers: [{ key: "Cache-Control", value: "no-store, max-age=0" }] },
+      { source: "/eauction", headers: [{ key: "Cache-Control", value: "no-store, max-age=0" }] },
     ];
   },
 };

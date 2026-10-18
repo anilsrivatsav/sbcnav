@@ -3,6 +3,7 @@
 // The main screen is being decomposed into typed feature modules incrementally.
 
 import { startTransition, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   BarChart3,
   Bot,
@@ -2534,6 +2535,9 @@ export default function Page() {
             <NavButton active={view === "ai"} icon={Bot} label="Ask AI" hint="Talk to any table safely" onClick={() => setView("ai")} />
             <NavButton active={view === "settings"} icon={SettingsIcon} label="Settings" hint="Fetch, sync, import, and database controls" onClick={() => setView("settings")} />
           </nav>
+          <Link href="/eauction" aria-label="Auction scheduler" title="Auction scheduler" className="focus-ring mt-4 inline-flex h-10 w-10 items-center justify-center rounded-lg border border-line bg-white text-accent hover:bg-emerald-50">
+            <CalendarDays size={20} aria-hidden="true" />
+          </Link>
           <div className="mt-5 grid gap-2">
             <ThemeToggle theme={theme} onToggle={toggleTheme} />
           </div>
