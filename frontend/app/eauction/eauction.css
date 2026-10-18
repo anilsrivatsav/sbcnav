@@ -50,15 +50,14 @@
 .eauction-sheet .table-heading>div{display:flex;align-items:center;gap:7px}
 .eauction-sheet .table-title{gap:9px!important}
 .eauction-sheet .row-count{padding:4px 8px;border-radius:999px;background:#eef3f0;color:#39704e;font-size:10px;font-weight:700}
-.eauction-sheet .table-scroll{overflow:auto;max-height:600px;border:1px solid #e1e8e5;border-radius:16px;background:#fff;box-shadow:0 12px 36px #17392b12}
-.eauction-sheet .grid{display:table;width:100%;min-width:1200px;table-layout:fixed;border-collapse:separate;border-spacing:0;font-size:12px;color:#344054}
+.eauction-sheet .table-scroll{width:fit-content;max-width:100%;overflow:auto;max-height:600px;border:1px solid #e1e8e5;border-radius:16px;background:#fff;box-shadow:0 12px 36px #17392b12}
+.eauction-sheet .grid{display:table;width:1022px;table-layout:fixed;border-collapse:separate;border-spacing:0;font-size:12px;color:#344054}
 .eauction-sheet .grid .number-col{width:52px}
-.eauction-sheet .grid .date-col{width:202px}
-.eauction-sheet .grid .time-col{width:100px}
-.eauction-sheet .grid .category-col{width:220px}
-.eauction-sheet .grid .schedule-col,.eauction-sheet .grid .catalogue-col{width:200px}
-.eauction-sheet .grid .actions-col{width:146px}
-.eauction-sheet .grid .status-col{width:58px}
+.eauction-sheet .grid .date-col{width:190px}
+.eauction-sheet .grid .time-col{width:90px}
+.eauction-sheet .grid .category-col{width:150px}
+.eauction-sheet .grid .schedule-col,.eauction-sheet .grid .catalogue-col{width:190px}
+.eauction-sheet .grid .actions-col{width:160px}
 .eauction-sheet .grid th,.eauction-sheet .grid td{height:68px;text-align:left;padding:12px 18px;border-bottom:1px solid #edf1ef;white-space:nowrap;background:#fff}
 .eauction-sheet .grid th{position:sticky;top:0;z-index:3;height:48px;background:#f6f9f7;color:#718078;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.09em;border-bottom:1px solid #dfe8e1}
 .eauction-sheet .grid tbody tr:last-child td{border-bottom:0}
@@ -67,10 +66,6 @@
 .eauction-sheet .grid tbody tr.inactive td{background:#fff7f7}
 .eauction-sheet .grid tbody tr.inactive:hover td{background:#fff0f0}
 .eauction-sheet .grid .row-number{text-align:center;color:#9aa9a0;font-weight:750;font-variant-numeric:tabular-nums}
-.eauction-sheet .grid .status-column{position:sticky;right:0;z-index:2;text-align:center;padding-left:8px;padding-right:8px}
-.eauction-sheet .grid th.status-column{z-index:5}
-.eauction-sheet .grid .actions-column{position:sticky;right:58px;z-index:2;box-shadow:-9px 0 14px -12px #244b3699}
-.eauction-sheet .grid th.actions-column{z-index:5}
 .eauction-sheet .grid .date-cell{font-weight:750;color:#1d2939;font-variant-numeric:tabular-nums}
 .eauction-sheet .grid .time-cell{color:#526258;font-weight:650;font-variant-numeric:tabular-nums}
 .eauction-sheet .category-chip{display:inline-flex;padding:7px 10px;border:1px solid #dcebe0;border-radius:7px;background:#f5faf6;color:#2f6240;font-size:11px;font-weight:700}
@@ -80,6 +75,7 @@
 .eauction-sheet .status-light{display:inline-block;width:13px;height:13px;border-radius:50%;background:#17a65a;box-shadow:0 0 0 4px #dff5e8,0 0 9px #17a65a66;vertical-align:middle}
 .eauction-sheet .status-light.cancelled,.eauction-sheet .status-light.withdrawn{background:#d84646;box-shadow:0 0 0 4px #fde5e5,0 0 9px #d8464666}
 .eauction-sheet .actions-cell{display:flex;align-items:center;gap:5px}
+.eauction-sheet .actions-cell .status-light{margin-left:10px;flex:none}
 .eauction-sheet .icon-action{display:inline-grid;place-items:center;width:32px;height:32px;padding:0;border:1px solid #dce7df;border-radius:9px;background:#fff;color:#667587;box-shadow:0 1px 2px #163b2512;transition:background .15s,border-color .15s,transform .15s}
 .eauction-sheet .icon-action:hover{background:#eff7f1;border-color:#b9d8c1;color:#187442;transform:translateY(-1px)}
 .eauction-sheet .icon-action.danger:hover{background:#fff0f0;border-color:#efc7c7;color:#b72f38}
@@ -99,5 +95,5 @@
 .eauction-sheet .holiday-row{display:grid;grid-template-columns:115px 1fr auto;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid #edf0f2;font-size:12px}
 .eauction-sheet footer{padding:17px 32px 26px;color:#9aa5af;font-size:11px}
 @media(max-width:900px){.eauction-sheet .entry-form{grid-template-columns:repeat(2,minmax(0,1fr))}.eauction-sheet .entry-form>*:nth-child(2){border-right:0}.eauction-sheet .entry-form>*:nth-child(-n+2){border-bottom:1px solid #e0e6e3}}
-@media(max-width:700px){.eauction-sheet .grid{min-width:1100px}.eauction-sheet .grid .date-col{width:184px}.eauction-sheet .grid .status-col{width:48px}.eauction-sheet .grid .actions-col{width:120px}.eauction-sheet .grid .status-column{padding-left:6px;padding-right:6px}.eauction-sheet .grid .actions-column{right:48px;padding-left:8px;padding-right:8px}.eauction-sheet .actions-cell{gap:3px}.eauction-sheet .icon-action{width:28px;height:28px}.eauction-sheet .grid th,.eauction-sheet .grid td{padding-left:12px;padding-right:12px}}
+@media(max-width:700px){.eauction-sheet .grid{width:1022px}.eauction-sheet .actions-cell{gap:3px}.eauction-sheet .icon-action{width:28px;height:28px}.eauction-sheet .grid th,.eauction-sheet .grid td{padding-left:12px;padding-right:12px}}
 @media(max-width:600px){.eauction-sheet .sheet-header{padding:16px;align-items:flex-start}.eauction-sheet .sheet-header>.button{font-size:10px;padding:7px}.eauction-sheet .title{gap:9px}.eauction-sheet .file-icon{width:34px;height:34px;font-size:22px}.eauction-sheet h1{font-size:16px}.eauction-sheet .tabs{padding:0 16px;gap:17px;font-size:11px}.eauction-sheet .work-area{padding:20px 16px}.eauction-sheet .section-title{display:block}.eauction-sheet .section-title span{display:block;margin-top:5px}.eauction-sheet .entry-form{grid-template-columns:1fr}.eauction-sheet .entry-form>*{min-height:71px;border-right:0!important;border-bottom:1px solid #e0e6e3}.eauction-sheet .entry-form>*:last-child{border-bottom:0}.eauction-sheet .id-row{flex-wrap:wrap}.eauction-sheet .id-row label{max-width:none;min-width:calc(50% - 6px)}.eauction-sheet .id-row .button{width:100%}.eauction-sheet .table-heading{align-items:flex-start}.eauction-sheet .table-heading>div{flex-wrap:wrap;justify-content:flex-end}.eauction-sheet footer{padding:15px 16px 22px}}
