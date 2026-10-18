@@ -7,7 +7,10 @@ Choose **Update local workbooks**, then sign in to IREPS if asked.
 The shared desktop connection handles IREPS; no browser extension or operator key
 entry is needed in the web interface. MCDO and Deskflow serialize browser collection.
 
-The private page shows one button and progress messages. Collected commercial
+The private page has collection controls and an **Update desktop app** button.
+After the one-time setup in `MCDO.md`, that button checks GitHub and updates the
+Windows companion only when MCDO and Deskflow are idle. Update progress appears
+on the page; updates are manual rather than scheduled. Collected commercial
 records stay in the local database and are not included in progress responses.
 The button waits for an active earnings update, collects pending lots, closed
 history and contracts, then writes the configured commercial, parcel and catering

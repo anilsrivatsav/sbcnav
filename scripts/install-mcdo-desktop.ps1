@@ -10,6 +10,7 @@ Copy-Item -LiteralPath (Join-Path $source 'server.py'),(Join-Path $source 'launc
 Copy-Item -LiteralPath (Join-Path $source 'engine') -Destination $destination -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $source 'deskflow.py') -Destination $destination -Force
 Copy-Item -LiteralPath (Join-Path $source 'rp') -Destination $destination -Recurse -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'update-mcdo-desktop.ps1') -Destination (Join-Path $destination 'update.ps1') -Force
 Copy-Item -LiteralPath $KeyFile -Destination (Join-Path $destination 'operator.key') -Force
 $pythonWindowless = Join-Path (Split-Path -Parent $Python) 'pythonw.exe'
 if (!(Test-Path -LiteralPath $pythonWindowless)) { throw 'The configured Python installation must include pythonw.exe.' }

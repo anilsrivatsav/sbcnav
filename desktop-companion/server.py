@@ -10,6 +10,7 @@ import json
 import os
 import re
 import secrets
+import subprocess
 import sys
 import threading
 import time
@@ -108,7 +109,10 @@ class Controller:
 
     def snapshot(self):
         with self.lock:
+            deskflow_instance = globals().get('deskflow')
+            deskflow_busy = bool(deskflow_instance and deskflow_instance.thread and deskflow_instance.thread.is_alive())
             return {**self.state, 'busy': bool(self.thread and self.thread.is_alive()),
+                    'deskflow_busy': deskflow_busy,
                     'connected': True, 'version': '2.0.1', 'configured': (STATE / 'operator.key').exists()}
 
     def log(self, message):
@@ -122,6 +126,9 @@ class Controller:
 
     def command(self, action):
         with self.lock:
+            process = globals().get('software_update_process')
+            if process and process.poll() is None:
+                raise RuntimeError('The desktop companion is updating. Wait for it to finish.')
             if 'deskflow' in globals() and deskflow.thread and deskflow.thread.is_alive():
                 raise RuntimeError('Deskflow is collecting IREPS evidence. Wait for it to finish.')
             active = self.thread and self.thread.is_alive()
@@ -279,6 +286,50 @@ class DeskflowAccess:
 
 deskflow_access = DeskflowAccess()
 
+software_update_process = None
+
+
+def software_update_running():
+    return bool(software_update_process and software_update_process.poll() is None)
+
+
+def software_update_status():
+    path = STATE / 'software-update.json'
+    try:
+        result = json.loads(path.read_text(encoding='utf-8-sig'))
+        if not isinstance(result, dict): raise ValueError('Invalid update state.')
+    except (OSError, ValueError):
+        result = {'phase': 'ready', 'message': 'Ready to check for a desktop update.'}
+    revision = STATE / '.installed-commit'
+    try:
+        result['revision'] = revision.read_text(encoding='utf-8').strip()[:7]
+    except OSError:
+        result['revision'] = None
+    return result
+
+
+def start_software_update():
+    global software_update_process
+    with controller.lock, deskflow.lock:
+        if (controller.thread and controller.thread.is_alive()) or (deskflow.thread and deskflow.thread.is_alive()):
+            raise RuntimeError('Wait for the current MCDO or Deskflow work to finish.')
+        if software_update_running():
+            raise RuntimeError('A desktop update is already running.')
+        script = BASE / 'update.ps1'
+        if not script.is_file():
+            raise RuntimeError('The desktop updater is not installed. Run the one-time setup on this PC.')
+        (STATE / 'software-update.json').write_text(json.dumps({
+            'phase': 'starting', 'message': 'Checking GitHub for the latest desktop version…'
+        }), encoding='utf-8')
+        try:
+            software_update_process = subprocess.Popen(
+                ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(script)],
+                cwd=str(BASE), creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError as exc:
+            raise RuntimeError('Could not start the desktop updater on this PC.') from exc
+    return software_update_status()
+
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_):
@@ -319,6 +370,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(200, deskflow.progress())
         if self.path == '/deskflow/status':
             return self.respond(200, deskflow.snapshot())
+        if self.path == '/deskflow/software-update':
+            return self.respond(200, software_update_status())
         if self.path != '/status':
             return self.respond(404, {'error': 'Not found.'})
         self.respond(200, controller.snapshot())
@@ -336,7 +389,13 @@ class Handler(BaseHTTPRequestHandler):
                     return self.respond(200, {'token':deskflow_access.unlock(data.get('password'), self.client_address[0])})
                 if not self.deskflow_permitted():
                     return self.respond(401, {'error':'Unlock Deskflow first.'})
-                return self.respond(200, deskflow.command(self.path.rsplit('/',1)[-1], data))
+                if self.path == '/deskflow/software-update':
+                    if data != {}: raise ValueError('Expected an empty JSON object.')
+                    return self.respond(202, start_software_update())
+                with controller.lock, deskflow.lock:
+                    if software_update_running():
+                        raise RuntimeError('The desktop companion is updating. Wait for it to finish.')
+                    return self.respond(200, deskflow.command(self.path.rsplit('/',1)[-1], data))
             except (ValueError, KeyError, TypeError, RuntimeError) as exc:
                 return self.respond(400, {'error': str(exc)})
         if self.path not in ('/start', '/resume', '/pause', '/sync'):

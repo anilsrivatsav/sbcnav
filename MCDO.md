@@ -21,6 +21,29 @@ actions described in DESKFLOW.md. It cannot proxy arbitrary API paths or execute
 page-supplied code.
 On another PC the helper must be installed and privately configured there.
 
+### Updating the already configured Windows PC
+
+GitHub and Vercel deployments do not replace the Python companion running on
+another computer. On that Windows PC, after its existing companion is idle, run
+this once in PowerShell under the same Windows account that uses SBC NAV:
+
+```powershell
+$update = Join-Path $env:TEMP 'sbcnav-desktop-update.ps1'
+Invoke-WebRequest 'https://raw.githubusercontent.com/anilsrivatsav/sbcnav/main/scripts/update-mcdo-desktop.ps1' -OutFile $update
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $update -ConfirmIdle
+```
+
+This one-time step installs the update command on that PC. Confirm first that
+MCDO and Deskflow have finished their current work: the older companion cannot
+report whether Deskflow is busy. The update preserves the existing private
+operator key, local evidence, and the PC's `engine/config.json`; no key entry is
+needed. After it finishes, unlock Deskflow in the web app and use **Update
+desktop app** for future updates. The button checks GitHub, updates the local
+companion, and restarts it only when MCDO and Deskflow are idle. There is no
+scheduled update. The one-time command must run on that Windows PC (or through
+an authorized remote desktop session); a GitHub push alone cannot start software
+on it.
+
 The primary button is **Check for new payments**. Authentication takes place in
 the same dedicated Chrome profile as the Windows updater. Dates are read afresh
 from Sheets by Oracle. Original rows and invoice PDFs are validated before writes.
