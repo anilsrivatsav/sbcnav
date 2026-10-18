@@ -2547,6 +2547,9 @@ export default function Page() {
           <Link href="/deskflow" aria-label="Deskflow" title="Deskflow" className="focus-ring ml-2 mt-4 inline-flex h-10 w-10 items-center justify-center rounded-lg border border-line bg-white text-accent hover:bg-emerald-50">
             <LockKeyhole size={20} aria-hidden="true" />
           </Link>
+          <Link href="/eq" aria-label="Emergency Quota forms" title="Emergency Quota forms" className="focus-ring ml-2 mt-4 inline-flex h-10 w-10 items-center justify-center rounded-lg border border-line bg-white text-accent hover:bg-emerald-50">
+            <FileText size={20} aria-hidden="true" />
+          </Link>
           <div className="mt-5 grid gap-2">
             <ThemeToggle theme={theme} onToggle={toggleTheme} />
           </div>
