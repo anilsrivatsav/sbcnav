@@ -14,17 +14,9 @@ Set the project root directory to `frontend` and add this production environment
 NEXT_PUBLIC_API_URL=https://sbcnav.onrender.com
 ```
 
-The eAuction scheduler is an internal page at `/eauction`, opened by the calendar icon in SBCNAV. Its Google Sheets route runs in Next.js on Vercel, so the Python API and Oracle server need no scheduler changes.
+The eAuction scheduler is at `/eauction`, opened by the calendar icon in SBCNAV. It uses the authenticated `/api/mcdo/eauction` route on the Python backend. The browser has no separate Google key field. Sign in to the SBCNAV updater to allow writes through the existing server-side Sheets connection.
 
-For the **Send to Google Sheet** button, also set these Vercel environment variables:
-
-```text
-GOOGLE_SERVICE_ACCOUNT_JSON=<complete Google service-account JSON>
-SHEETS_SYNC_KEY=<long random secret shared with the scheduler user>
-GOOGLE_SHEET_ID=1n_aQpueOSE8OYl5y5KW3_NuYFg7Knlw3BYslllEp1zk
-```
-
-Share the `Auction Schedule` spreadsheet with the service account's `client_email` as an Editor. The scheduler selects the newest monthly tab (for example, `October 26`) and writes the sheet's Date, Time, Category, EA Schedule ID, Catalogue ID and Status to columns A:F. To force a particular tab, set the optional `GOOGLE_SHEET_GID` to its numeric tab ID. Keep the sync key private; enter it in the scheduler before sending rows. The scheduler stores unsent rows and holidays in the current browser. Add or import the applicable official holiday list before scheduling.
+The backend uses its existing `MCDO_GOOGLE_CREDENTIALS` service account. Share the `Auction Schedule` spreadsheet with that service account's `client_email` as an Editor. The scheduler reads all monthly tabs for IDs and availability, then appends to the tab matching the auction month. Create that monthly tab before sending an auction. The workbook stores Date, Time, Category, EA Schedule ID, Catalogue ID, and Status in columns A:F. Unsent rows and holidays stay in the current browser. Add or import the applicable official holiday list before scheduling.
 
 Build command:
 

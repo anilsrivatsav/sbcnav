@@ -15,6 +15,7 @@ from mcdo.planner import main_plan
 from mcdo.checkpoint import compatible, pending, seven_day_failures
 from mcdo.sheets_api import Sheets, SOURCES, computed_workbook
 from mcdo.auth import administrator, issue_session
+from mcdo.eauction import live_schedule, save_schedule
 from mcdo.deadlines import deadline_lists
 from publicity_earnings import parse_workbook, read_ledger, dashboard, apply_import
 from contract_registry import import_eauction_workbook, list_registry_contracts
@@ -28,6 +29,14 @@ def start_session():
 @router.get('/session',dependencies=[Depends(administrator)])
 def session_status():
     return envelope({'authenticated':True})
+
+@router.get('/eauction',dependencies=[Depends(administrator)])
+def eauction_rows():
+    return envelope(live_schedule())
+
+@router.post('/eauction',dependencies=[Depends(administrator)])
+def eauction_save(payload:dict=Body(...)):
+    return envelope(save_schedule(payload))
 CATEGORIES = ['Advertising','Misc-Static-Services','Misc-Mobile-Services','ATM/DBU/Banking e-Lobby','PMBJK','Parking','Hybrid NFR']
 _worker_lock = threading.Lock()
 _invalidate_cache = lambda: None

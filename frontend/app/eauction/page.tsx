@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react';
 import Link from 'next/link';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Ban, CircleX, CloudUpload, RotateCcw } from 'lucide-react';
 import { Booking, Holiday, Proposal, auctionDateError, identifierError, categories, sourceBookings, findDate, labelDate, labelTime, normalizeDate, normalizeTime, readCSV, csv, nextIdentifiers } from '../../lib/eauction-scheduler';
 import './eauction.css';
 
@@ -25,10 +25,13 @@ export default function AuctionSchedulePage() {
   const [holidayDate,setHolidayDate]=useState('');
   const [holidayName,setHolidayName]=useState('');
   const [message,setMessage]=useState('');
-  const [syncKey,setSyncKey]=useState('');
+  const [liveRows,setLiveRows]=useState<Booking[]|null>(null);
   const [syncing,setSyncing]=useState<string|null>(null);
   const time=categories.find(item=>item.name===category)?.time||'';
-  const bookings=useMemo(()=>[...(data.showSource?sourceBookings:[]),...data.bookings],[data]);
+  const bookings=useMemo(()=>{
+    const own=new Set(data.bookings.map(item=>`${item.catalogueId}|${item.date}|${item.time}|${item.category}`));
+    return [...(data.showSource?(liveRows??sourceBookings).filter(item=>!own.has(`${item.catalogueId}|${item.date}|${item.time}|${item.category}`)):[]),...data.bookings];
+  },[data,liveRows]);
   const auctionDate=editedDate??proposal?.date??'';
   const identifiers=useMemo(()=>category&&currentDate?nextIdentifiers(category,bookings,Number((auctionDate||currentDate).slice(0,4))):null,[category,bookings,currentDate,auctionDate]);
   const scheduleId=editedScheduleId??identifiers?.scheduleId??'';
@@ -39,6 +42,7 @@ export default function AuctionSchedulePage() {
   const sortedHolidays=[...data.holidays].sort((a,b)=>a.date.localeCompare(b.date));
 
   useEffect(()=>{try{const saved=JSON.parse(localStorage.getItem(storageKey)||'null') as Partial<Stored>|null;if(saved)setData({...initial,...saved});}catch{}setCurrentDate(todayISO());setLoaded(true);const timer=window.setInterval(()=>setCurrentDate(todayISO()),60000);return()=>window.clearInterval(timer);},[]);
+  useEffect(()=>{let active=true;fetch('/api/mcdo/eauction',{cache:'no-store'}).then(async response=>{if(!response.ok)return null;const result=await response.json();return Array.isArray(result.data)?result.data as Booking[]:null;}).then(rows=>{if(active&&rows)setLiveRows(rows);}).catch(()=>{});return()=>{active=false;};},[]);
   useEffect(()=>{if(loaded)localStorage.setItem(storageKey,JSON.stringify(data));},[data,loaded]);
   useEffect(()=>{if(!currentDate||!category){setProposal(null);return;}try{setProposal(findDate({noticeDate:currentDate,category,time,subject:'',holidays:data.holidays,bookings}));setMessage('');}catch(error){setProposal(null);setMessage(error instanceof Error?error.message:'Could not calculate a date.');}},[currentDate,category,time,data.holidays,bookings]);
 
@@ -53,18 +57,24 @@ export default function AuctionSchedulePage() {
     const booking:Booking={id:crypto.randomUUID(),date:auctionDate,time:proposal.time,category:proposal.category,subject:'',status:'scheduled',noticeDate:today,scheduleId,catalogueId,manualScheduleId:editAutomatic&&scheduleId!==automatic.scheduleId,manualCatalogueId:editAutomatic&&catalogueId!==automatic.catalogueId};
     setData(value=>({...value,bookings:[...value.bookings,booking]}));
     setEditedDate(null);setEditedScheduleId(null);setEditedCatalogueId(null);
-    setMessage('Schedule row saved.');
+    setMessage('Schedule row saved. Sending to Google Sheet…');
+    void syncBooking(booking);
   }
-  function changeStatus(booking:Booking,status:Booking['status']){setData(value=>({...value,bookings:value.bookings.map(item=>item.id===booking.id?{...item,status,syncedAt:undefined}:item)}));setMessage(`${status==='scheduled'?'Scheduled':status==='cancelled'?'Cancelled':'Withdrawn'} locally.${booking.sourceFile?' Imported rows cannot be sent from this app.':' Use Send to Google Sheet to update the workbook.'}`);}
+  function changeStatus(booking:Booking,status:Booking['status']){
+    const changed={...booking,status,syncedAt:undefined};
+    setData(value=>({...value,bookings:value.bookings.some(item=>item.id===booking.id)?value.bookings.map(item=>item.id===booking.id?changed:item):[...value.bookings,changed]}));
+    if(booking.sourceFile){setMessage('Imported CSV row updated in this browser.');return;}
+    void syncBooking(changed);
+  }
   async function syncBooking(booking:Booking){
-    if(!syncKey.trim()){setMessage('Enter the Sheet sync key below before sending.');return;}
     setSyncing(booking.id);setMessage('Sending row to Google Sheet…');
     try{
-      const response=await fetch('/api/eauction/sheets',{method:'POST',headers:{'Content-Type':'application/json','x-sync-key':syncKey},body:JSON.stringify({booking,holidays:data.holidays})});
+      const response=await fetch('/api/mcdo/eauction',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({booking,holidays:data.holidays})});
       const result=await response.json();
-      if(!response.ok)throw new Error(result.error||'Could not send the row.');
-      setData(value=>({...value,bookings:value.bookings.map(item=>item.id===booking.id?{...item,scheduleId:result.scheduleId,catalogueId:result.catalogueId,sheetRow:result.row,sheetTab:result.tab,syncedAt:result.syncedAt}:item)}));
-      setMessage(`Sent to ${result.tab}, row ${result.row}.`);
+      if(!response.ok)throw new Error(response.status===401?'Sign in to the SBCNAV updater to enable automatic Sheet sync.':result.detail||result.error||'Could not send the row.');
+      const saved=result.data;
+      setData(value=>({...value,bookings:value.bookings.map(item=>item.id===booking.id?{...item,scheduleId:saved.scheduleId,catalogueId:saved.catalogueId,sheetRow:saved.row,sheetTab:saved.tab,syncedAt:saved.syncedAt}:item)}));
+      setMessage(`Saved in Google Sheet: ${saved.tab}, row ${saved.row}.`);
     }catch(error){setMessage(error instanceof Error?error.message:'Could not send the row.');}
     finally{setSyncing(null);}
   }
@@ -88,10 +98,9 @@ export default function AuctionSchedulePage() {
       {proposal&&<div className="result-line"><span className={dateError||idError?'invalid':'valid'}>{dateError||idError||'✓ Available'}</span>{!editAutomatic&&<span>{proposal.daysAfterNotice} days from today{proposal.skipped.length?' · '+proposal.skipped.length+' unavailable date(s) skipped':''}</span>}<span>Saturday, Sunday and listed holidays excluded</span></div>}
       <div className="id-row"><label>EA Schedule ID <small>Next number for this category</small><input value={scheduleId} placeholder="Select category" readOnly={!editAutomatic} onChange={event=>setEditedScheduleId(event.target.value)} /></label><label>Catalogue ID <small>Next number across all auctions</small><input value={catalogueId} placeholder="Select category" readOnly={!editAutomatic} onChange={event=>setEditedCatalogueId(event.target.value)} /></label><button className="button primary" disabled={!proposal||!!dateError||!!idError} onClick={save}>Add to schedule</button></div>
       {message&&<p className="message" role="status">{message}</p>}
-      <div className="table-heading"><h2>Schedule</h2><div><label className="button outline file-button">Import CSV<input type="file" accept=".csv,text/csv" onChange={importBookings} hidden /></label><button className="button text" onClick={()=>setData(value=>({...value,showSource:!value.showSource}))}>{data.showSource?'Hide':'Show'} sheet snapshot</button></div></div>
-      <div className="table-scroll"><table className="grid"><thead><tr><th className="row-number">#</th><th>Date</th><th>Time</th><th>Category</th><th>EA Schedule ID</th><th>Catalogue ID</th><th>Status</th><th>Actions</th></tr></thead><tbody>{sortedBookings.map((item,index)=><tr key={item.id} className={item.status==='scheduled'?'scheduled':'inactive'}><td className="row-number">{index+1}</td><td>{item.date}</td><td>{labelTime(item.time)}</td><td>{item.category}</td><td>{item.scheduleId||'—'}</td><td>{item.catalogueId||'—'}</td><td><strong>{item.status==='scheduled'?'Scheduled':item.status==='cancelled'?'Cancelled':'Withdrawn'}</strong>{!item.source&&!item.sourceFile&&<small className="sync-state">{item.syncedAt?' · In Google Sheet':' · Not sent'}</small>}</td><td className="actions-cell">{!item.source&&!item.sourceFile&&<button className="row-action send-action" disabled={syncing===item.id} onClick={()=>syncBooking(item)}>{syncing===item.id?'Sending…':'Send to Google Sheet'}</button>}{!item.source&&(item.status==='scheduled'?<><button className="row-action danger" onClick={()=>changeStatus(item,'cancelled')}>Cancel</button><button className="row-action danger" onClick={()=>changeStatus(item,'withdrawn')}>Withdraw</button></>:<button className="row-action" onClick={()=>changeStatus(item,'scheduled')}>Restore</button>)}</td></tr>)}{!sortedBookings.length&&<tr><td colSpan={8} className="empty">No schedule rows yet.</td></tr>}</tbody></table></div>
-      <div className="sheet-sync"><label>Google Sheet sync key <input type="password" autoComplete="off" value={syncKey} onChange={event=>setSyncKey(event.target.value)} placeholder="Enter key to send rows" /></label><span>Only rows created in this app can be sent. A changed status is sent when you press the row’s button again.</span></div>
-      <p className="hint">ID numbers start from the linked sheet snapshot and include saved or imported rows. On send, the server checks the live workbook; IDs edited with the checkbox are kept if available. CSV columns: Date, Time, Category, EA Schedule ID, Catalogue ID, Status.</p>
+      <div className="table-heading"><div className="table-title"><h2>Schedule</h2><span className="row-count">{sortedBookings.length} auctions</span></div><div><label className="button outline file-button">Import CSV<input type="file" accept=".csv,text/csv" onChange={importBookings} hidden /></label><button className="button text" onClick={()=>setData(value=>({...value,showSource:!value.showSource}))}>{data.showSource?'Hide':'Show'} sheet snapshot</button></div></div>
+      <div className="table-scroll"><table className="grid"><thead><tr><th className="row-number">#</th><th>Date</th><th>Time</th><th>Category</th><th>EA Schedule ID</th><th>Catalogue ID</th><th className="actions-column">Actions</th><th className="status-column">Status</th></tr></thead><tbody>{sortedBookings.map((item,index)=><tr key={item.id} className={item.status==='scheduled'?'scheduled':'inactive'}><td className="row-number">{String(index+1).padStart(2,'0')}</td><td className="date-cell">{labelDate(item.date)}</td><td className="time-cell">{labelTime(item.time)}</td><td><span className="category-chip">{item.category}</span></td><td className="id-cell"><span title={item.scheduleId||''}>{item.scheduleId||'—'}</span></td><td className="id-cell"><span title={item.catalogueId||''}>{item.catalogueId||'—'}</span></td><td className="actions-column"><div className="actions-cell">{item.status==='scheduled'?<><button className="icon-action danger" title="Cancel auction" aria-label={`Cancel ${item.catalogueId||'auction'}`} disabled={syncing===item.id} onClick={()=>changeStatus(item,'cancelled')}><CircleX size={17}/></button><button className="icon-action danger" title="Withdraw auction" aria-label={`Withdraw ${item.catalogueId||'auction'}`} disabled={syncing===item.id} onClick={()=>changeStatus(item,'withdrawn')}><Ban size={17}/></button></>:<button className="icon-action restore" title="Restore auction" aria-label={`Restore ${item.catalogueId||'auction'}`} disabled={syncing===item.id} onClick={()=>changeStatus(item,'scheduled')}><RotateCcw size={17}/></button>}{!item.sourceFile&&<button className="icon-action sync-action" title={item.syncedAt||item.source?'Sync again':'Retry Google Sheet sync'} aria-label={`Sync ${item.catalogueId||'auction'} to Google Sheet`} disabled={syncing===item.id} onClick={()=>syncBooking(item)}><CloudUpload size={17}/></button>}</div></td><td className="status-column"><span className={`status-pill ${item.status}`}>{item.status==='scheduled'?'Scheduled':item.status==='cancelled'?'Cancelled':'Withdrawn'}</span>{!item.sourceFile&&<small className="sync-state">{item.syncedAt||liveRows&&item.source?'In Google Sheet':item.source?'Sheet snapshot':'Pending sync'}</small>}</td></tr>)}{!sortedBookings.length&&<tr><td colSpan={8} className="empty">No schedule rows yet.</td></tr>}</tbody></table></div>
+      <p className="hint">ID numbers include the live workbook when connected. New and changed rows sync automatically; use the cloud icon to retry. IDs edited with the checkbox are kept if available. CSV columns: Date, Time, Category, EA Schedule ID, Catalogue ID, Status.</p>
       <details className="holidays"><summary>Holidays <span>{sortedHolidays.length} dates</span></summary><div className="holiday-content"><p>Add the official holidays applicable to your auctions. These dates are excluded automatically.</p><form onSubmit={addHoliday} className="holiday-form"><input type="date" value={holidayDate} onChange={event=>setHolidayDate(event.target.value)} required /><input value={holidayName} onChange={event=>setHolidayName(event.target.value)} placeholder="Holiday name" required /><button className="button outline" type="submit">Add</button></form><div className="holiday-actions"><label className="button outline file-button">Import holidays CSV<input type="file" accept=".csv,text/csv" onChange={importHolidays} hidden /></label><button className="button text" onClick={exportHolidays}>Download holidays CSV</button></div>{sortedHolidays.map(item=><div className="holiday-row" key={item.date}><span>{item.date}</span><span>{item.name}</span><button className="row-action" onClick={()=>setData(value=>({...value,holidays:value.holidays.filter(holiday=>holiday.date!==item.date)}))}>Remove</button></div>)}{!sortedHolidays.length&&<p className="hint">No holidays entered. Add your official list before finalizing dates.</p>}</div></details>
     </section><footer>Saved in this browser · Source: Auction Schedule workbook · First available date at least 15 calendar days from today</footer>
   </main>;
