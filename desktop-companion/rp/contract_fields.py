@@ -5,7 +5,7 @@ def contract_status(value):
     text=str(value or'').strip().casefold()
     if text in('live','running','active'):return'Running'
     if text in('completed','complete','expired'):return'Completed'
-    if text in('foreclosed','foreclose'):return'Foreclosed'
+    if re.search(r'\bforeclos(?:e|ed|ure)\b',text):return'Foreclosed'
     if text in('not commenced','not signed'):return str(value).strip().capitalize()
     if text in('cancelled','canceled','terminated'):return'Cancelled (reason unknown)'
     return'Unknown'

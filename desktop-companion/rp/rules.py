@@ -2,7 +2,6 @@
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date
-import calendar
 
 VERSION = '2026-10-17 / RP workbook logic with SCC v2.0 checks'
 FAMILIES = ['Parking / Pay & Use', 'Parcel', 'Publicity', 'Catering / MPS', 'Food truck', 'Shop (case by case)']
@@ -27,10 +26,6 @@ def money(value): return number(value).quantize(Decimal('.01'), rounding=ROUND_H
 def dt(value):
     try: return date.fromisoformat(str(value)[:10])
     except Exception: raise ValueError('Dates must use YYYY-MM-DD.')
-
-def months_after(day, months):
-    y, m = divmod(day.year * 12 + day.month - 1 + months, 12)
-    return date(y, m + 1, min(day.day, calendar.monthrange(y, m + 1)[1]))
 
 @dataclass
 class Result:
@@ -145,21 +140,13 @@ def _calculate(lot, auctions, contract, inputs):
         base = previous or initial or finance
         if base <= 0: raise ValueError('Previous approved RP is required for a withdrawn catalogue retry.')
         return done(base, Decimal(1), '=+H{r}', 'Latest catalogue was withdrawn, not a bidding-price failure. Retain its previous approved RP for the retry; no additional reduction is applied.', 'withdrawn_retry')
-    if state == 'Foreclosed' and family == 'Food truck':raise ValueError('Food-truck foreclosure pricing needs an explicit case-by-case decision; no automatic family-specific foreclosure rule is recorded.')
-    if state == 'Foreclosed' and family != 'Shop (case by case)':
+    if state == 'Foreclosed':
         if not contract.get('closed'): raise ValueError('Actual foreclosure date is missing.')
         closed, awarded = dt(contract['closed']), dt(contract['award_date'])
         if closed < awarded: raise ValueError('Foreclosure precedes award.')
-        if family == 'Publicity':
-            if previous <= 0: raise ValueError('Previous publicity RP is needed.')
-            return done(previous, Decimal('.9'), '=+H{r}*0.9', 'Publicity foreclosure: previous RP reduced by 10%.', 'publicity_foreclosure')
-        if closed < months_after(awarded, 6):
-            base = finance if family == 'Catering / MPS' else previous
-            if base <= 0: raise ValueError('Finance-vetted LF (catering) or previous RP is required for foreclosure within six months.')
-            return done(base, Decimal(1), '=+H{r}', 'Foreclosed within six months; original Finance fee / previous RP retested, rather than the failed award rate.', 'early_foreclosure')
         if lar <= 0: raise ValueError('Accepted LAR is missing.')
         if failures == 0:
-            return done(lar, Decimal(1), '=+H{r}', 'Foreclosed after six months or more; accepted LAR retested.', 'late_foreclosure')
+            return done(lar, Decimal(1), '=+H{r}', 'Foreclosed contract: accepted LAR used as the RP.', 'foreclosed_lar')
         if initial <= 0: initial = lar
     if state == 'Completed':
         if lar <= 0: raise ValueError('Accepted LAR is missing.')
