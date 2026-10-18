@@ -4,9 +4,12 @@ The operator credential never enters browser JavaScript. Only the configured
 dashboard origin can invoke commands; no arbitrary URLs, files or scripts are accepted.
 """
 import base64
+import hashlib
+import hmac
 import json
 import os
 import re
+import secrets
 import sys
 import threading
 import time
@@ -24,6 +27,7 @@ from playwright.sync_api import sync_playwright
 
 PORT = 48722
 ORIGIN = 'https://sbcnav-38t2.vercel.app'
+ORIGINS = {ORIGIN, 'http://localhost:3000', 'http://localhost:3001'}
 API = 'https://sbcnav.137-23-58-53.sslip.io/api/mcdo'
 STATE = app.STATE / 'Web companion'
 STATE.mkdir(parents=True, exist_ok=True)
@@ -245,22 +249,56 @@ from deskflow import Deskflow, public_text
 deskflow = Deskflow(controller, app, sync_playwright, Ireps)
 
 
+class DeskflowAccess:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.sessions = {}
+        self.attempts = {}
+        self.password_digest = hashlib.sha256(b'Antara').digest()
+
+    def unlock(self, password, address):
+        with self.lock:
+            now = time.monotonic()
+            attempts = [t for t in self.attempts.get(address, []) if now - t < 60]
+            if len(attempts) >= 5:
+                raise ValueError('Too many attempts. Try again in a minute.')
+            if not isinstance(password, str) or not hmac.compare_digest(hashlib.sha256(password.encode()).digest(), self.password_digest):
+                self.attempts[address] = attempts + [now]
+                raise ValueError('Incorrect password.')
+            self.attempts.pop(address, None)
+            token = secrets.token_urlsafe(32)
+            self.sessions = {t: expiry for t, expiry in self.sessions.items() if expiry > now}
+            self.sessions[token] = now + 3600
+            return token
+
+    def permitted(self, header):
+        if not header.startswith('Bearer '): return False
+        with self.lock:
+            return self.sessions.get(header[7:], 0) > time.monotonic()
+
+
+deskflow_access = DeskflowAccess()
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass
 
     def permitted(self):
-        return self.headers.get('Host') == f'127.0.0.1:{PORT}' and self.headers.get('Origin') == ORIGIN
+        return self.headers.get('Host') == f'127.0.0.1:{PORT}' and self.headers.get('Origin') in ORIGINS
+
+    def deskflow_permitted(self):
+        return deskflow_access.permitted(self.headers.get('Authorization', ''))
 
     def respond(self, status, value):
         if self.path.startswith('/deskflow/'):
             value=public_text(value)
         self.send_response(status)
         if self.permitted():
-            self.send_header('Access-Control-Allow-Origin', ORIGIN)
+            self.send_header('Access-Control-Allow-Origin', self.headers.get('Origin'))
             self.send_header('Vary', 'Origin')
             self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-            self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+            self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
             self.send_header('Access-Control-Allow-Private-Network', 'true')
         self.send_header('Content-Type', 'application/json')
         self.send_header('Cache-Control', 'no-store')
@@ -273,6 +311,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self.permitted():
             return self.respond(403, {'error': 'Origin not allowed.'})
+        if self.path.startswith('/deskflow/') and not self.deskflow_permitted():
+            return self.respond(401, {'error': 'Unlock Deskflow first.'})
+        if self.path == '/deskflow/overview':
+            return self.respond(200, deskflow.overview())
         if self.path == '/deskflow/progress':
             return self.respond(200, deskflow.progress())
         if self.path == '/deskflow/status':
@@ -290,6 +332,10 @@ class Handler(BaseHTTPRequestHandler):
                 if not 0 < length <= 2_000_000: raise ValueError('Invalid request size.')
                 data = json.loads(self.rfile.read(length))
                 if not isinstance(data, dict): raise ValueError('Expected a JSON object.')
+                if self.path == '/deskflow/unlock':
+                    return self.respond(200, {'token':deskflow_access.unlock(data.get('password'), self.client_address[0])})
+                if not self.deskflow_permitted():
+                    return self.respond(401, {'error':'Unlock Deskflow first.'})
                 return self.respond(200, deskflow.command(self.path.rsplit('/',1)[-1], data))
             except (ValueError, KeyError, TypeError, RuntimeError) as exc:
                 return self.respond(400, {'error': str(exc)})

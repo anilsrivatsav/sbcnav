@@ -4,7 +4,7 @@ from pathlib import Path
 from datetime import datetime, date, timedelta
 from dataclasses import asdict
 from rp.store import Store
-from rp.rules import calculate, FAMILIES, UNITS, CONTRACT_STATES
+from rp.rules import calculate, number, FAMILIES, UNITS, CONTRACT_STATES
 from rp.standard_conditions import review, annual_fee
 from rp.contract_fields import candidate_fields
 from rp.rules import Result
@@ -67,6 +67,46 @@ class Deskflow:
                     'collection_warning':('IREPS counts include rows it does not display. '+str(len(candidates[-1]['rows']))+' visible contracts were saved. Verify any unmatched contract in IREPS.' if candidates and candidates[-1].get('warnings') else ''),
                     'families':FAMILIES,'units':UNITS,'states':CONTRACT_STATES,
                     'conditions_by_state':{state:review({'status':state}) for state in CONTRACT_STATES}}
+
+    def overview(self):
+        """Small, read-only view of the latest collected IREPS scheduled catalogue."""
+        snapshot=self.store.evidence('__workspace__','scheduled_snapshot')
+        if not snapshot:
+            return {'collected_at':None,'categories':[],'lots':[],'progress':self.progress()}
+        rows=[]
+        for key,lot in self.store.current_lots():
+            record=self.detail(key);contract=record['contract'];result=record['result']
+            history=[]
+            for auction in sorted(record['auctions'],key=lambda item:item.get('date',''),reverse=True):
+                if auction.get('date','')>=lot.get('start',''):
+                    continue
+                # These rows were collected under the same IREPS lot number. Keep
+                # the scope visible; a human still verifies exact comparability.
+                status=auction.get('outcome','Unknown')
+                status_date=auction.get('date','')
+                same_rate=False
+                if contract.get('lar') not in (None,'') and auction.get('bid_rate') not in (None,''):
+                    try:same_rate=number(contract['lar'])==number(auction['bid_rate'])
+                    except ValueError:pass
+                if status=='Sold' and contract.get('status') in ('Running','Completed','Foreclosed') and same_rate:
+                    status=contract['status']
+                    status_date=contract.get('closed') if status=='Foreclosed' else contract.get('end') if status=='Completed' else contract.get('start')
+                elif status=='No Bids':
+                    status='Failed'
+                history.append({'date':auction.get('date',''),'status':status,'status_date':status_date or auction.get('date',''),
+                                'lot':auction.get('previous_lot') or auction.get('lot',''),'category':auction.get('category',''),
+                                'description':auction.get('description',''),'accepted_rate':auction.get('bid_rate','') if auction.get('outcome')=='Sold' else '',
+                                'rate_unit':auction.get('rate_unit',''),'source':auction.get('source','')})
+            rows.append({'key':key,'asset':lot.get('description') or lot.get('asset') or lot.get('lot',''),
+                         'lot':lot.get('lot',''),'category':lot.get('category',''),'subcategory':lot.get('subcategory',''),
+                         'date':lot.get('start',''),'station':lot.get('station',''),'train':lot.get('train',''),
+                         'catalogue':lot.get('catalogue',''),'details':lot.get('description',''),
+                         'rate_unit':lot.get('rate_unit',''),'value':result.get('rp') if result.get('ready') else None,
+                         'justification':public_text(result.get('justification') if result.get('ready') else result.get('missing','')),
+                         'rule':result.get('rule',''),'history':history})
+        rows.sort(key=lambda item:(item['date'],item['catalogue'],item['lot']),reverse=True)
+        return {'collected_at':snapshot[-1].get('collected_at'),'categories':sorted({r['category'] for r in rows if r['category']}),
+                'lots':rows,'progress':self.progress()}
 
     def progress(self):
         # The page receives only progress, never the collected commercial records.

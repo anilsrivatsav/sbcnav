@@ -1,7 +1,7 @@
 """Reserve-price proposals from explicit, verified evidence. No IREPS mutations."""
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
-from datetime import date, timedelta
+from datetime import date
 import calendar
 
 VERSION = '2026-10-17 / RP workbook logic with SCC v2.0 checks'
@@ -124,6 +124,13 @@ def _calculate(lot, auctions, contract, inputs):
         rp = money(base * factor)
         return Result(True, str(rp), formula, str(base), str(factor), evidence + text + f' Proposed RP {rp} {target_unit}.', rule=rule)
 
+    if state == 'Running':
+        if not sold or lar <= 0: raise ValueError('A verified previous sold auction and its accepted LAR are required for a running contract.')
+        return done(lar, Decimal(1), '=+H{r}', 'Live running contract: use the accepted LAR, even when the contract has run for only a few days.', 'running_lar')
+    if state == 'Completed' and (last is None or last['outcome'] == 'Sold'):
+        if not sold or lar <= 0: raise ValueError('A verified previous sold auction and its accepted LAR are required for a completed contract.')
+        return done(lar, Decimal('1.1'), '=+H{r}*1.1', 'Completed contract: accepted LAR plus 10%.', 'completed_lar')
+
     if state in ('Not commenced', 'Not signed'):
         if previous <= 0: raise ValueError('Previous RP is needed for non-commencement.')
         if not contract.get('second_bidder_verified'): raise ValueError('Verify the second-highest DISTINCT bidder rate (or explicitly confirm a single bidder). Bidding increments do not qualify.')
@@ -154,16 +161,9 @@ def _calculate(lot, auctions, contract, inputs):
         if failures == 0:
             return done(lar, Decimal(1), '=+H{r}', 'Foreclosed after six months or more; accepted LAR retested.', 'late_foreclosure')
         if initial <= 0: initial = lar
-    if state in ('Running', 'Completed'):
+    if state == 'Completed':
         if lar <= 0: raise ValueError('Accepted LAR is missing.')
-        full_three_years = dt(contract['end']) + timedelta(days=1) >= months_after(dt(contract['start']), 36)
-        if family in ('Parking / Pay & Use', 'Parcel'):
-            factor = Decimal('1.1') if full_three_years else Decimal(1)
-            text = 'Full three-year tenure: LAR + 10%.' if full_three_years else 'Tenure below three years: accepted LAR retained.'
-            if state == 'Running': text += ' Existing contract remains live; a new contract must start after its verified end date.'
-            if last is None or last['outcome'] == 'Sold':return done(lar, factor, '=+H{r}*1.1' if full_three_years else '=+H{r}', text, 'expiry')
-            if initial <= 0:initial=lar*factor
-        elif last is None or last['outcome'] == 'Sold':raise ValueError('This completed/running asset needs its family-specific benchmark or review; automatic expiry escalation is not specified by the local logic.')
+        if initial <= 0: initial = lar * Decimal('1.1')
     if family == 'Shop (case by case)':
         if not inputs.get('use_market_bid'): raise ValueError('Shop pricing requires an explicit case-by-case decision. Select market-bid adoption only after review.')
         if not last or last['outcome'] != 'Rejected' or number(last.get('bid_rate') or 0) <= 0: raise ValueError('A verified rejected bid RATE is required for market-price adoption.')
