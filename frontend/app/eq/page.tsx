@@ -26,7 +26,7 @@ function EqForm({ data }: { data: EqData }) {
   );
   return <article className={styles.form}>
     <header className={styles.formHeader}>
-      <div className={styles.emblem}>◉</div>
+      <img className={styles.emblem} src="/eq/indian-railways-logo.png" alt="Indian Railways logo" />
       <div>दक्षिण पश्चिम रेलवे / South Western Railway</div>
       <strong>आपातकालीन कोटा के लिए आवेदन / Application for Emergency Quota</strong>
       <div>तारीख / Date: <span className={styles.date}>{data.applicationDate}</span></div>
