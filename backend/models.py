@@ -876,6 +876,16 @@ class McdoSyncRun(Base):
     error: Mapped[str | None] = mapped_column(Text)
 
 
+class DeskflowRelay(Base):
+    __tablename__ = 'deskflow_relay'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    overview: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    software_update: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    command: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    command_id: Mapped[str | None] = mapped_column(String(36))
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class MobileDeviceState(Base):
     """Latest cache and sync summary reported by each inspection device."""
 
@@ -895,4 +905,3 @@ class MobileDeviceState(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
-

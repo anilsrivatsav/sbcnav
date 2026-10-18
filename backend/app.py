@@ -61,6 +61,7 @@ from api_utils import envelope, exception_response, filter_search, paginate, sor
 from inspection_router import router as inspection_router
 from publicity_router import router as publicity_router
 from mcdo_router import router as mcdo_router
+from deskflow_router import router as deskflow_router
 from mcdo_router import configure_cache_invalidator
 from services import (
     audit_fields,
@@ -255,6 +256,7 @@ app = FastAPI(title="Rail Dashboard API")
 app.include_router(inspection_router)
 app.include_router(publicity_router)
 app.include_router(mcdo_router)
+app.include_router(deskflow_router)
 configure_cache_invalidator(_invalidate_bootstrap_cache)
 app.add_middleware(
     CORSMiddleware,

@@ -410,5 +410,43 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(409, {'error': str(exc)})
 
 
+def deskflow_relay_loop():
+    """Connect the local collector to the browser through the authenticated API."""
+    endpoint = API.rsplit('/', 1)[0] + '/deskflow/agent/sync'
+    ack_path = STATE / 'deskflow-command-ack.json'
+    while True:
+        try:
+            credential = (STATE / 'operator.key').read_text(encoding='utf-8').strip()
+            try:
+                ack = json.loads(ack_path.read_text(encoding='utf-8')).get('command_id')
+            except (OSError, ValueError):
+                ack = None
+            payload = {'overview': public_text(deskflow.overview()),
+                       'software_update': software_update_status(),
+                       'ack_command_id': ack}
+            req = urllib.request.Request(endpoint, data=json.dumps(payload).encode(),
+                headers={'Authorization': 'Bearer ' + credential, 'Content-Type': 'application/json'})
+            with urllib.request.urlopen(req, timeout=20) as response:
+                command = json.load(response)
+            command_id = command.get('command_id')
+            if command_id and command_id != ack:
+                # Record the command before executing: updates can restart this process.
+                ack_path.write_text(json.dumps({'command_id': command_id}), encoding='utf-8')
+                try:
+                    if command.get('action') == 'software-update':
+                        start_software_update()
+                    elif command.get('action') in ('collect', 'history'):
+                        with controller.lock, deskflow.lock:
+                            if software_update_running():
+                                raise RuntimeError('The desktop companion is updating. Wait for it to finish.')
+                            deskflow.command(command['action'], {})
+                except (ValueError, RuntimeError) as exc:
+                    deskflow.state.update(phase='error', error=str(exc), message='Deskflow command could not start.')
+        except Exception:
+            pass  # Retain local collection and retry when the API is available.
+        time.sleep(4)
+
+
 if __name__ == '__main__':
+    threading.Thread(target=deskflow_relay_loop, daemon=True).start()
     ThreadingHTTPServer(('127.0.0.1', PORT), Handler).serve_forever()
