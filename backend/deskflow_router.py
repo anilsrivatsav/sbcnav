@@ -10,13 +10,13 @@ import time
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request
 from sqlalchemy import select
 
 from database import SessionLocal
 from mcdo.auth import administrator
 from models import DeskflowRelay, DeskflowWorkbookArchive
-from deskflow_archive import decrypt_archive
+from deskflow_archive import decrypt_archive, encrypt_archive, update_archive
 
 router = APIRouter(prefix='/api/deskflow', tags=['Deskflow'])
 _attempt_lock = threading.Lock()
@@ -126,12 +126,12 @@ def workbook_history(book: str = '', q: str = Query('', max_length=120), page: i
 
 @router.post('/{action}', dependencies=[Depends(_browser)])
 def command(action: str, payload: dict = Body(...)):
-    if action not in ('collect', 'history', 'software-update') or payload != {}:
+    if action not in ('collect', 'history', 'software-update', 'sync-workbooks') or payload != {}:
         raise HTTPException(400, 'Invalid Deskflow command.')
     with SessionLocal.begin() as session:
         row = _row(session)
         if not row.last_seen_at or (datetime.now(timezone.utc) - row.last_seen_at.replace(tzinfo=row.last_seen_at.tzinfo or timezone.utc)).total_seconds() >= 30:
-            raise HTTPException(503, 'Open the SBCNAV desktop companion on the Windows PC to collect lots.')
+            raise HTTPException(503, 'Open the SBCNAV desktop companion on the Windows PC to run this command.')
         if row.command_id:
             raise HTTPException(409, 'A desktop command is already pending.')
         row.command_id = str(uuid4())
@@ -154,3 +154,37 @@ def agent_sync(payload: dict = Body(...)):
             row.command_id = None
             row.command = {}
         return {'command_id': row.command_id, **row.command} if row.command_id else {'command_id': None}
+
+
+@router.post('/agent/workbook-archive', dependencies=[Depends(administrator)])
+async def agent_workbook_archive(request: Request):
+    if request.headers.get('content-type', '').split(';')[0] != 'application/zip':
+        raise HTTPException(415, 'Upload a workbook ZIP bundle.')
+    try:
+        declared_size = int(request.headers.get('content-length', '0') or 0)
+    except ValueError as exc:
+        raise HTTPException(400, 'Invalid workbook bundle length.') from exc
+    if declared_size > 8_000_000:
+        raise HTTPException(413, 'Workbook bundle exceeds the 8 MB limit.')
+    chunks = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > 8_000_000:
+            raise HTTPException(413, 'Workbook bundle exceeds the 8 MB limit.')
+        chunks.append(chunk)
+    bundle = b''.join(chunks)
+    if not bundle or len(bundle) > 8_000_000:
+        raise HTTPException(413, 'Workbook bundle is empty or too large.')
+    with SessionLocal.begin() as session:
+        row = session.execute(select(DeskflowWorkbookArchive).where(DeskflowWorkbookArchive.id == 1).with_for_update()).scalar_one_or_none()
+        if row is None:
+            raise HTTPException(503, 'Import the initial workbook archive first.')
+        try:
+            archive, changed = update_archive(decrypt_archive(row.ciphertext), bundle)
+            if changed:
+                row.ciphertext = encrypt_archive(archive)
+        except (ValueError, RuntimeError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+    return {'changed': changed, 'generatedAt': archive['generatedAt'],
+            'totalRows': archive['totalRows'], 'auctionRecordCount': archive['auctionRecordCount']}

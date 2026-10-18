@@ -6,6 +6,7 @@ dashboard origin can invoke commands; no arbitrary URLs, files or scripts are ac
 import base64
 import hashlib
 import hmac
+import io
 import json
 import os
 import re
@@ -16,6 +17,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -256,6 +258,88 @@ from deskflow import Deskflow, public_text
 deskflow = Deskflow(controller, app, sync_playwright, Ireps)
 
 
+class WorkbookArchiveSync:
+    """Send selected workbook snapshots to the encrypted Oracle archive."""
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.thread = None
+        self.path = STATE / 'workbook-sync.json'
+        try:
+            self.state = json.loads(self.path.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            self.state = {}
+        self.state.setdefault('phase', 'waiting')
+        self.state.setdefault('message', 'Waiting for selected workbooks on this PC.')
+
+    def snapshot(self):
+        with self.lock:
+            return {**self.state, 'busy': bool(self.thread and self.thread.is_alive())}
+
+    def save(self, **changes):
+        with self.lock:
+            self.state.update(changes)
+            temp = self.path.with_suffix('.tmp')
+            temp.write_text(json.dumps(self.state), encoding='utf-8')
+            temp.replace(self.path)
+
+    def start(self, force=False):
+        with self.lock:
+            if self.thread and self.thread.is_alive():
+                if force:
+                    raise RuntimeError('Workbook sync is already running.')
+                return
+            if not (STATE / 'operator.key').is_file():
+                if force:
+                    raise RuntimeError('This computer needs administrator setup.')
+                return
+            self.thread = threading.Thread(target=self.work, args=(force,), daemon=True)
+            self.thread.start()
+
+    def work(self, force):
+        from rp.workbooks import WorkbookSelection
+        try:
+            self.save(phase='checking', message='Checking selected local workbooks.', error=None)
+            selection = WorkbookSelection(deskflow.userdir / 'workbooks.json')
+            names = {'parcel': 'parcels.xlsx', 'catering': 'catering.xlsx', 'commercial': 'others.xlsx'}
+            data = {}
+            for group, name in names.items():
+                path = selection.target('D:/ANIL/UK', group)
+                data[name] = path.read_bytes()
+            digest = hashlib.sha256(b''.join(hashlib.sha256(data[name]).digest() for name in sorted(data))).hexdigest()
+            if not force and digest == self.snapshot().get('digest'):
+                self.save(phase='complete', message='Local workbooks are already synced.', error=None)
+                return
+            memory = io.BytesIO()
+            with zipfile.ZipFile(memory, 'w', compression=zipfile.ZIP_DEFLATED) as package:
+                for name, content in data.items():
+                    package.writestr(name, content)
+            bundle = memory.getvalue()
+            if len(bundle) > 8_000_000:
+                raise RuntimeError('Selected workbooks exceed the 8 MB upload limit.')
+            self.save(phase='uploading', message='Updating the encrypted workbook archive.')
+            credential = (STATE / 'operator.key').read_text(encoding='utf-8').strip()
+            endpoint = API.rsplit('/', 1)[0] + '/deskflow/agent/workbook-archive'
+            req = urllib.request.Request(endpoint, data=bundle,
+                headers={'Authorization': 'Bearer ' + credential, 'Content-Type': 'application/zip'})
+            try:
+                with urllib.request.urlopen(req, timeout=120) as response:
+                    result = json.load(response)
+            except urllib.error.HTTPError as exc:
+                try:
+                    detail = json.load(exc).get('detail', 'Workbook archive update failed.')
+                except (OSError, ValueError):
+                    detail = 'Workbook archive update failed.'
+                raise RuntimeError(str(detail)) from None
+            self.save(phase='complete', message='Local workbook history is up to date.',
+                digest=digest, revision=result['generatedAt'], rows=result['totalRows'],
+                records=result['auctionRecordCount'], error=None)
+        except Exception as exc:
+            self.save(phase='error', message='Workbook sync needs attention.', error=str(exc)[:500])
+
+
+archive_sync = WorkbookArchiveSync()
+
+
 class DeskflowAccess:
     def __init__(self):
         self.lock = threading.Lock()
@@ -414,6 +498,7 @@ def deskflow_relay_loop():
     """Connect the local collector to the browser through the authenticated API."""
     endpoint = API.rsplit('/', 1)[0] + '/deskflow/agent/sync'
     ack_path = STATE / 'deskflow-command-ack.json'
+    last_archive_check = 0.0
     while True:
         try:
             credential = (STATE / 'operator.key').read_text(encoding='utf-8').strip()
@@ -421,13 +506,18 @@ def deskflow_relay_loop():
                 ack = json.loads(ack_path.read_text(encoding='utf-8')).get('command_id')
             except (OSError, ValueError):
                 ack = None
-            payload = {'overview': public_text(deskflow.overview()),
+            overview = public_text(deskflow.overview())
+            overview['archive_sync'] = public_text(archive_sync.snapshot())
+            payload = {'overview': overview,
                        'software_update': software_update_status(),
                        'ack_command_id': ack}
             req = urllib.request.Request(endpoint, data=json.dumps(payload).encode(),
                 headers={'Authorization': 'Bearer ' + credential, 'Content-Type': 'application/json'})
             with urllib.request.urlopen(req, timeout=20) as response:
                 command = json.load(response)
+            if not software_update_running() and time.monotonic() - last_archive_check >= 60:
+                last_archive_check = time.monotonic()
+                archive_sync.start()
             command_id = command.get('command_id')
             if command_id and command_id != ack:
                 # Record the command before executing: updates can restart this process.
@@ -435,6 +525,10 @@ def deskflow_relay_loop():
                 try:
                     if command.get('action') == 'software-update':
                         start_software_update()
+                    elif command.get('action') == 'sync-workbooks':
+                        if software_update_running():
+                            raise RuntimeError('The desktop companion is updating. Wait for it to finish.')
+                        archive_sync.start(force=True)
                     elif command.get('action') in ('collect', 'history'):
                         with controller.lock, deskflow.lock:
                             if software_update_running():

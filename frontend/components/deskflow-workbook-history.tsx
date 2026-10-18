@@ -7,7 +7,7 @@ type RecordItem={id:string;dateLabel:string;asset:string;portfolio:string;assetT
 type SourceRow={bookId:string;file:string;sheet:string;row:{n:number;v:(string|number|boolean|null)[];f:Record<string,string>}};
 type Result={available:boolean;books:Book[];items:(RecordItem|SourceRow)[];total:number;page:number;limit:number;sourceManifest?:Record<string,{sha256:string}>};
 
-export function DeskflowWorkbookHistory({token}:{token:string}){
+export function DeskflowWorkbookHistory({token,revision}:{token:string;revision?:string}){
   const [book,setBook]=useState("");
   const [query,setQuery]=useState("");
   const [search,setSearch]=useState("");
@@ -25,7 +25,7 @@ export function DeskflowWorkbookHistory({token}:{token:string}){
       .then(setData).catch(reason=>{if(!controller.signal.aborted)setError(reason instanceof Error?reason.message:"Workbook history could not be loaded.");})
       .finally(()=>{if(!controller.signal.aborted)setLoading(false);});
     return()=>controller.abort();
-  },[token,book,search,view,page]);
+  },[token,book,search,view,page,revision]);
   function submit(event:FormEvent){event.preventDefault();setPage(1);setSearch(query.trim());}
   const pages=Math.max(1,Math.ceil((data?.total||0)/30));
   return <section id="workbook-history" className="rounded-2xl border border-slate-200 bg-white p-5">
