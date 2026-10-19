@@ -82,15 +82,31 @@ export function Deskflow(){
 
 const shortIssue:Record<string,string>={asset_identity:"Confirm this asset and its earlier lots.",benchmark_source:"Add the benchmark source.",standard_conditions:"Review the applicable conditions.",bid_and_lar:"Confirm the accepted rate and awardee.",previous_outcome:"Add the previous auction result.",contract_link:"Check the contract rate and awardee against the sold lot.",local_workbook:"Save the reviewed value to the workbook.",history_coverage:"Refresh auction history.",scheduled_freshness:"Refresh current lots.",auction_schedule:"Check the auction schedule."};
 function LotRow({lot,token,revision}:{lot:Lot;token:string;revision?:string}){
+  const [working,setWorking]=useState<WorkbookWorking>();
+  const [workingError,setWorkingError]=useState("");
+  const query=/^\d{5}/.exec(lot.lot)?.[0]||lot.lot;
+  useEffect(()=>{
+    let current=true;setWorking(undefined);setWorkingError("");
+    loadWorkbookWorkings(token,query,revision).then(rows=>{
+      const normalize=(value:string)=>value.toUpperCase().replace(/[^A-Z0-9]/g,"");
+      const matches=rows.filter(row=>row.date===lot.date.slice(0,10)&&(/^\d{5}$/.test(query)?new RegExp(`(^|\\D)${query}(?!\\d)`).test(row.asset):normalize(row.asset)===normalize(lot.lot)));
+      if(current&&matches.length===1)setWorking(matches[0]);
+    }).catch(reason=>{if(current)setWorkingError(deskflowError(reason,"Current workbook value could not be loaded."));});
+    return()=>{current=false;};
+  },[token,query,revision,lot.date]);
+  const displayedValue=working?.rp??lot.value;
+  const displayedJustification=working?.justification||lot.justification;
+  const workbookDiffers=working?.rp!=null&&lot.value!=null&&Math.round(working.rp*100)!==Math.round(Number(lot.value)*100);
   const checks=lot.verification?.checks||[];
   const issues=checks.filter(check=>check.state!=="pass");
   const issue=issues.find(check=>check.state==="fail")||issues[0];
   return <tr className="border-b border-slate-200 align-top last:border-0">
     <td className="whitespace-nowrap px-4 py-3">{dateText(lot.date)}</td>
     <td className="px-4 py-3 font-medium">{lot.lot}</td>
-    <td className="whitespace-nowrap px-4 py-3 tabular-nums">{valueText(lot.value).replace(/^₹/,"")}</td>
-    <td className="px-4 py-3"><p className="leading-6">{lot.justification?.replace(/\s+/g," ").trim()||"Pending evidence."}</p>
-      {issue&&<p className={`mt-1 text-xs ${issue.state==="fail"&&lot.value!==null?"text-red-700":"text-amber-800"}`}>{issue.state==="fail"?lot.value===null?"Needs evidence: ":"Error: ":"Review: "}{shortIssue[issue.code]||issue.message}</p>}
+    <td className="whitespace-nowrap px-4 py-3 tabular-nums">{valueText(displayedValue).replace(/^₹/,"")}{working?.rp!=null&&<p className="mt-1 text-xs text-slate-500" title={`${working.portfolio} · ${working.sheet}, row ${working.row}`}>Workbook</p>}</td>
+    <td className="px-4 py-3"><p className="leading-6">{displayedJustification?.replace(/\s+/g," ").trim()||"Pending evidence."}</p>
+      {workingError&&<p role="alert" className="mt-1 text-xs text-red-700">{workingError}</p>}
+      {workbookDiffers?<p className="mt-1 text-xs text-amber-800">Review: Saved workbook value differs from the calculation.</p>:issue&&<p className={`mt-1 text-xs ${issue.state==="fail"&&lot.value!==null?"text-red-700":"text-amber-800"}`}>{issue.state==="fail"?lot.value===null?"Needs evidence: ":"Error: ":"Review: "}{shortIssue[issue.code]||issue.message}</p>}
       {!lot.verification&&<p className="mt-1 text-xs text-amber-800">Review: Verification is pending.</p>}
       <details className="mt-2 text-sm text-slate-600"><summary className="cursor-pointer font-medium text-emerald-800">Asset details, previous lots &amp; verification</summary>
         <dl className="mt-3 grid gap-x-4 gap-y-2 sm:grid-cols-2"><div><dt className="text-xs text-slate-500">Asset</dt><dd>{lot.asset}</dd></div><div><dt className="text-xs text-slate-500">Category</dt><dd>{[lot.category,lot.subcategory].filter(Boolean).join(" / ")}</dd></div><div><dt className="text-xs text-slate-500">Catalogue</dt><dd>{lot.catalogue}</dd></div><div><dt className="text-xs text-slate-500">Station / train</dt><dd>{[lot.station,lot.train].filter(Boolean).join(" / ")||"—"}</dd></div><div><dt className="text-xs text-slate-500">Rate unit</dt><dd>{lot.rate_unit||"—"}</dd></div><div><dt className="text-xs text-slate-500">Calculation rule</dt><dd>{lot.rule||"Pending evidence"}</dd></div></dl>
