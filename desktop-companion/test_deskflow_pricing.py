@@ -56,11 +56,11 @@ class DeskflowPricingTests(unittest.TestCase):
                 self.assertEqual(result.rp, '1000.00')
                 self.assertEqual(result.rule, 'foreclosed_lar')
 
-    def test_foreclosure_after_failed_auction_uses_original_retry_logic(self):
+    def test_foreclosure_after_failed_auction_still_uses_lar(self):
         result = self.proposal('Foreclosed', 'No Bids', contract_overrides={'closed': '2026-10-08'})
         self.assertTrue(result.ready, result.missing)
         self.assertEqual(result.rp, '1000.00')
-        self.assertEqual(result.rule, 'first_two_attempts')
+        self.assertEqual(result.rule, 'foreclosed_lar')
 
     def test_ireps_foreclosure_status_variants(self):
         for raw_status in ('Foreclosed', 'Foreclosed after 6 months by party', 'Foreclosure by Railway'):

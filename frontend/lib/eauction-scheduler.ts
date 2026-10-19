@@ -1,9 +1,9 @@
 export type Holiday = { date: string; name: string };
-export type Booking = { id: string; date: string; time: string; category: string; subject: string; status: 'scheduled' | 'cancelled' | 'withdrawn'; noticeDate?: string; scheduleId?: string; catalogueId?: string; manualScheduleId?: boolean; manualCatalogueId?: boolean; source?: boolean; sourceFile?: string; sheetRow?: number; sheetTab?: string; syncedAt?: string };
+export type Booking = { id: string; date: string; time: string; category: string; subject: string; status: 'scheduled' | 'cancelled' | 'withdrawn'; lotKey?: string; noticeDate?: string; scheduleId?: string; catalogueId?: string; manualScheduleId?: boolean; manualCatalogueId?: boolean; source?: boolean; sourceFile?: string; sheetRow?: number; sheetTab?: string; syncedAt?: string };
 export type Proposal = { earliest: string; date: string; time: string; skipped: { date: string; reason: string }[]; daysAfterNotice: number; category: string; subject: string; noticeDate: string };
 
 export const categories = [
-  { name: 'Parking', time: '15:00' }, { name: 'Parcel', time: '11:00' },
+  { name: 'Parking', time: '13:00' }, { name: 'Parcel', time: '11:00' },
   { name: 'Catering', time: '11:00' }, { name: 'MPS', time: '15:00' },
   { name: 'Miscellaneous', time: '12:00' }, { name: 'Pay & Use', time: '15:00' },
   { name: 'Advertising', time: '12:00' }, { name: 'ATM', time: '15:00' },
@@ -11,8 +11,7 @@ export const categories = [
   { name: 'Food truck', time: '12:00' }, { name: 'Other', time: '12:00' }
 ] as const;
 
-// Latest active EA numbers and the latest catalogue number in the linked workbook.
-// Update this snapshot when the sheet changes, or import a current schedule CSV.
+// Floors from the workbook; live rows determine the actual next numbers.
 const sheetScheduleNumbers: Record<string, number> = {
   Parking: 170, Parcel: 156, Catering: 189, MPS: 187,
   Miscellaneous: 136, 'Pay & Use': 75, Advertising: 87, ATM: 31,
@@ -33,7 +32,7 @@ const idFormats: Record<string, { schedule: string; catalogue: string; suffix?: 
   'Food truck': { schedule: 'SBC-Misc-FT-', catalogue: 'SBC-FoodTruck', catalogueYear: false }
 };
 
-function idCategory(value: string): string {
+export function idCategory(value: string): string {
   const category = value.trim().toLowerCase().replace(/\s+/g, ' ');
   if (/^(parking|park)/.test(category)) return 'Parking';
   if (/^parcel/.test(category)) return 'Parcel';
@@ -50,7 +49,7 @@ function idCategory(value: string): string {
 }
 
 export function scheduleNumber(value?: string): number {
-  return Number(value?.match(/(?:EA|FT)[-\s]*(\d+)/i)?.[1] || 0);
+  return Number(value?.match(/(?:EA|FT)[-\s]*(\d+)/i)?.[1] || value?.match(/-(?:E)?(\d+)-(?:\d{2}|F\d{2})$/i)?.[1] || 0);
 }
 export function catalogueNumber(value?: string): number {
   return Math.max(0, ...(value?.match(/\d+/g) || []).map(Number).filter(n => n >= 500 && (n < 2000 || n > 2100)));

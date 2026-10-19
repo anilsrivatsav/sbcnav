@@ -10,6 +10,7 @@ from rp.contract_fields import candidate_fields
 from rp.rules import Result
 from rp.workbooks import WorkbookSelection, family_group, SPECS
 from rp.review import WorkbookPreview, digest
+from rp.verifier import verify
 import re, base64
 
 def public_text(value):
@@ -33,6 +34,7 @@ class Deskflow:
         self.lock=threading.RLock();self.thread=None
         self.cancelled=threading.Event();self.process=None
         self.previews={}
+        self._workbook_digests={}
         self.userdir=self.store.path.parent
         self.state={'phase':'ready','message':'Ready to update local workbooks.','error':None}
         previous=self.store.evidence('__workspace__','workbook_update')
@@ -53,8 +55,26 @@ class Deskflow:
         auctions=self.store.evidence(key,'auction');c=self.store.evidence(key,'contract');i=self.store.evidence(key,'inputs')
         contract=c[-1] if c else {};inputs=i[-1] if i else {}
         revision=hashlib.sha256(json.dumps([lot,auctions,contract,inputs],sort_keys=True).encode()).hexdigest()
-        return {'key':key,'revision':revision,'lot':lot,'auctions':auctions,'contract':contract,'inputs':inputs,
+        record={'key':key,'revision':revision,'lot':lot,'auctions':auctions,'contract':contract,'inputs':inputs,
                 'result':self.result(lot,auctions,contract,inputs),'conditions':review(contract)}
+        scheduled=self.store.evidence('__workspace__','scheduled_snapshot')
+        history=self.store.evidence('__workspace__','history_snapshot')
+        written=self.store.evidence(key,'workbook_write')
+        workbook=dict(written[-1]) if written else None
+        if workbook and workbook.get('workbook'):
+            try:
+                path=Path(workbook['workbook']);stat=path.stat()
+                identity=(stat.st_mtime_ns,stat.st_size)
+                cache=self.__dict__.setdefault('_workbook_digests',{})
+                cached=cache.get(path)
+                if not cached or cached[0]!=identity:
+                    cached=(identity,digest(path));cache[path]=cached
+                workbook['current_digest']=cached[1]
+            except OSError:
+                workbook['current_digest']=None
+        record['verification']=verify(record,scheduled[-1] if scheduled else None,
+                                      history[-1] if history else None,workbook)
+        return record
 
     def snapshot(self):
         updater_busy=self.updater.snapshot()['busy']
@@ -103,7 +123,7 @@ class Deskflow:
                          'catalogue':lot.get('catalogue',''),'details':lot.get('description',''),
                          'rate_unit':lot.get('rate_unit',''),'value':result.get('rp') if result.get('ready') else None,
                          'justification':public_text(result.get('justification') if result.get('ready') else result.get('missing','')),
-                         'rule':result.get('rule',''),'history':history})
+                         'rule':result.get('rule',''),'history':history,'verification':record['verification']})
         rows.sort(key=lambda item:(item['date'],item['catalogue'],item['lot']),reverse=True)
         return {'collected_at':snapshot[-1].get('collected_at'),'categories':sorted({r['category'] for r in rows if r['category']}),
                 'lots':rows,'progress':self.progress()}
@@ -142,7 +162,7 @@ class Deskflow:
                     cs={re.match('[A-Z]+',c.get('r'))[0]:c for c in row}
                     identity=(_text(cs.get(lotcol),ss),_text(cs.get(catcol),ss))
                     if identity[0]:identities.setdefault(identity,set()).add(group)
-        batches={g:[] for g in SPECS};ready=0;pending=[];revisions={}
+        batches={g:[] for g in SPECS};keys_by_group={g:[] for g in SPECS};ready=0;pending=[];revisions={}
         for key,lot in self.store.current_lots():
             record=self.detail(key);revisions[key]=record['revision'];inputs=dict(record['inputs'])
             family=inputs.get('family') or ('Parcel' if lot.get('category','').startswith('Parcel') else 'Catering / MPS' if any(v in lot.get('category','') for v in ('Catering','Multipurpose')) else 'Food truck' if 'food truck' in lot.get('description','').lower() else 'Parking / Pay & Use')
@@ -150,6 +170,7 @@ class Deskflow:
             matches=identities.get((lot['lot'],lot.get('catalogue','')),set())
             if len(matches)>1:raise ValueError('The same lot and catalogue appear in multiple workbooks; resolve the duplicate before updating.')
             group=next(iter(matches)) if matches else family_group(family)
+            keys_by_group[group].append(key)
             result=Result(**record['result'])
             if result.ready:ready+=1;result.justification=public_text(result.justification)
             else:
@@ -169,7 +190,13 @@ class Deskflow:
                 if digest(preview.path)!=preview.original_hash:raise ValueError('A workbook changed during calculation; retry the update.')
             for preview in staged:
                 backup=preview.commit();saved.append({'workbook':str(preview.path),'backup':backup,'changes':len(preview.changes)})
+                self._workbook_digests.pop(preview.path,None)
                 with self.store.connect() as c:self.store.log(c,'excel_saved',saved[-1])
+                group=next(group for group,path in targets.items() if path==preview.path)
+                saved_digest=digest(preview.path)
+                for key in keys_by_group[group]:
+                    self.store.save_evidence(key,'workbook_write',{'revision':revisions[key],
+                        'ready':self.detail(key)['result'].get('ready',False),'workbook':str(preview.path),'digest':saved_digest})
             report={'saved':saved,'calculated':ready,'pending':pending,'at':datetime.now().isoformat()}
             self.store.save_evidence('__workspace__','workbook_update',report)
             message=f'{len(saved)} local workbooks saved with backups. {ready} values calculated.'
@@ -310,7 +337,7 @@ class Deskflow:
                 if action=='collect':
                     for row in rows:row['start']=parse_day(row['start'])
                     ids=[self.store.save_lot(row) for row in rows]
-                    self.store.save_evidence('__workspace__','scheduled_snapshot',{'ids':ids,'collected_at':datetime.now().isoformat(),'scope':{'source':'IREPS scheduled catalogues'}})
+                    self.store.save_evidence('__workspace__','scheduled_snapshot',{'ids':ids,'complete':True,'count':len(rows),'collected_at':datetime.now().isoformat(),'scope':{'source':'IREPS scheduled catalogues'}})
                 elif action=='history':
                     for row in rows:row['date']=parse_day(row['date'])
                     for key,lot in self.store.current_lots():
@@ -321,6 +348,7 @@ class Deskflow:
                                 self.store.save_evidence(key,'auction',{**row,'captured':True,'previous_lot':row['lot']},row['date']+'|'+row.get('catalogue','')+'|'+row['lot'])
                                 previous=self.store.evidence(key,'inputs')
                                 if previous and changed:self.store.save_evidence(key,'inputs',{**previous[-1],'identity_verified':False})
+                    self.store.save_evidence('__workspace__','history_snapshot',{'from_date':start,'to_date':end,'complete':True,'count':len(rows),'collected_at':datetime.now().isoformat()})
                 else:
                     self.store.save_evidence('__workspace__','web_contract_candidates',{'rows':[{'raw':r,'fields':candidate_fields(r)} for r in rows]})
                 self.state.update(phase='complete',message=f'{len(rows)} records collected. Review the exact asset, dates and sources before calculating.',error=None)
@@ -337,7 +365,9 @@ class Deskflow:
                 key,revision,preview=entry
                 if self.detail(key)['revision']!=revision:raise ValueError('Evidence changed after preview. Prepare a fresh workbook preview.')
                 backup=preview.commit()
+                self._workbook_digests.pop(preview.path,None)
                 with self.store.connect() as c:self.store.log(c,'excel_saved',{'key':key,'workbook':str(preview.path),'backup':backup})
+                self.store.save_evidence(key,'workbook_write',{'revision':revision,'ready':True,'workbook':str(preview.path),'digest':digest(preview.path)})
                 preview.close();del self.previews[token]
                 return {'message':'Workbook saved and verified. A backup of the original is retained.','backup':public_text(backup)}
             record=self.detail(data['key']) if action=='excel-preview' else None

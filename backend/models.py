@@ -894,6 +894,26 @@ class DeskflowWorkbookArchive(Base):
     ciphertext: Mapped[str] = mapped_column(Text, nullable=False)
 
 
+class AuctionHoliday(Base):
+    __tablename__ = 'auction_holidays'
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+
+
+class AuctionScheduleLink(Base):
+    __tablename__ = 'auction_schedule_links'
+    sync_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    lot_key: Mapped[str | None] = mapped_column(String(512), index=True)
+    category: Mapped[str] = mapped_column(String(100), nullable=False)
+    auction_date: Mapped[date] = mapped_column(Date, nullable=False)
+    schedule_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    catalogue_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    sheet_tab: Mapped[str] = mapped_column(String(100), nullable=False)
+    sheet_row: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
 class MobileDeviceState(Base):
     """Latest cache and sync summary reported by each inspection device."""
 

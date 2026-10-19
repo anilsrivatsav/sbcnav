@@ -4,17 +4,18 @@ from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from threading import Lock
 from urllib.parse import quote
-from uuid import UUID
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
-from sqlalchemy import text
-from database import engine
+from sqlalchemy import select, text
+from database import SessionLocal, engine
+from models import AuctionHoliday, AuctionScheduleLink, DeskflowRelay
 from mcdo.sheets_api import Sheets
 
 WORKBOOK = '1n_aQpueOSE8OYl5y5KW3_NuYFg7Knlw3BYslllEp1zk'
 MONTHS = {name: index for index, name in enumerate(('jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'), 1)}
-TIMES = {'Parking':'15:00','Parcel':'11:00','Catering':'11:00','MPS':'15:00','Miscellaneous':'12:00','Pay & Use':'15:00','Advertising':'12:00','ATM':'15:00','PMBJAK':'12:00','CLK / SMVB':'15:00','Food truck':'12:00','Other':'12:00'}
+TIMES = {'Parking':'13:00','Parcel':'11:00','Catering':'11:00','MPS':'15:00','Miscellaneous':'12:00','Pay & Use':'15:00','Advertising':'12:00','ATM':'15:00','PMBJAK':'12:00','CLK / SMVB':'15:00','Food truck':'12:00','Other':'12:00'}
 FORMATS = {'Parking':('SBC-PRK-EA','SBC-PRK',170),'Parcel':('SBC-Parcel-EA','SBC-PRCL',156),'Catering':('SBC-CATG-EA','SBC-CTG',189),'MPS':('SBC-MPS-EA','SBC-MPS',187),'Miscellaneous':('SBC-Misc-EA','SBC-Misc',136),'Pay & Use':('SBC-PnU-EA','SBC-PnU',75),'Advertising':('SBC-ADVT-EA','SBC-Advt',87),'ATM':('SBC-ATM-EA','SBC-ATM',31),'PMBJAK':('SBC-PMBJAK-EA','SBC-PMBJK',3),'CLK / SMVB':('SBC-CLK-EA','SBC-CLK',68),'Food truck':('SBC-Misc-FT-','SBC-FoodTruck',119)}
 _write_lock = Lock()
 
@@ -51,6 +52,9 @@ def _month(title):
 
 def _date(value):
     value = str(value or '').strip()
+    if re.fullmatch(r'\d{5}(?:\.0+)?', value):
+        try:return (date(1899, 12, 30) + timedelta(days=int(float(value)))).isoformat()
+        except (ValueError, OverflowError):return ''
     for pattern in ('%Y-%m-%d','%d-%m-%Y','%d/%m/%Y','%d-%b-%Y','%d-%b-%y'):
         try:return datetime.strptime(value, pattern).date().isoformat()
         except ValueError:pass
@@ -90,7 +94,74 @@ def _rows(sheets):
 def live_schedule():
     sheets = Sheets()
     _, entries = _rows(sheets)
+    with SessionLocal() as session:
+        links = {link.sync_id: link for link in session.scalars(select(AuctionScheduleLink)).all()}
+    for entry in entries:
+        link = links.get(entry['syncId'])
+        if link:
+            entry['lotKey'] = link.lot_key
     return entries
+
+def list_holidays():
+    with SessionLocal() as session:
+        return [{'date': row.day.isoformat(), 'name': row.name} for row in session.scalars(select(AuctionHoliday).order_by(AuctionHoliday.day))]
+
+def save_holidays(payload):
+    items = payload.get('holidays') if isinstance(payload, dict) else None
+    if not isinstance(items, list) or len(items) > 500:
+        raise HTTPException(400, 'Invalid holiday list.')
+    checked = []
+    for item in items:
+        if not isinstance(item, dict) or _date(item.get('date')) != item.get('date') or not isinstance(item.get('name'), str) or not 0 < len(item['name'].strip()) <= 200:
+            raise HTTPException(400, 'Each holiday needs a valid date and name.')
+        checked.append((date.fromisoformat(item['date']), item['name'].strip()))
+    with SessionLocal.begin() as session:
+        for day, name in checked:
+            row = session.get(AuctionHoliday, day)
+            if row: row.name = name
+            else: session.add(AuctionHoliday(day=day, name=name))
+    return list_holidays()
+
+def delete_holiday(day):
+    if _date(day) != day: raise HTTPException(400, 'Invalid holiday date.')
+    with SessionLocal.begin() as session:
+        row = session.get(AuctionHoliday, date.fromisoformat(day))
+        if row: session.delete(row)
+    return list_holidays()
+
+def _check_lot(lot_key, category, sync_id):
+    if not lot_key: return
+    if not isinstance(lot_key, str) or len(lot_key) > 512:
+        raise HTTPException(400, 'Invalid Deskflow lot.')
+    with SessionLocal() as session:
+        linked = session.get(AuctionScheduleLink, sync_id) if sync_id else None
+        if linked and linked.lot_key and linked.lot_key != lot_key:
+            raise HTTPException(409, 'This auction row is already linked to a different Deskflow lot.')
+        if linked and linked.lot_key == lot_key:
+            return
+        relay = session.get(DeskflowRelay, 1)
+        lot = next((item for item in (relay.overview.get('lots', []) if relay and isinstance(relay.overview, dict) else []) if item.get('key') == lot_key), None)
+        if not lot or _category(str(lot.get('category', ''))) != _category(category):
+            raise HTTPException(409, 'Deskflow lot is unavailable or its category changed. Collect lots again.')
+        existing = session.scalars(select(AuctionScheduleLink).where(AuctionScheduleLink.lot_key == lot_key, AuctionScheduleLink.status == 'scheduled')).all()
+        if any(row.sync_id != sync_id for row in existing):
+            raise HTTPException(409, 'This Deskflow lot already has a scheduled auction.')
+
+def _save_link(sync_id, lot_key, category, auction_date, schedule_id, catalogue_id, status, tab, row_number):
+    if not sync_id: return
+    with SessionLocal.begin() as session:
+        link = session.get(AuctionScheduleLink, sync_id)
+        if link is None:
+            link = AuctionScheduleLink(sync_id=sync_id)
+            session.add(link)
+        link.lot_key = lot_key or link.lot_key
+        link.category = category
+        link.auction_date = date.fromisoformat(auction_date)
+        link.schedule_id = schedule_id
+        link.catalogue_id = catalogue_id
+        link.status = status
+        link.sheet_tab = tab
+        link.sheet_row = row_number
 
 def _category(name):
     lower = name.strip().lower()
@@ -111,7 +182,10 @@ def _number(value, kind):
     value = str(value or '')
     if kind == 'schedule':
         found = re.search(r'(?:EA|FT)[-\s]*(\d+)', value, re.I)
-        return int(found[1]) if found else 0
+        if found:return int(found[1])
+        # Older tabs use E161-26 and Misc-124-26 without the EA marker.
+        legacy = re.search(r'-(?:E)?(\d+)-(?:\d{2}|F\d{2})$', value, re.I)
+        return int(legacy[1]) if legacy else 0
     numbers = [int(number) for number in re.findall(r'\d+', value)]
     return max([n for n in numbers if n >= 500 and (n < 2000 or n > 2100)], default=0)
 
@@ -135,6 +209,7 @@ def save_schedule(payload):
         raise HTTPException(400, 'Invalid auction date or time.')
     if booking.get('sourceFile'):raise HTTPException(400, 'Imported CSV rows cannot be sent to the linked workbook.')
     sync_id = _sync_id(booking.get('id'))
+    lot_key = booking.get('lotKey')
     with _sync_lock():
         sheets = Sheets()
         tabs, entries = _rows(sheets)
@@ -148,9 +223,16 @@ def save_schedule(payload):
         elif not match:
             match = next((row for row in entries if row['catalogueId'] == booking.get('catalogueId') and row['date'] == booking['date'] and row['time'] == booking['time'] and row['category'] == category), None)
         if match:
+            if sync_id and match['syncId'] and match['syncId'] != sync_id:
+                raise HTTPException(409, 'This auction is already linked to a different schedule row. Refresh before retrying.')
+            row_sync_id = match['syncId'] or sync_id or str(uuid4())
+            _check_lot(lot_key, category, row_sync_id)
+            if not match['syncId']:
+                _request(sheets, 'PUT', f"/values/{_range(match['sheetTab'], 'G' + str(match['sheetRow']))}", params={'valueInputOption':'RAW'}, json={'values':[[row_sync_id]]})
             if match['status'] != status:
                 _request(sheets, 'PUT', f"/values/{_range(match['sheetTab'], 'F' + str(match['sheetRow']))}", params={'valueInputOption':'RAW'}, json={'values':[[status.capitalize()]]})
             _paint_status(sheets, match, status)
+            _save_link(row_sync_id, lot_key, category, booking['date'], match['scheduleId'], match['catalogueId'], status, match['sheetTab'], match['sheetRow'])
             return {'row':match['sheetRow'],'tab':match['sheetTab'],'scheduleId':match['scheduleId'],'catalogueId':match['catalogueId'],'syncedAt':datetime.now(timezone.utc).isoformat()}
         if booking.get('source') or status != 'scheduled':
             raise HTTPException(409, 'This source row was not found in the live sheet. Refresh before changing it.')
@@ -162,9 +244,9 @@ def save_schedule(payload):
         today = datetime.now(ZoneInfo('Asia/Kolkata')).date()
         if auction < today + timedelta(days=15) or auction.weekday() >= 5:
             raise HTTPException(409, 'Auction date must be at least 15 days from today and cannot be Saturday or Sunday.')
-        holidays = payload.get('holidays', [])
-        if any(isinstance(item, dict) and item.get('date') == booking['date'] for item in holidays):
+        if any(item['date'] == booking['date'] for item in list_holidays()):
             raise HTTPException(409, 'Auction date is a listed holiday.')
+        _check_lot(lot_key, category, sync_id)
         if any(row['status'] == 'scheduled' and row['date'] == booking['date'] and row['time'] == booking['time'] for row in entries):
             raise HTTPException(409, 'This auction date and time are already booked.')
         automatic_schedule, automatic_catalogue = _identifiers(category, entries, auction.year)
@@ -179,7 +261,10 @@ def save_schedule(payload):
         target_month = auction.year * 12 + auction.month
         target_tab = next((item for item in tabs if _month(item['title']) == target_month), None)
         if not target_tab:
-            raise HTTPException(409, f'No Auction Schedule tab exists for {auction.strftime("%B %Y")}. Add that monthly tab before sending this auction.')
+            tab_title = auction.strftime('%b %y')
+            created = _request(sheets, 'POST', ':batchUpdate', json={'requests':[{'addSheet':{'properties':{'title':tab_title}}}]})
+            target_tab = created['replies'][0]['addSheet']['properties']
+            _request(sheets, 'PUT', f"/values/{_range(tab_title, 'A1:G1')}", params={'valueInputOption':'RAW'}, json={'values':[['Date','Time','Category','EA Schedule ID','Catalogue ID','Status','Sync ID']]})
         tab = target_tab['title']
         values = [[auction.strftime('%d-%m-%Y'), str(int(booking['time'][:2])), category, schedule_id, catalogue_id, 'Scheduled', sync_id]]
         result = _request(sheets, 'POST', f"/values/{_range(tab, 'A:G')}:append", params={'valueInputOption':'RAW','insertDataOption':'INSERT_ROWS'}, json={'values':values})
@@ -187,4 +272,5 @@ def save_schedule(payload):
         row_match = re.search(r'![A-Z]+(\d+)', updated)
         if not row_match:raise HTTPException(502, 'Google accepted the row but did not return its position. Check the sheet before retrying.')
         _paint_status(sheets, {'sheetId':target_tab['sheetId'],'sheetRow':int(row_match[1])}, status)
+        _save_link(sync_id, lot_key, category, booking['date'], schedule_id, catalogue_id, status, tab, int(row_match[1]))
         return {'row':int(row_match[1]),'tab':tab,'scheduleId':schedule_id,'catalogueId':catalogue_id,'syncedAt':datetime.now(timezone.utc).isoformat()}

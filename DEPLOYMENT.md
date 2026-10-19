@@ -1,58 +1,28 @@
 # Production deployment
 
-This project keeps the existing deployment split:
+SBCNAV uses the existing Vercel frontend, Render API for its general views, and the Oracle FastAPI service for Deskflow and eAuction:
 
 ```text
-Vercel Next.js → Render FastAPI → Render PostgreSQL
+Vercel Next.js ── general API ──> Render FastAPI
+                └─ /api/deskflow ──> Oracle FastAPI ──> PostgreSQL and Google Sheets
+                                               ↑
+                                    Windows Deskflow companion
 ```
 
 ## Vercel
 
-Set the project root directory to `frontend` and add this production environment variable:
+Build the `frontend` directory with `npm run build`. Keep `NEXT_PUBLIC_API_URL` pointed at the existing general API. The Next.js `/api/deskflow` route uses `DESKFLOW_API_URL`, or defaults to `https://sbcnav.137-23-58-53.sslip.io`. Deploying the frontend exposes `/eauction` and the icon links in SBCNAV. The browser never needs a Google key.
 
-```text
-NEXT_PUBLIC_API_URL=https://sbcnav.onrender.com
-```
+## Oracle API
 
-The eAuction scheduler is at `/eauction`, opened by the calendar icon in SBCNAV. It uses the authenticated `/api/mcdo/eauction` route on the Python backend. The browser has no separate Google key field. Sign in to the SBCNAV updater to allow writes through the existing server-side Sheets connection.
+Build `backend/Dockerfile` and restart `deploy/oracle/sbcnav-backend.service` with the new image. `backend/docker-entrypoint.sh` applies Alembic migrations before serving requests; this release adds `0034_auction_schedule` for shared holidays and Deskflow lot links. Keep the existing PostgreSQL connection and `MCDO_ADMIN_TOKEN` (at least 32 characters). Set `DESKFLOW_PASSWORD` in `/opt/sbcnav/backend.env` if the agreed password changes.
 
-The backend uses its existing `MCDO_GOOGLE_CREDENTIALS` service account. Share the `Auction Schedule` spreadsheet with that service account's `client_email` as an Editor. The scheduler reads all monthly tabs for IDs and availability, then appends to the tab matching the auction month. Create that monthly tab before sending an auction. The workbook stores Date, Time, Category, EA Schedule ID, Catalogue ID, and Status in columns A:F. Unsent rows and holidays stay in the current browser. Add or import the applicable official holiday list before scheduling.
+The Oracle service account is configured server side with `MCDO_GOOGLE_CREDENTIALS`. Share the [Auction Schedule workbook](https://docs.google.com/spreadsheets/d/1n_aQpueOSE8OYl5y5KW3_NuYFg7Knlw3BYslllEp1zk/edit?gid=1939091527) with the service account's `client_email` as an Editor. If the environment variable points to a JSON file inside the container, mount that file read only in the systemd Docker command. Do not put service account JSON in Git or the browser.
 
-Build command:
+The scheduler reads all monthly tabs, creates the auction month's tab if needed, calculates category schedule IDs and the next global catalogue number, and writes Date, Time, Category, IDs, Status, and Sync ID in columns A:G. A successful schedule is green; cancelled and withdrawn rows are red in both the app and the Sheet. Writes carry a Sync ID and are checked before append, so retries do not create duplicate rows. Holidays are stored in PostgreSQL and must be populated with the official list used for scheduling.
 
-```text
-npm run build
-```
+## Verification
 
-## Render API
+After both services deploy, unlock `/eauction` and check that existing monthly rows load. Add a holiday and confirm another browser sees it. Add a test auction only when an actual schedule is required; verify the same Sync ID appears once in the monthly Sheet tab. Cancel or withdraw only a row that should genuinely change status. Open Deskflow, collect IREPS lots on the Windows companion, and verify its selected lot links to the scheduled auction. Running contracts use LAR as RP, completed contracts use LAR plus 10%, and foreclosed contracts use LAR; other statuses retain the existing fixation rules.
 
-Use `backend/Dockerfile` or the existing Docker deployment. The container entrypoint applies Alembic migrations before starting FastAPI.
-
-Set these environment variables:
-
-```text
-DATABASE_URL=<Render PostgreSQL internal connection string>
-CORS_ORIGINS=https://sbcnav.vercel.app,https://sbcnav-38t2.vercel.app
-BACKEND_WORKERS=2
-LOG_LEVEL=info
-```
-
-The migration head is `0029_uts_prs_station_metrics`.
-
-## One-time production contract import
-
-After the Render deployment is healthy, upload the exported E-auction workbook to the new API:
-
-```powershell
-curl.exe -X POST "https://sbcnav.onrender.com/api/contracts/import" `
-  -F "file=@Master file - Running contracts Part 3 Running in 2024.xlsx"
-```
-
-The import also backfills the existing commercial and catering contract tables into the unified registry. Verify:
-
-```text
-https://sbcnav.onrender.com/api/contracts/summary
-https://sbcnav.vercel.app/contracts
-```
-
-Do not commit `.env` files, database passwords, service-account keys, or the source workbook to GitHub.
+Do not commit `.env` files, database passwords, service account keys, or source workbooks to GitHub.

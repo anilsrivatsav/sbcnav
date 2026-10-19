@@ -15,7 +15,8 @@ from sqlalchemy import select
 
 from database import SessionLocal
 from mcdo.auth import administrator
-from models import DeskflowRelay, DeskflowWorkbookArchive
+from models import AuctionScheduleLink, DeskflowRelay, DeskflowWorkbookArchive
+from mcdo.eauction import _category, live_schedule, save_schedule, list_holidays, save_holidays, delete_holiday
 from deskflow_archive import decrypt_archive, encrypt_archive, update_archive
 
 router = APIRouter(prefix='/api/deskflow', tags=['Deskflow'])
@@ -53,6 +54,25 @@ def _row(session):
     return row
 
 
+def _with_schedule_verification(lot, link):
+    schedule = {'date': link.auction_date.isoformat(), 'status': link.status,
+                'scheduleId': link.schedule_id, 'catalogueId': link.catalogue_id} if link else None
+    verification = lot.get('verification')
+    if not verification:
+        return {**lot, 'auctionSchedule': schedule}
+    checks = list(verification.get('checks', []))
+    if not link:
+        checks.append({'code': 'auction_schedule', 'state': 'warn', 'message': 'Link this lot to an auction schedule before final review.'})
+    elif link.status != 'scheduled':
+        checks.append({'code': 'auction_schedule', 'state': 'fail', 'message': f'Auction schedule is {link.status}; review the proposed value before use.'})
+    elif lot.get('date', '')[:10] != schedule['date'] or _category(lot.get('category') or '') != _category(link.category or ''):
+        checks.append({'code': 'auction_schedule', 'state': 'fail', 'message': 'Scheduled auction date or category does not match the collected IREPS lot.'})
+    else:
+        checks.append({'code': 'auction_schedule', 'state': 'pass', 'message': f"Scheduled auction {schedule['date']} matches the collected lot."})
+    status = 'blocked' if any(c['state'] == 'fail' for c in checks) else 'needs_review' if any(c['state'] == 'warn' for c in checks) else 'verified'
+    return {**lot, 'auctionSchedule': schedule, 'verification': {**verification, 'status': status, 'checks': checks}}
+
+
 @router.post('/unlock')
 def unlock(payload: dict = Body(...)):
     password = payload.get('password')
@@ -80,7 +100,42 @@ def overview():
         row = session.get(DeskflowRelay, 1)
         data = row.overview if row else {}
         connected = bool(row and row.last_seen_at and (datetime.now(timezone.utc) - row.last_seen_at.replace(tzinfo=row.last_seen_at.tzinfo or timezone.utc)).total_seconds() < 30)
-        return {**({'collected_at': None, 'categories': [], 'lots': [], 'progress': {'busy': False, 'phase': 'waiting', 'message': 'Waiting for the Windows desktop companion.'}} | data), 'desktop_connected': connected}
+        links = session.scalars(select(AuctionScheduleLink)).all()
+        by_lot = {}
+        def updated(link):
+            value = link.updated_at or datetime.min.replace(tzinfo=timezone.utc)
+            return value.replace(tzinfo=value.tzinfo or timezone.utc).astimezone(timezone.utc)
+        for link in links:
+            if link.lot_key and (link.lot_key not in by_lot or updated(link) > updated(by_lot[link.lot_key])):
+                by_lot[link.lot_key] = link
+        result = {'collected_at': None, 'categories': [], 'lots': [], 'progress': {'busy': False, 'phase': 'waiting', 'message': 'Waiting for the Windows desktop companion.'}} | data
+        result['lots'] = [_with_schedule_verification(lot, by_lot.get(lot.get('key'))) for lot in result['lots']]
+        return {**result, 'desktop_connected': connected}
+
+
+@router.get('/eauction', dependencies=[Depends(_browser)])
+def eauction_rows():
+    return {'data': live_schedule()}
+
+
+@router.post('/eauction', dependencies=[Depends(_browser)])
+def eauction_save(payload: dict = Body(...)):
+    return {'data': save_schedule(payload)}
+
+
+@router.get('/holidays', dependencies=[Depends(_browser)])
+def holidays_get():
+    return {'data': list_holidays()}
+
+
+@router.post('/holidays', dependencies=[Depends(_browser)])
+def holidays_save(payload: dict = Body(...)):
+    return {'data': save_holidays(payload)}
+
+
+@router.delete('/holidays', dependencies=[Depends(_browser)])
+def holidays_delete(day: str):
+    return {'data': delete_holiday(day)}
 
 
 @router.get('/software-update', dependencies=[Depends(_browser)])

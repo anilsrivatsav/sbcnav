@@ -122,9 +122,15 @@ def _calculate(lot, auctions, contract, inputs):
     if state == 'Running':
         if not sold or lar <= 0: raise ValueError('A verified previous sold auction and its accepted LAR are required for a running contract.')
         return done(lar, Decimal(1), '=+H{r}', 'Live running contract: use the accepted LAR, even when the contract has run for only a few days.', 'running_lar')
-    if state == 'Completed' and (last is None or last['outcome'] == 'Sold'):
+    if state == 'Completed':
         if not sold or lar <= 0: raise ValueError('A verified previous sold auction and its accepted LAR are required for a completed contract.')
         return done(lar, Decimal('1.1'), '=+H{r}*1.1', 'Completed contract: accepted LAR plus 10%.', 'completed_lar')
+    if state == 'Foreclosed':
+        if not contract.get('closed'): raise ValueError('Actual foreclosure date is missing.')
+        closed, awarded = dt(contract['closed']), dt(contract['award_date'])
+        if closed < awarded: raise ValueError('Foreclosure precedes award.')
+        if not sold or lar <= 0: raise ValueError('A verified previous sold auction and its accepted LAR are required for a foreclosed contract.')
+        return done(lar, Decimal(1), '=+H{r}', 'Foreclosed contract: accepted LAR used as the RP.', 'foreclosed_lar')
 
     if state in ('Not commenced', 'Not signed'):
         if previous <= 0: raise ValueError('Previous RP is needed for non-commencement.')
@@ -140,17 +146,6 @@ def _calculate(lot, auctions, contract, inputs):
         base = previous or initial or finance
         if base <= 0: raise ValueError('Previous approved RP is required for a withdrawn catalogue retry.')
         return done(base, Decimal(1), '=+H{r}', 'Latest catalogue was withdrawn, not a bidding-price failure. Retain its previous approved RP for the retry; no additional reduction is applied.', 'withdrawn_retry')
-    if state == 'Foreclosed':
-        if not contract.get('closed'): raise ValueError('Actual foreclosure date is missing.')
-        closed, awarded = dt(contract['closed']), dt(contract['award_date'])
-        if closed < awarded: raise ValueError('Foreclosure precedes award.')
-        if lar <= 0: raise ValueError('Accepted LAR is missing.')
-        if failures == 0:
-            return done(lar, Decimal(1), '=+H{r}', 'Foreclosed contract: accepted LAR used as the RP.', 'foreclosed_lar')
-        if initial <= 0: initial = lar
-    if state == 'Completed':
-        if lar <= 0: raise ValueError('Accepted LAR is missing.')
-        if initial <= 0: initial = lar * Decimal('1.1')
     if family == 'Shop (case by case)':
         if not inputs.get('use_market_bid'): raise ValueError('Shop pricing requires an explicit case-by-case decision. Select market-bid adoption only after review.')
         if not last or last['outcome'] != 'Rejected' or number(last.get('bid_rate') or 0) <= 0: raise ValueError('A verified rejected bid RATE is required for market-price adoption.')
