@@ -49,8 +49,8 @@ class Deskflow:
         self.state={'phase':'ready','message':'Ready to update local workbooks.','error':None}
         previous=self.store.evidence('__workspace__','workbook_update')
         if previous:
-            report=previous[-1];pending=len(report.get('pending',[]))
-            self.state.update(phase='needs_evidence' if pending else 'complete',message=f"Last update: {len(report.get('saved',[]))} local workbooks saved. {report.get('calculated',0)} values calculated; {pending} rows need evidence. See workbook notes.")
+            report=previous[-1]
+            self.state.update(phase='ready',message=f"Last workbook save: {len(report.get('saved',[]))} files. See each row for current calculations and missing evidence.")
 
     def result(self,lot,auctions,contract,inputs):
         if inputs.get('review_issue'):
