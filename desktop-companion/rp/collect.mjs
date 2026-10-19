@@ -31,7 +31,9 @@ sandbox.acceptedBid=async(tab,lot)=>{
   const viewer=/^https:\/\/www\.ireps\.gov\.in\/epsn\/commAuction\/viewBiddingDetail\.do/;
   const before=new Map();
   for(const candidate of context.pages())if(viewer.test(candidate.url()))before.set(candidate,await candidate.evaluate(()=>performance.timeOrigin));
-  await row.getByRole('link',{name:/^[1-9]\d*$/}).click();
+  const bidLink=row.locator('a[title="View Bid Details"]');
+  if(await bidLink.count()!==1)throw Error('The exact sold lot does not have one bid-detail link.');
+  await bidLink.click();
   let popup;
   for(let n=0;n<120&&!popup;n++){
     for(const candidate of context.pages())if(viewer.test(candidate.url())){
