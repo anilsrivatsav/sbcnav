@@ -49,6 +49,29 @@ def _serialise(value):
     return str(value)
 
 
+_EMPTY_ROWS = re.compile(
+    rb'<(?P<prefix>(?:[A-Za-z_][\w.-]*:)?)row\b[^>]*(?:/\s*>|>\s*</(?P=prefix)row\s*>)'
+)
+
+
+def _archive_source(raw: bytes) -> bytes:
+    """Omit empty row formatting from the temporary copy used for extraction.
+
+    Excel can save row dimensions through row 1,048,576. Loading those empty
+    dimensions twice consumes far more memory than the populated workbook.
+    Rows containing cells remain byte-for-byte intact, including hidden flags.
+    The original upload is still used for the source hash and is never edited.
+    """
+    memory = io.BytesIO()
+    with ZipFile(io.BytesIO(raw)) as source, ZipFile(memory, 'w') as target:
+        for entry in source.infolist():
+            content = source.read(entry.filename)
+            if re.fullmatch(r'xl/worksheets/sheet\d+\.xml', entry.filename):
+                content = _EMPTY_ROWS.sub(b'', content)
+            target.writestr(entry, content)
+    return memory.getvalue()
+
+
 def update_archive(previous: dict, bundle: bytes) -> tuple[dict, bool]:
     """Rebuild the encrypted archive input from the three selected Windows files."""
     expected = {book['id']: book for book in previous['workbooks']}
@@ -78,8 +101,9 @@ def update_archive(previous: dict, bundle: bytes) -> tuple[dict, bool]:
     for book_id, old_book in expected.items():
         raw = sources[book_id]
         try:
-            formula_book = load_workbook(io.BytesIO(raw), data_only=False, read_only=False)
-            value_book = load_workbook(io.BytesIO(raw), data_only=True, read_only=False)
+            extraction_source = _archive_source(raw)
+            formula_book = load_workbook(io.BytesIO(extraction_source), data_only=False, read_only=False)
+            value_book = load_workbook(io.BytesIO(extraction_source), data_only=True, read_only=False)
         except (ValueError, BadZipFile, KeyError) as exc:
             raise ValueError(f'Cannot read {old_book["file"]}.') from exc
         try:
@@ -111,11 +135,9 @@ def update_archive(previous: dict, bundle: bytes) -> tuple[dict, bool]:
                     rows.append(row)
                     identity = (book_id, sheet.title, n)
                     prior = old_rows.get(identity)
-                    if prior and all(prior[field] == row[field] for field in ('v', 'f', 'hidden')):
-                        if identity in old_records:
-                            records.append(old_records[identity])
-                    elif identity in old_records or (sheet.title == required and
-                            (prior is None or not prior['v'] or not prior['v'][0])):
+                    if prior and identity in old_records and all(prior[field] == row[field] for field in ('v', 'f', 'hidden')):
+                        records.append(old_records[identity])
+                    elif identity in old_records or sheet.title == required:
                         record = _record_from_row(old_book, sheet.title, row, old_records.get(identity))
                         if record:
                             records.append(record)
@@ -160,7 +182,7 @@ def _record_from_row(book: dict, sheet: str, row: dict, prior: dict | None = Non
     parsed = None
     for fmt in ('%Y-%m-%d', '%d.%m.%Y', '%d.%m.%y', '%d/%m/%Y', '%d-%m-%Y'):
         try:
-            parsed = datetime.strptime(date_label.split(' ')[0], fmt).date()
+            parsed = datetime.strptime(date_label.split('T')[0].split(' ')[0], fmt).date()
             break
         except ValueError:
             pass
@@ -169,6 +191,10 @@ def _record_from_row(book: dict, sheet: str, row: dict, prior: dict | None = Non
     book_id = book['id']
     config = {'parcels': (3, 13, 16), 'catering': (3, 12, 13), 'others': (3, 8, 9)}[book_id]
     source_asset = str(at(config[0]) or '').strip()
+    if book_id == 'others' and not source_asset:
+        # Older commercial rows identify the asset only in the description
+        # column. Keep those records when worksheet insertions move their rows.
+        source_asset = str(at(4) or '').strip()
     asset = source_asset
     if not asset:
         return None
@@ -194,7 +220,7 @@ def _record_from_row(book: dict, sheet: str, row: dict, prior: dict | None = Non
     else:
         category = str(at(2) or '').strip()
         grade = str(at(4) or '').strip()
-        asset = ' · '.join(part for part in (grade, source_asset) if part)
+        asset = ' · '.join(dict.fromkeys(part for part in (grade, source_asset) if part))
         unit = category
         key = f'others|{asset.lower()}|{category.lower()}'
         asset_type = category
