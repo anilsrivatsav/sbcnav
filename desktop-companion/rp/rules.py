@@ -74,6 +74,8 @@ def _calculate(lot, auctions, contract, inputs):
             if number(a.get('bid_rate', 0)) <= 0: raise ValueError('Sold lot requires the accepted BID RATE / LAR.')
             if a.get('rate_unit') != target_unit: raise ValueError('Sold rate unit differs from this lot. Confirm a comparable rate; never substitute total contract value.')
     last = events[-1] if events else None
+    if inputs.get('continuation'):
+        return continue_working(lot, events, inputs)
     sold = [a for a in events if a['outcome'] == 'Sold']
     new_asset = bool(inputs.get('new_asset'))
     if not new_asset and not last: raise ValueError('Check and record the latest previous bidding outcome.')
@@ -182,3 +184,47 @@ def _calculate(lot, auctions, contract, inputs):
         return done(initial, factor, '=+H{r}*I{r}', f'Parcel convention: {count} ten-percentage-point reductions from the original benchmark; maximum seven. Factor {factor}.', 'parcel_reduction')
     if previous <= 0: raise ValueError('Previous RP is required for the next 10% reduction.')
     return done(previous, Decimal('.9'), '=+H{r}*0.9', 'After two actual failed auctions, previous RP reduced by a further 10%, using the repeated multiplication convention of 29.12.23.', 'successive_reduction')
+
+
+def continue_working(lot, events, inputs):
+    """Continue a reviewed workbook calculation without inventing a contract state.
+
+    The dated baseline is fixed, so rerunning collection cannot compound the
+    reduction again. A subsequent award or scope change invalidates the review.
+    """
+    c = {**inputs['continuation'], 'rate_unit': canonical_unit(inputs['continuation'].get('rate_unit'))}
+    if any(c.get(k) != lot.get(k) for k in ('lot', 'description', 'rate_unit')):
+        raise ValueError('The reviewed workbook baseline does not match the current asset scope and unit.')
+    if not c.get('source') or not c.get('policy') or not c.get('scope_source'):
+        raise ValueError('Workbook baseline, policy and catalogue scope sources are required.')
+    anchor = dt(c['date'])
+    if any(dt(a['date']) > date.today() for a in events): raise ValueError('Future auction outcomes cannot be used as history.')
+    if anchor >= dt(lot['start']): raise ValueError('Baseline must precede the new auction.')
+    relevant = [a for a in events if dt(a['date']) >= anchor]
+    if not relevant or not any(dt(a['date']) == anchor for a in relevant):
+        raise ValueError('The baseline auction outcome has not been collected.')
+    if any(a['outcome'] == 'Sold' for a in relevant):
+        raise ValueError('An award after the workbook baseline requires a fresh contract review.')
+    if any(dt(a['date']) >= dt(lot['start']) for a in relevant):
+        raise ValueError('Historical auctions must precede the current auction.')
+    ids = [(a['date'], a.get('catalogue'), a.get('previous_lot', a.get('lot'))) for a in relevant]
+    if len(ids) != len(set(ids)): raise ValueError('Duplicate auction outcomes cannot be counted.')
+    failures = sum(a['outcome'] in ('Rejected', 'No Bids') for a in relevant)
+    base = number(c['base'])
+    if base <= 0: raise ValueError('A positive workbook baseline is required.')
+    if c['mode'] == 'parcel_initial' and inputs['family'] == 'Parcel':
+        factor = Decimal(1) - Decimal('.1') * min(7, max(0, failures - 1))
+    elif c['mode'] == 'successive' and inputs['family'] in ('Parking / Pay & Use', 'Catering / MPS'):
+        if int(c.get('prior_failures', 0)) < 2:
+            raise ValueError('Successive reductions require two failures before the baseline.')
+        factor = Decimal('.9') ** failures
+    else:
+        raise ValueError('Unsupported workbook continuation policy.')
+    value = money(base * factor)
+    evidence = '; '.join(a['date'] + ' ' + a['outcome'] for a in relevant)
+    note = (f"Workbook calculation continued from {c['source']}, dated {c['date']}, base {base}. "
+            f"Verified subsequent outcomes (baseline included): {evidence}. Withdrawn catalogues do not count. "
+            f"Policy: {c['policy']}. Scope checked against {c['scope_source']}. "
+            f"Factor {factor}; proposed value {value} {lot['rate_unit']}. "
+            "This continues the recorded workbook proposal; it does not certify Finance approval or a cancellation reason.")
+    return Result(True, str(value), '=ROUND(H{r}*I{r},2)', str(base), str(factor), note, rule='workbook_continuation')

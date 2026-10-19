@@ -5,6 +5,7 @@ saved inputs, the arithmetic in the result, and the provenance of each source.
 """
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from rp.rules import canonical_unit
 
 
 def _amount(value):
@@ -18,6 +19,8 @@ def _amount(value):
 def _pricing_basis(lot, auctions, contract, inputs, result):
     """Check the saved base and factor against the source fields, without calling the pricing engine."""
     rule = result.get('rule')
+    if rule == 'workbook_continuation':
+        return _continuation_basis(lot, auctions, inputs, result)
     base, factor = _amount(result.get('base')), _amount(result.get('multiplier'))
     previous = _amount(inputs.get('previous_rp')) or Decimal(0)
     initial = _amount(inputs.get('initial_rp')) or Decimal(0)
@@ -74,9 +77,43 @@ def _pricing_basis(lot, auctions, contract, inputs, result):
     return bool(expected and expected[0] is not None and expected[0] > 0 and base == expected[0] and factor == expected[1])
 
 
+def _continuation_basis(lot, auctions, inputs, result):
+    """Independently check a sourced, dated workbook working and exact factor."""
+    try:
+        c = inputs['continuation']
+        if not all(c.get(k) for k in ('source', 'policy', 'scope_source')):
+            return False
+        if any(c.get(k) != lot.get(k) for k in ('lot', 'description')) or canonical_unit(c.get('rate_unit')) != canonical_unit(lot.get('rate_unit')):
+            return False
+        anchor = date.fromisoformat(c['date'])
+        cutoff = date.fromisoformat(lot['start'][:10])
+        events = [a for a in auctions if date.fromisoformat(a['date'][:10]) >= anchor]
+        if anchor >= cutoff or not any(a['date'][:10] == c['date'] for a in events):
+            return False
+        if any(a.get('outcome') not in ('No Bids', 'Rejected', 'Withdrawn') or not a.get('source') or not (date.fromisoformat(a['date'][:10]) < cutoff and date.fromisoformat(a['date'][:10]) <= date.today()) for a in events):
+            return False
+        identities = [(a['date'], a.get('catalogue'), a.get('previous_lot', a.get('lot'))) for a in events]
+        if len(identities) != len(set(identities)):
+            return False
+        failures = sum(a['outcome'] in ('No Bids', 'Rejected') for a in events)
+        if c['mode'] == 'parcel_initial' and inputs.get('family') == 'Parcel':
+            factor = Decimal(1) - Decimal('.1') * min(7, max(0, failures - 1))
+        elif c['mode'] == 'successive' and inputs.get('family') in ('Parking / Pay & Use', 'Catering / MPS') and int(c.get('prior_failures', 0)) >= 2:
+            factor = Decimal('.9') ** failures
+        else:
+            return False
+        base = Decimal(str(c['base']))
+        return base.is_finite() and base > 0 and Decimal(str(result['base'])) == base and Decimal(str(result['multiplier'])) == factor and _amount(base * factor) == _amount(result['rp'])
+    except (KeyError, ValueError, TypeError, InvalidOperation):
+        return False
+
+
 def verify(record, scheduled=None, history=None, workbook=None, today=None):
     lot, auctions = record['lot'], record['auctions']
     contract, inputs, result = record['contract'], record['inputs'], record['result']
+    lot = {**lot, 'rate_unit': canonical_unit(lot.get('rate_unit'))}
+    auctions = [{**a, 'rate_unit': canonical_unit(a.get('rate_unit'))} for a in auctions]
+    contract = {**contract, 'rate_unit': canonical_unit(contract.get('rate_unit'))}
     today = today or date.today()
     checks = []
 
@@ -230,6 +267,8 @@ def verify(record, scheduled=None, history=None, workbook=None, today=None):
             expected_lar = (lar * (Decimal('1.1') if status == 'Completed' else Decimal(1))).quantize(Decimal('.01'), rounding=ROUND_HALF_UP) if lar is not None else None
             correct_rule = rule == {'Running': 'running_lar', 'Completed': 'completed_lar', 'Foreclosed': 'foreclosed_lar'}[status]
             arithmetic_ok = expected == proposed == expected_lar and correct_rule
+        elif rule == 'workbook_continuation':
+            arithmetic_ok = _continuation_basis(lot, auctions, inputs, result)
         else:
             arithmetic_ok = expected is not None and expected == proposed
         check('calculation', 'pass' if arithmetic_ok else 'fail',

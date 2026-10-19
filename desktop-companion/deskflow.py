@@ -12,6 +12,7 @@ from rp.workbooks import WorkbookSelection, family_group, SPECS
 from rp.review import WorkbookPreview, digest
 from rp.verifier import verify
 import re, base64
+from decimal import Decimal
 
 def public_text(value):
     if isinstance(value,str):
@@ -26,6 +27,15 @@ def parse_day(value):
         try:return datetime.strptime(text,fmt).date().isoformat()
         except ValueError:pass
     raise ValueError('Unrecognised date: '+text)
+
+
+def short_justification(result):
+    if result.get('ready') and result.get('rule') == 'workbook_continuation':
+        factor = Decimal(result['multiplier']) * 100
+        percent = format(factor.normalize(), 'f')
+        base = Decimal(result['base'])
+        return f'Continue the reviewed working at {percent}% of Rs {base:,.2f}; withdrawn auctions excluded.'
+    return result.get('justification') if result.get('ready') else result.get('missing', '')
 
 class Deskflow:
     def __init__(self, updater, engine, playwright, reader):
@@ -43,6 +53,8 @@ class Deskflow:
             self.state.update(phase='needs_evidence' if pending else 'complete',message=f"Last update: {len(report.get('saved',[]))} local workbooks saved. {report.get('calculated',0)} values calculated; {pending} rows need evidence. See workbook notes.")
 
     def result(self,lot,auctions,contract,inputs):
+        if inputs.get('review_issue'):
+            return {'ready':False,'missing':inputs['review_issue']}
         if not inputs.get('conditions_reviewed'):
             return {'ready':False,'missing':'Review SCC v2.0 and the applicable catalogue/special conditions.'}
         if contract.get('status') in ('Foreclosed','Not signed','Not commenced','Cancelled (reason unknown)') and not contract.get('termination_source'):
@@ -114,6 +126,7 @@ class Deskflow:
                 elif status=='No Bids':
                     status='Failed'
                 history.append({'date':auction.get('date',''),'status':status,'status_date':status_date or auction.get('date',''),
+                                'outcome':auction.get('outcome',''),
                                 'lot':auction.get('previous_lot') or auction.get('lot',''),'category':auction.get('category',''),
                                 'description':auction.get('description',''),'accepted_rate':auction.get('bid_rate','') if auction.get('outcome')=='Sold' else '',
                                 'rate_unit':auction.get('rate_unit',''),'source':auction.get('source','')})
@@ -122,7 +135,8 @@ class Deskflow:
                          'date':lot.get('start',''),'station':lot.get('station',''),'train':lot.get('train',''),
                          'catalogue':lot.get('catalogue',''),'details':lot.get('description',''),
                          'rate_unit':lot.get('rate_unit',''),'value':result.get('rp') if result.get('ready') else None,
-                         'justification':public_text(result.get('justification') if result.get('ready') else result.get('missing','')),
+                         'justification':public_text(short_justification(result)),
+                         'calculation_notes':public_text(result.get('justification','')),
                          'rule':result.get('rule',''),'history':history,'verification':record['verification']})
         rows.sort(key=lambda item:(item['date'],item['catalogue'],item['lot']),reverse=True)
         return {'collected_at':snapshot[-1].get('collected_at'),'categories':sorted({r['category'] for r in rows if r['category']}),

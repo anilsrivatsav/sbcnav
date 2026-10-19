@@ -8,7 +8,7 @@ type RecordItem={id:string;dateLabel:string;asset:string;portfolio:string;assetT
 type SourceRow={bookId:string;file:string;sheet:string;row:{n:number;v:(string|number|boolean|null)[];f:Record<string,string>}};
 type Result={available:boolean;books:Book[];items:(RecordItem|SourceRow)[];total:number;page:number;limit:number;sourceManifest?:Record<string,{sha256:string}>};
 
-export function DeskflowWorkbookHistory({token,revision}:{token:string;revision?:string}){
+export function DeskflowWorkbookHistory({token,revision,assetSearch}:{token:string;revision?:string;assetSearch?:string}){
   const [book,setBook]=useState("");
   const [query,setQuery]=useState("");
   const [search,setSearch]=useState("");
@@ -18,6 +18,7 @@ export function DeskflowWorkbookHistory({token,revision}:{token:string;revision?
   const [error,setError]=useState("");
   const [loading,setLoading]=useState(false);
   const [retry,setRetry]=useState(0);
+  useEffect(()=>{if(assetSearch!==undefined){setQuery(assetSearch);setSearch(assetSearch);setPage(1);setBook("");setView("records");}},[assetSearch]);
   useEffect(()=>{
     const controller=new AbortController();
     const params=new URLSearchParams({book,q:search,view,page:String(page),limit:"30"});
@@ -31,7 +32,7 @@ export function DeskflowWorkbookHistory({token,revision}:{token:string;revision?
   function submit(event:FormEvent){event.preventDefault();setPage(1);setSearch(query.trim());}
   const pages=Math.max(1,Math.ceil((data?.total||0)/30));
   return <section id="workbook-history" className="rounded-2xl border border-slate-200 bg-white p-5">
-    <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-bold">Workbook history</h2><p className="mt-1 text-sm text-slate-600">Saved auction records and original workbook rows, available without the Windows companion.</p></div>{data?.available&&<span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">Encrypted archive</span>}</div>
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-bold">{assetSearch?"Previous similar assets":"Workbook history"}</h2><p className="mt-1 text-sm text-slate-600">{assetSearch?"Matching saved workbook records. Confirm the asset and scope before comparing rates.":"Saved auction records and original workbook rows."}</p></div>{data?.available&&<span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">Encrypted archive</span>}</div>
     <div className="mt-5 flex flex-wrap gap-2"><button onClick={()=>{setData(null);setView("records");setPage(1);}} className={`rounded-lg px-3 py-2 text-sm font-semibold ${view==="records"?"bg-emerald-700 text-white":"border border-slate-300"}`}>Auction records</button><button onClick={()=>{setData(null);setView("rows");setPage(1);}} className={`rounded-lg px-3 py-2 text-sm font-semibold ${view==="rows"?"bg-emerald-700 text-white":"border border-slate-300"}`}>Original rows</button></div>
     <div className="mt-4 flex flex-wrap gap-3"><label className="text-sm font-medium">Workbook<select value={book} onChange={event=>{setBook(event.target.value);setPage(1);}} className="mt-1 block min-w-52 rounded-lg border border-slate-300 bg-white px-3 py-2"><option value="">All workbooks</option>{data?.books.map(item=><option key={item.id} value={item.id}>{item.portfolio}</option>)}</select></label><form onSubmit={submit} className="flex flex-1 items-end gap-2"><label className="min-w-40 flex-1 text-sm font-medium">Search<input value={query} onChange={event=>setQuery(event.target.value)} maxLength={120} placeholder="Asset, lot, date or text" className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"/></label><button type="submit" className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white">Search</button></form></div>
     {error&&<div role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700"><p>{error}</p><button onClick={()=>setRetry(current=>current+1)} className="mt-2 font-semibold underline">Retry workbook history</button></div>}
