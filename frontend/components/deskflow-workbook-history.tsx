@@ -1,12 +1,13 @@
 "use client";
 
 import {useEffect, useState, type FormEvent} from "react";
+import {latestAuctionFirst} from "../lib/deskflow-dates";
 import {deskflowError, deskflowResponse} from "../lib/deskflow-errors";
 
 type Book={id:string;portfolio:string;file:string;rows:number;cells:number};
-type RecordItem={id:string;dateLabel:string;asset:string;portfolio:string;assetType:string;rp:number|null;previousValue:number|null;justification:string;outcomeText:string;sheet:string;row:number;file?:string};
+type RecordItem={id:string;date:string;dateLabel:string;asset:string;portfolio:string;assetType:string;rp:number|null;previousValue:number|null;justification:string;outcomeText:string;sheet:string;row:number;file?:string};
 type SourceRow={bookId:string;file:string;sheet:string;row:{n:number;v:(string|number|boolean|null)[];f:Record<string,string>}};
-type Result={available:boolean;books:Book[];items:(RecordItem|SourceRow)[];total:number;page:number;limit:number;sourceManifest?:Record<string,{sha256:string}>};
+type Result={available:boolean;books:Book[];items:(RecordItem|SourceRow)[];total:number;page:number;limit:number;generatedAt?:string;sourceManifest?:Record<string,{sha256:string}>};
 
 export function DeskflowWorkbookHistory({token,revision,assetSearch}:{token:string;revision?:string;assetSearch?:string}){
   const [book,setBook]=useState("");
@@ -21,14 +22,31 @@ export function DeskflowWorkbookHistory({token,revision,assetSearch}:{token:stri
   useEffect(()=>{if(assetSearch!==undefined){setQuery(assetSearch);setSearch(assetSearch);setPage(1);setBook("");setView("records");}},[assetSearch]);
   useEffect(()=>{
     const controller=new AbortController();
-    const params=new URLSearchParams({book,q:search,view,page:String(page),limit:"30"});
+    const params=new URLSearchParams({book,q:search,view,page:String(view==="records"?1:page),limit:view==="records"?"100":"30"});
     setLoading(true);setError("");
     fetch(`/api/deskflow/workbook-history?${params}`,{headers:{Authorization:`Bearer ${token}`},cache:"no-store",signal:AbortSignal.any([controller.signal,AbortSignal.timeout(15000)])})
       .then(response=>deskflowResponse<Result>(response,"Workbook history could not be loaded."))
-      .then(setData).catch(reason=>{if(!controller.signal.aborted)setError(deskflowError(reason,"Workbook history could not be loaded."));})
+      .then(async first=>{
+        if(view!=="records"){setData(first);return;}
+        // Sort the complete search before paginating, including older workbook sheets.
+        const items=[...first.items];
+        const count=Math.ceil(first.total/100);
+        for(let start=2;start<=count;start+=3){
+          const pages=await Promise.all(Array.from({length:Math.min(3,count-start+1)},(_,index)=>{
+            const next=new URLSearchParams(params);next.set("page",String(start+index));
+            return fetch(`/api/deskflow/workbook-history?${next}`,{headers:{Authorization:`Bearer ${token}`},cache:"no-store",signal:AbortSignal.any([controller.signal,AbortSignal.timeout(15000)])})
+              .then(response=>deskflowResponse<Result>(response,"Workbook history could not be loaded."));
+          }));
+          for(const result of pages){
+            if(result.total!==first.total||result.generatedAt!==first.generatedAt)throw Error("Workbook history changed during loading. Please retry.");
+            items.push(...result.items);
+          }
+        }
+        if(!controller.signal.aborted)setData({...first,items:(items as RecordItem[]).sort(latestAuctionFirst)});
+      }).catch(reason=>{if(!controller.signal.aborted)setError(deskflowError(reason,"Workbook history could not be loaded."));})
       .finally(()=>{if(!controller.signal.aborted)setLoading(false);});
     return()=>controller.abort();
-  },[token,book,search,view,page,revision,retry]);
+  },[token,book,search,view,view==="rows"?page:0,revision,retry]);
   function submit(event:FormEvent){event.preventDefault();setPage(1);setSearch(query.trim());}
   const pages=Math.max(1,Math.ceil((data?.total||0)/30));
   return <section id="workbook-history" className="rounded-2xl border border-slate-200 bg-white p-5">
@@ -39,7 +57,7 @@ export function DeskflowWorkbookHistory({token,revision,assetSearch}:{token:stri
     {loading&&<p role="status" className="mt-4 text-sm text-slate-600">Loading workbook history…</p>}
     {!loading&&data&&!data.available&&<p className="mt-4 text-sm text-slate-600">The workbook archive has not been imported yet.</p>}
     {!loading&&!error&&data?.available&&<><p className="mt-4 text-xs text-slate-500">{`${data.total.toLocaleString("en-IN")} ${view==="records"?"records":"rows"}`}</p><div className="mt-2 space-y-2">
-      {view==="records"?<div className="overflow-x-auto"><table className="w-full min-w-[800px] text-left text-sm"><caption className="sr-only">Previous similar assets from saved workbook records</caption><thead className="border-b border-slate-200 bg-slate-100 text-slate-700"><tr><th scope="col" className="whitespace-nowrap px-3 py-3">Auction date</th><th scope="col" className="px-3 py-3">Asset</th><th scope="col" className="whitespace-nowrap px-3 py-3">Proposed value (₹)</th><th scope="col" className="min-w-72 px-3 py-3">Justification</th><th scope="col" className="px-3 py-3">Recorded outcome</th></tr></thead><tbody>{(data.items as RecordItem[]).map(item=><tr key={item.id} className="border-b border-slate-200 align-top last:border-0"><td className="whitespace-nowrap px-3 py-3">{item.dateLabel||"—"}</td><td className="px-3 py-3 font-medium" title={`${item.file||item.portfolio} · ${item.sheet}, row ${item.row}`}>{item.asset||"—"}</td><td className="whitespace-nowrap px-3 py-3 tabular-nums">{item.rp==null?"—":item.rp.toLocaleString("en-IN",{maximumFractionDigits:2})}</td><td className="px-3 py-3 leading-6">{item.justification||"—"}</td><td className="px-3 py-3">{item.outcomeText||"Not recorded"}</td></tr>)}</tbody></table></div>:data.items.map((item,index)=><RowCard key={`${(item as SourceRow).bookId}-${(item as SourceRow).sheet}-${(item as SourceRow).row.n}-${index}`} item={item as SourceRow}/>)}
+      {view==="records"?<div className="overflow-x-auto"><table className="w-full min-w-[800px] text-left text-sm"><caption className="sr-only">Previous similar assets from saved workbook records</caption><thead className="border-b border-slate-200 bg-slate-100 text-slate-700"><tr><th scope="col" className="whitespace-nowrap px-3 py-3">Auction date</th><th scope="col" className="px-3 py-3">Asset</th><th scope="col" className="whitespace-nowrap px-3 py-3">Proposed value (₹)</th><th scope="col" className="min-w-72 px-3 py-3">Justification</th><th scope="col" className="px-3 py-3">Recorded outcome</th></tr></thead><tbody>{(data.items as RecordItem[]).slice((page-1)*30,page*30).map(item=><tr key={item.id} className="border-b border-slate-200 align-top last:border-0"><td className="whitespace-nowrap px-3 py-3">{item.dateLabel||"—"}</td><td className="px-3 py-3 font-medium" title={`${item.file||item.portfolio} · ${item.sheet}, row ${item.row}`}>{item.asset||"—"}</td><td className="whitespace-nowrap px-3 py-3 tabular-nums">{item.rp==null?"—":item.rp.toLocaleString("en-IN",{maximumFractionDigits:2})}</td><td className="px-3 py-3 leading-6">{item.justification||"—"}</td><td className="px-3 py-3">{item.outcomeText||"Not recorded"}</td></tr>)}</tbody></table></div>:data.items.map((item,index)=><RowCard key={`${(item as SourceRow).bookId}-${(item as SourceRow).sheet}-${(item as SourceRow).row.n}-${index}`} item={item as SourceRow}/>)}
       {!loading&&!data.items.length&&<p className="rounded-lg border border-dashed border-slate-300 p-5 text-sm text-slate-500">No matching history.</p>}
     </div><div className="mt-4 flex items-center justify-between text-sm"><button disabled={page<=1||loading} onClick={()=>setPage(current=>current-1)} className="rounded-lg border border-slate-300 px-3 py-2 disabled:opacity-40">Previous</button><span>Page {page} of {pages}</span><button disabled={page>=pages||loading} onClick={()=>setPage(current=>current+1)} className="rounded-lg border border-slate-300 px-3 py-2 disabled:opacity-40">Next</button></div></>}
   </section>;

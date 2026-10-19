@@ -6,6 +6,7 @@ import Link from "next/link";
 import {DeskflowWorkbookHistory} from "./deskflow-workbook-history";
 import {deskflowError, deskflowResponse} from "../lib/deskflow-errors";
 import {loadWorkbookWorkings, type WorkbookWorking} from "../lib/deskflow-history";
+import {latestAuctionFirst} from "../lib/deskflow-dates";
 
 type History={outcome?:string;source?:string;date:string;status:string;status_date:string;lot:string;category:string;description:string;accepted_rate:string|number;rate_unit:string};
 type Verification={status:"verified"|"needs_review"|"blocked";revision:string;checks:{code:string;state:"pass"|"warn"|"fail";message:string}[]};
@@ -55,7 +56,7 @@ export function Deskflow(){
     const response=await fetch(`${LOCAL}/software-update`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:"{}",signal:AbortSignal.timeout(10000)});
     const data=await deskflowResponse<SoftwareUpdate&{queued?:boolean}>(response,"Desktop update could not start.");setSoftwareUpdate(data.queued?{phase:"starting",message:"Desktop update queued. Waiting for the Windows companion."}:data);
   }catch(e){setError(deskflowError(e,"Desktop update could not start."));}finally{setBusy(false);}}
-  const lots=useMemo(()=>overview?.lots.filter(lot=>(!assetSearch||[lot.asset,lot.lot,lot.station,lot.train,lot.catalogue,lot.details,...lot.history.map(row=>row.description)].join(" ").toLowerCase().includes(assetSearch.toLowerCase())))||[],[overview,assetSearch]);
+  const lots=useMemo(()=>overview?.lots.filter(lot=>(!assetSearch||[lot.asset,lot.lot,lot.station,lot.train,lot.catalogue,lot.details,...lot.history.map(row=>row.description)].join(" ").toLowerCase().includes(assetSearch.toLowerCase()))).sort(latestAuctionFirst)||[],[overview,assetSearch]);
   const updateBusy=["starting","checking","downloading","installing"].includes(softwareUpdate?.phase||"");
   const working=busy||!overview?.desktop_connected||overview?.progress.busy||updateBusy;
   return <main className="min-h-screen bg-slate-50 px-4 py-6 text-slate-900 sm:px-8">
@@ -97,7 +98,7 @@ function LotRow({lot,token,revision}:{lot:Lot;token:string;revision?:string}){
         {lot.calculation_notes&&<p className="mt-3">{lot.calculation_notes}</p>}
         <h3 className="mt-4 font-semibold">Previous similar lots</h3>
         <p className="mt-1 text-xs text-slate-500">Check that previous lots refer to the same asset.</p>
-        {lot.history.length?<div className="mt-2 overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr><th className="py-2 pr-3">Auction date</th><th className="pr-3">Lot</th><th className="pr-3">Status</th><th className="pr-3">Status date</th><th>Accepted rate / unit</th></tr></thead><tbody>{lot.history.map((row,i)=><tr key={i} className="border-t border-slate-100"><td className="py-2 pr-3">{dateText(row.date)}</td><td className="pr-3">{row.lot}</td><td className="pr-3">{row.status}</td><td className="pr-3">{dateText(row.status_date)}</td><td>{row.accepted_rate?`${valueText(row.accepted_rate)} ${row.rate_unit||""}`:"—"}</td></tr>)}</tbody></table></div>:<p className="mt-2 text-xs">No earlier auction evidence collected for this lot.</p>}
+        {lot.history.length?<div className="mt-2 overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr><th className="py-2 pr-3">Auction date</th><th className="pr-3">Lot</th><th className="pr-3">Status</th><th className="pr-3">Status date</th><th>Accepted rate / unit</th></tr></thead><tbody>{[...lot.history].sort(latestAuctionFirst).map((row,i)=><tr key={i} className="border-t border-slate-100"><td className="py-2 pr-3">{dateText(row.date)}</td><td className="pr-3">{row.lot}</td><td className="pr-3">{row.status}</td><td className="pr-3">{dateText(row.status_date)}</td><td>{row.accepted_rate?`${valueText(row.accepted_rate)} ${row.rate_unit||""}`:"—"}</td></tr>)}</tbody></table></div>:<p className="mt-2 text-xs">No earlier auction evidence collected for this lot.</p>}
         <h3 className="mt-4 font-semibold">Full verification checks</h3>
         <ul className="mt-2 space-y-1 text-xs">{[...issues,...checks.filter(check=>check.state==="pass")].map(check=><li key={check.code} className={check.state==="fail"?"text-red-700":check.state==="warn"?"text-amber-800":"text-emerald-800"}>{check.state==="fail"?"Error: ":check.state==="warn"?"Review: ":"Passed: "}{check.message}</li>)}</ul>
         {lot.auctionSchedule?<p className="mt-3 text-xs">Auction {lot.auctionSchedule.status} · {dateText(lot.auctionSchedule.date)} · {lot.auctionSchedule.scheduleId} · {lot.auctionSchedule.catalogueId}</p>:<p className="mt-3 text-xs">No schedule row linked yet.</p>}
@@ -121,7 +122,7 @@ function PreviousResults({lot,token,revision}:{lot:Lot;token:string;revision?:st
     return()=>{current=false;};
   },[token,query,revision,lot.history.length,retry]);
   if(!lot.history.length)return <span className="text-xs text-slate-500">No previous IREPS result collected.</span>;
-  return <div className="text-xs">{loading&&<p className="mb-2 text-slate-500">Loading previous RP…</p>}{error&&<p role="alert" className="mb-2 text-red-700">{error} <button onClick={()=>setRetry(n=>n+1)} className="underline">Retry</button></p>}<ul className="space-y-3">{[...lot.history].sort((a,b)=>b.date.localeCompare(a.date)).map((row,index)=>{
+  return <div className="text-xs">{loading&&<p className="mb-2 text-slate-500">Loading previous RP…</p>}{error&&<p role="alert" className="mb-2 text-red-700">{error} <button onClick={()=>setRetry(n=>n+1)} className="underline">Retry</button></p>}<ul className="space-y-3">{[...lot.history].sort(latestAuctionFirst).map((row,index)=>{
     const outcome=row.outcome||({Failed:"No Bids",Running:"Sold",Completed:"Sold",Foreclosed:"Sold"}[row.status]||row.status);
     const matches=workings.filter(item=>item.date===row.date.slice(0,10));
     const working=matches.length===1?matches[0]:undefined;
