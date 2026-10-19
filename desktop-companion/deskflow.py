@@ -269,7 +269,7 @@ class Deskflow:
             return self.snapshot()
         if action=='save':return self.save(data)
         if action=='fee':return {'fee':annual_fee(**data)}
-        if action not in ('collect','history','contracts'):raise ValueError('Unknown Deskflow action.')
+        if action not in ('collect','history','contracts','workbook-history'):raise ValueError('Unknown Deskflow action.')
         # Serialize browser ownership with MCDO without changing its payment pipeline.
         with self.updater.lock, self.lock:
             if self.updater.snapshot()['busy'] or (self.thread and self.thread.is_alive()):raise ValueError('A collection is already running. Wait for it to finish.')
@@ -321,8 +321,9 @@ class Deskflow:
                     page.close();return
                 endpoint=json.loads((self.engine.STATE/'browser.json').read_text())['port']
                 runtime=Path.home()/'.cache/codex-runtimes/codex-primary-runtime/dependencies/node'
-                job={'id':uuid.uuid4().hex,'action':{'collect':'scheduled','history':'closed','contracts':'contracts'}[action]}
+                job={'id':uuid.uuid4().hex,'action':{'collect':'scheduled','history':'closed','contracts':'contracts','workbook-history':'closed'}[action]}
                 if action!='collect':job.update(from_date=start,to_date=end)
+                if action=='workbook-history':job['metadata_only']=True
                 if action=='history':
                     job['lots']=list({lot['lot'] for _,lot in self.store.current_lots()})
                     if not job['lots']:raise ValueError('Collect pending lots first.')
@@ -352,6 +353,13 @@ class Deskflow:
                     for row in rows:row['start']=parse_day(row['start'])
                     ids=[self.store.save_lot(row) for row in rows]
                     self.store.save_evidence('__workspace__','scheduled_snapshot',{'ids':ids,'complete':True,'count':len(rows),'collected_at':datetime.now().isoformat(),'scope':{'source':'IREPS scheduled catalogues'}})
+                elif action=='workbook-history':
+                    for row in rows:row['date']=parse_day(row['date'])
+                    self.store.save_evidence('__workspace__','workbook_ireps_history',{
+                        'from_date':start,'to_date':end,'complete':True,'rows':rows,
+                        'collected_at':datetime.now().isoformat(),
+                        'scope':'All visible closed catalogue lot metadata; RP registers not decrypted; bid viewers not opened.'
+                    },start+'|'+end)
                 elif action=='history':
                     for row in rows:row['date']=parse_day(row['date'])
                     for key,lot in self.store.current_lots():
