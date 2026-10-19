@@ -1,6 +1,6 @@
 import copy
 import unittest
-from rp.rules import calculate
+from rp.rules import calculate, reviewed_continuation_matches
 
 class ContinuationTests(unittest.TestCase):
     def setUp(self):
@@ -18,6 +18,13 @@ class ContinuationTests(unittest.TestCase):
     def test_changed_scope_blocks(self):
         self.lot['description']='different scope'
         self.assertFalse(calculate(self.lot,self.events,{},self.inputs).ready)
+
+    def test_refresh_preserves_review_only_for_exact_sourced_scope(self):
+        self.inputs['conditions_reviewed']=True
+        self.events=[{**e,**{k:self.lot[k] for k in ('lot','description','rate_unit')}} for e in self.events]
+        self.assertTrue(reviewed_continuation_matches(self.lot,self.events,self.inputs))
+        self.events[0]['description']='different compartment'
+        self.assertFalse(reviewed_continuation_matches(self.lot,self.events,self.inputs))
     def test_new_award_blocks(self):
         self.events.append(dict(date='2026-10-01',outcome='Sold',source='IREPS',awardee='A',bid_rate=1000,rate_unit=self.lot['rate_unit']))
         self.assertFalse(calculate(self.lot,self.events,{},self.inputs).ready)
@@ -28,5 +35,15 @@ class ContinuationTests(unittest.TestCase):
         self.inputs['family']='Parcel';self.inputs['continuation'].update(mode='parcel_initial',base='9469')
         self.events[1]['outcome']='No Bids'
         self.assertEqual(calculate(self.lot,self.events,{},self.inputs).rp,'6628.30')
+
+    def test_latest_parcel_rp_reduction_uses_previous_rate_once(self):
+        self.inputs['family']='Parcel'
+        self.inputs['continuation'].update(mode='parcel_previous',base='8522.10',date='2026-09-07',failed_dates=['2026-09-07','2026-09-23'])
+        self.events=[dict(date=d,outcome='No Bids',source='IREPS',catalogue=d) for d in ('2026-09-07','2026-09-23')]
+        for _ in range(2):
+            r=calculate(self.lot,self.events,{},self.inputs)
+            self.assertTrue(r.ready,r.missing);self.assertEqual(r.rp,'7669.89')
+        self.events.append(dict(date='2026-10-01',outcome='No Bids',source='IREPS',catalogue='later'))
+        self.assertFalse(calculate(self.lot,self.events,{},self.inputs).ready)
 
 if __name__=='__main__':unittest.main()

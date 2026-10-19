@@ -98,6 +98,11 @@ def _continuation_basis(lot, auctions, inputs, result):
         failures = sum(a['outcome'] in ('No Bids', 'Rejected') for a in events)
         if c['mode'] == 'parcel_initial' and inputs.get('family') == 'Parcel':
             factor = Decimal(1) - Decimal('.1') * min(7, max(0, failures - 1))
+        elif c['mode'] == 'parcel_previous' and inputs.get('family') == 'Parcel':
+            failed_dates=sorted(a['date'] for a in events if a['outcome'] in ('No Bids','Rejected'))
+            if len(failed_dates)!=2 or failed_dates!=sorted(c.get('failed_dates',[])):
+                return False
+            factor = Decimal('.9')
         elif c['mode'] == 'successive' and inputs.get('family') in ('Parking / Pay & Use', 'Catering / MPS') and int(c.get('prior_failures', 0)) >= 2:
             factor = Decimal('.9') ** failures
         else:

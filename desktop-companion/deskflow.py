@@ -4,7 +4,7 @@ from pathlib import Path
 from datetime import datetime, date, timedelta
 from dataclasses import asdict
 from rp.store import Store
-from rp.rules import calculate, number, FAMILIES, UNITS, CONTRACT_STATES
+from rp.rules import calculate, number, FAMILIES, UNITS, CONTRACT_STATES, reviewed_continuation_matches
 from rp.standard_conditions import review, annual_fee
 from rp.contract_fields import candidate_fields
 from rp.rules import Result
@@ -160,7 +160,7 @@ class Deskflow:
         except Exception as exc:
             self.state.update(phase='error',message='Workbook update stopped. Backups and saved evidence are retained.',error=str(exc)[:1400])
 
-    def write_workbooks(self):
+    def write_workbooks(self,ready_only=True):
         from rp.excel_io import _sheet_path,_strings,_text,Q
         from lxml import etree as E
         import zipfile
@@ -184,12 +184,18 @@ class Deskflow:
             matches=identities.get((lot['lot'],lot.get('catalogue','')),set())
             if len(matches)>1:raise ValueError('The same lot and catalogue appear in multiple workbooks; resolve the duplicate before updating.')
             group=next(iter(matches)) if matches else family_group(family)
-            keys_by_group[group].append(key)
             result=Result(**record['result'])
-            if result.ready:ready+=1;result.justification=public_text(result.justification)
+            if result.ready:
+                ready+=1;result.justification=public_text(short_justification(asdict(result)))
+                continuation=inputs.get('continuation') or {}
+                if continuation.get('mode')=='parcel_previous':
+                    dates=' & '.join(datetime.fromisoformat(day).strftime('%d.%m.%Y') for day in continuation['failed_dates'])
+                    result.justification=f"No bids received on {dates}. Previous RP Rs {Decimal(continuation['base']):,.2f} reduced by 10% to Rs {Decimal(result.rp):,.2f}."
             else:
                 pending.append({'lot':lot['lot'],'reason':public_text(result.missing)})
+                if ready_only:continue
                 result.missing=public_text(result.missing)
+            keys_by_group[group].append(key)
             events=record['auctions']
             batches[group].append({'lot':lot,'inputs':inputs,'contract':record['contract'],'last':max(events,key=lambda a:a['date']) if events else {},'result':result})
         if not revisions:raise ValueError('No current pending lots were collected. No workbook was changed.')
@@ -214,7 +220,7 @@ class Deskflow:
             report={'saved':saved,'calculated':ready,'pending':pending,'at':datetime.now().isoformat()}
             self.store.save_evidence('__workspace__','workbook_update',report)
             message=f'{len(saved)} local workbooks saved with backups. {ready} values calculated.'
-            if pending:message+=f' {len(pending)} rows need evidence; existing values were preserved. Reasons are saved in the workbooks.'
+            if pending:message+=f' {len(pending)} rows need evidence; existing values and notes were preserved. See the reasons in Deskflow.'
             self.state.update(phase='needs_evidence' if pending else 'complete',message=message,error=None)
             return report
         except Exception as exc:
@@ -354,12 +360,18 @@ class Deskflow:
                     ids=[self.store.save_lot(row) for row in rows]
                     self.store.save_evidence('__workspace__','scheduled_snapshot',{'ids':ids,'complete':True,'count':len(rows),'collected_at':datetime.now().isoformat(),'scope':{'source':'IREPS scheduled catalogues'}})
                 elif action=='workbook-history':
-                    for row in rows:row['date']=parse_day(row['date'])
+                    valid=[];undated=[]
+                    for row in rows:
+                        try:valid.append({**row,'date':parse_day(row['date'])})
+                        except ValueError:undated.append(row)
                     self.store.save_evidence('__workspace__','workbook_ireps_history',{
-                        'from_date':start,'to_date':end,'complete':True,'rows':rows,
+                        'from_date':start,'to_date':end,'complete':not undated,'rows':valid,'undated_rows':undated,
                         'collected_at':datetime.now().isoformat(),
                         'scope':'All visible closed catalogue lot metadata; RP registers not decrypted; bid viewers not opened.'
                     },start+'|'+end)
+                    if undated:
+                        self.state.update(phase='needs_evidence',message=f'{len(valid)} dated catalogue records saved; {len(undated)} records retained separately because IREPS did not show their auction start date.',error=None)
+                        page.close();page=None;return
                 elif action=='history':
                     for row in rows:row['date']=parse_day(row['date'])
                     for key,lot in self.store.current_lots():
@@ -369,7 +381,10 @@ class Deskflow:
                                 changed=not any(all(a.get(field)==row.get(field) for field in ('date','catalogue','lot','outcome','bid_rate','rate_unit')) for a in existing)
                                 self.store.save_evidence(key,'auction',{**row,'captured':True,'previous_lot':row['lot']},row['date']+'|'+row.get('catalogue','')+'|'+row['lot'])
                                 previous=self.store.evidence(key,'inputs')
-                                if previous and changed:self.store.save_evidence(key,'inputs',{**previous[-1],'identity_verified':False})
+                                if previous and changed:
+                                    inputs=previous[-1]
+                                    same=reviewed_continuation_matches(lot,self.store.evidence(key,'auction'),inputs)
+                                    self.store.save_evidence(key,'inputs',{**inputs,'identity_verified':same})
                     self.store.save_evidence('__workspace__','history_snapshot',{'from_date':start,'to_date':end,'complete':True,'count':len(rows),'collected_at':datetime.now().isoformat()})
                 else:
                     self.store.save_evidence('__workspace__','web_contract_candidates',{'rows':[{'raw':r,'fields':candidate_fields(r)} for r in rows]})

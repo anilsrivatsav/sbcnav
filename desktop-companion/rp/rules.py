@@ -27,6 +27,27 @@ def dt(value):
     try: return date.fromisoformat(str(value)[:10])
     except Exception: raise ValueError('Dates must use YYYY-MM-DD.')
 
+def reviewed_continuation_matches(lot, auctions, inputs):
+    """Retain an existing sourced review only when newly collected scope agrees."""
+    c=inputs.get('continuation') or {}
+    if inputs.get('review_issue') or not inputs.get('conditions_reviewed') or not inputs.get('benchmark_source'):
+        return False
+    if not all(c.get(k) for k in ('source','policy','scope_source','date')):
+        return False
+    if any(c.get(k)!=lot.get(k) for k in ('lot','description')) or canonical_unit(c.get('rate_unit'))!=canonical_unit(lot.get('rate_unit')):
+        return False
+    try:
+        anchor=dt(c['date'])
+        if not any(dt(a['date'])==anchor for a in auctions):return False
+        for a in auctions:
+            if (a.get('previous_lot',a.get('lot'))!=lot.get('lot') or a.get('description')!=lot.get('description')
+                or canonical_unit(a.get('rate_unit'))!=canonical_unit(lot.get('rate_unit')) or not a.get('source')
+                or dt(a['date'])>=dt(lot['start']) or dt(a['date'])>date.today()
+                or (dt(a['date'])>=anchor and a.get('outcome') not in ('No Bids','Rejected','Withdrawn'))):
+                return False
+        return True
+    except (KeyError,ValueError,TypeError):return False
+
 @dataclass
 class Result:
     ready: bool
@@ -214,6 +235,11 @@ def continue_working(lot, events, inputs):
     if base <= 0: raise ValueError('A positive workbook baseline is required.')
     if c['mode'] == 'parcel_initial' and inputs['family'] == 'Parcel':
         factor = Decimal(1) - Decimal('.1') * min(7, max(0, failures - 1))
+    elif c['mode'] == 'parcel_previous' and inputs['family'] == 'Parcel':
+        failed_dates=sorted(a['date'] for a in relevant if a['outcome'] in ('Rejected','No Bids'))
+        if len(failed_dates)!=2 or failed_dates!=sorted(c.get('failed_dates',[])):
+            raise ValueError('Refresh the previous-RP working: its two reviewed unsuccessful auctions have changed.')
+        factor = Decimal('.9')
     elif c['mode'] == 'successive' and inputs['family'] in ('Parking / Pay & Use', 'Catering / MPS'):
         if int(c.get('prior_failures', 0)) < 2:
             raise ValueError('Successive reductions require two failures before the baseline.')

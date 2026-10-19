@@ -28,6 +28,16 @@ class ContinuationVerificationTests(unittest.TestCase):
             checks={c['code']:c['state'] for c in verify(r)['checks']}
             self.assertEqual(checks['pricing_basis'],'fail')
 
+    def test_previous_parcel_rate_has_independent_amount_and_cycle_checks(self):
+        r=self.record();r['inputs']['family']='Parcel'
+        r['inputs']['continuation'].update(mode='parcel_previous',date='2026-09-07',base='8522.10',failed_dates=['2026-09-07','2026-09-23'])
+        r['auctions']=[{'date':d,'outcome':'No Bids','source':'IREPS','catalogue':d} for d in ('2026-09-07','2026-09-23')]
+        r['result']=asdict(calculate(r['lot'],r['auctions'],{},r['inputs']))
+        checks={c['code']:c['state'] for c in verify(r)['checks']}
+        self.assertEqual(r['result']['rp'],'7669.89');self.assertEqual(checks['pricing_basis'],'pass')
+        r['inputs']['continuation']['failed_dates']=['2026-09-07','2026-09-24']
+        self.assertEqual({c['code']:c['state'] for c in verify(r)['checks']}['pricing_basis'],'fail')
+
     def test_specific_saved_review_issue_is_preserved(self):
         d=object.__new__(Deskflow)
         self.assertEqual(d.result({},[],{},{'review_issue':'Confirm the cancelled contract reason.'})['missing'],'Confirm the cancelled contract reason.')
