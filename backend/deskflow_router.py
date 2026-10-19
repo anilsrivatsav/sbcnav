@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy import select
 
 from database import SessionLocal
@@ -231,6 +232,12 @@ async def agent_workbook_archive(request: Request):
     bundle = b''.join(chunks)
     if not bundle or len(bundle) > 8_000_000:
         raise HTTPException(413, 'Workbook bundle is empty or too large.')
+    # Parsing Excel and encrypting the archive must not block the async worker's
+    # heartbeat or the companion relay while an upload is being processed.
+    return await run_in_threadpool(_save_workbook_archive, bundle)
+
+
+def _save_workbook_archive(bundle: bytes):
     with SessionLocal.begin() as session:
         row = session.execute(select(DeskflowWorkbookArchive).where(DeskflowWorkbookArchive.id == 1).with_for_update()).scalar_one_or_none()
         if row is None:
