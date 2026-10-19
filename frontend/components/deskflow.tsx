@@ -5,6 +5,7 @@ import {ArrowLeft, LockKeyhole, RefreshCw} from "lucide-react";
 import Link from "next/link";
 import {DeskflowWorkbookHistory} from "./deskflow-workbook-history";
 import {deskflowError, deskflowResponse} from "../lib/deskflow-errors";
+import {loadWorkbookWorkings, type WorkbookWorking} from "../lib/deskflow-history";
 
 type History={outcome?:string;source?:string;date:string;status:string;status_date:string;lot:string;category:string;description:string;accepted_rate:string|number;rate_unit:string};
 type Verification={status:"verified"|"needs_review"|"blocked";revision:string;checks:{code:string;state:"pass"|"warn"|"fail";message:string}[]};
@@ -16,13 +17,12 @@ type SoftwareUpdate={phase:string;message:string;error?:string;revision?:string|
 const LOCAL="/api/deskflow";
 const TOKEN_KEY="sbcnav-deskflow-token";
 const dateText=(value?:string)=>value?value.slice(0,10).split("-").reverse().join("-"):"—";
-const valueText=(value:number|string|null|undefined)=>value===null||value===undefined||value===""?"Pending evidence":`₹${Number(value).toLocaleString("en-IN",{maximumFractionDigits:2})}`;
+const valueText=(value:number|string|null|undefined)=>value===null||value===undefined||value===""?"Pending evidence":`₹${Number(value).toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
 
 export function Deskflow(){
   const [token,setToken]=useState("");
   const [password,setPassword]=useState("");
   const [overview,setOverview]=useState<Overview|null>(null);
-  const [category,setCategory]=useState("");
   const [assetQuery,setAssetQuery]=useState("");
   const [assetSearch,setAssetSearch]=useState("");
   useEffect(()=>{const timer=setTimeout(()=>setAssetSearch(assetQuery.trim()),300);return()=>clearTimeout(timer);},[assetQuery]);
@@ -36,7 +36,6 @@ export function Deskflow(){
     const response=await fetch(`${LOCAL}/overview`,{headers:{Authorization:`Bearer ${accessToken}`},cache:"no-store",signal:AbortSignal.timeout(8000)});
     if(response.status===401){sessionStorage.removeItem(TOKEN_KEY);setToken("");setOverview(null);setError("Session expired. Unlock Deskflow again.");throw Error("Session expired. Unlock Deskflow again.");}
     const data=await deskflowResponse<Overview>(response,"Lots could not be refreshed.");setOverview(data);setOverviewError("");
-    setCategory(current=>data.categories.includes(current)?current:"");
   },[]);
   const fetchSoftwareUpdate=useCallback(async(accessToken:string)=>{
     const response=await fetch(`${LOCAL}/software-update`,{headers:{Authorization:`Bearer ${accessToken}`},cache:"no-store",signal:AbortSignal.timeout(8000)});
@@ -56,7 +55,7 @@ export function Deskflow(){
     const response=await fetch(`${LOCAL}/software-update`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:"{}",signal:AbortSignal.timeout(10000)});
     const data=await deskflowResponse<SoftwareUpdate&{queued?:boolean}>(response,"Desktop update could not start.");setSoftwareUpdate(data.queued?{phase:"starting",message:"Desktop update queued. Waiting for the Windows companion."}:data);
   }catch(e){setError(deskflowError(e,"Desktop update could not start."));}finally{setBusy(false);}}
-  const lots=useMemo(()=>overview?.lots.filter(lot=>(!category||lot.category===category)&&(!assetSearch||[lot.asset,lot.lot,lot.station,lot.train,lot.catalogue,lot.details,...lot.history.map(row=>row.description)].join(" ").toLowerCase().includes(assetSearch.toLowerCase())))||[],[overview,category,assetSearch]);
+  const lots=useMemo(()=>overview?.lots.filter(lot=>(!assetSearch||[lot.asset,lot.lot,lot.station,lot.train,lot.catalogue,lot.details,...lot.history.map(row=>row.description)].join(" ").toLowerCase().includes(assetSearch.toLowerCase())))||[],[overview,assetSearch]);
   const updateBusy=["starting","checking","downloading","installing"].includes(softwareUpdate?.phase||"");
   const working=busy||!overview?.desktop_connected||overview?.progress.busy||updateBusy;
   return <main className="min-h-screen bg-slate-50 px-4 py-6 text-slate-900 sm:px-8">
@@ -64,7 +63,7 @@ export function Deskflow(){
       <header className="mb-5 flex items-center justify-between gap-4"><div className="flex items-center gap-3"><Link href="/" aria-label="Back to SBCNAV" className="rounded-lg border border-slate-200 bg-white p-2"><ArrowLeft size={18}/></Link><h1 className="text-2xl font-bold">Deskflow</h1></div>{token&&<button onClick={()=>{sessionStorage.removeItem(TOKEN_KEY);setToken("");setOverview(null);}} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">Lock</button>}</header>
       {!token?<form onSubmit={unlock} className="mx-auto mt-16 max-w-sm rounded-xl border border-slate-200 bg-white p-6"><LockKeyhole className="mb-3 text-emerald-700" size={24}/><h2 className="text-lg font-semibold">Unlock Deskflow</h2><label htmlFor="deskflow-password" className="mt-5 block text-sm">Password</label><input id="deskflow-password" type="password" autoFocus required value={password} onChange={e=>setPassword(e.target.value)} className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2"/><button disabled={busy} className="mt-4 w-full rounded-lg bg-emerald-700 px-4 py-2 font-semibold text-white disabled:opacity-50">Unlock</button>{error&&<p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}</form>:<div className="space-y-4">
         <label className="block text-sm font-medium">Search asset, train, station or lot<input type="search" value={assetQuery} onChange={e=>setAssetQuery(e.target.value)} placeholder="e.g. 17294, Yelahanka, parking" className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2"/></label>
-        <div className="flex flex-wrap items-center gap-2"><label htmlFor="deskflow-category" className="sr-only">Category</label><select id="deskflow-category" value={category} onChange={e=>setCategory(e.target.value)} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"><option value="">All categories</option>{overview?.categories.map(item=><option key={item}>{item}</option>)}</select><button disabled={working} onClick={()=>collect("collect")} className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"><RefreshCw size={15}/>Collect lots</button><button disabled={working||!overview?.lots.length} onClick={()=>collect("history")} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm disabled:opacity-50">Collect live history</button><span className="ml-auto text-xs text-slate-500">{overview?.collected_at?`Updated ${dateText(overview.collected_at)}`:""}</span></div>
+        <div className="flex flex-wrap items-center gap-2"><button disabled={working} onClick={()=>collect("collect")} className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"><RefreshCw size={15}/>Collect lots</button><button disabled={working||!overview?.lots.length} onClick={()=>collect("history")} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm disabled:opacity-50">Collect live history</button><span className="ml-auto text-xs text-slate-500">{overview?.collected_at?`Updated ${dateText(overview.collected_at)}`:""}</span></div>
         <div className="flex flex-wrap items-center gap-2"><button disabled={working||overview?.archive_sync?.busy} onClick={()=>collect("sync-workbooks")} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm disabled:opacity-50">Sync local workbooks</button><button disabled={working} onClick={updateDesktop} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm disabled:opacity-50">Update desktop app</button></div>
         {error&&<div role="alert" className="flex justify-between gap-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800"><span>{error}</span><button onClick={()=>setError("")} aria-label="Dismiss command error" className="underline">Dismiss</button></div>}
         {overviewError&&<p role="alert" className="text-sm text-red-700">{overviewError} {overview?"Showing previously loaded rows.":""}</p>}
@@ -73,7 +72,7 @@ export function Deskflow(){
         {overview?.archive_sync&&<p role={overview.archive_sync.error||overview.archive_sync.phase==="error"?"alert":"status"} className={`text-sm ${overview.archive_sync.error||overview.archive_sync.phase==="error"?"text-red-700":"text-slate-600"}`}>Workbook sync: {overview.archive_sync.error||overview.archive_sync.message}</p>}
         {softwareError&&<p role="alert" className="text-sm text-red-700">{softwareError}</p>}
         {(softwareUpdate&&softwareUpdate.phase!=="ready")&&<p role={softwareUpdate?.phase==="error"||softwareUpdate?.error?"alert":"status"} className={`text-sm ${softwareUpdate?.phase==="error"||softwareUpdate?.error?"text-red-700":"text-slate-600"}`}>Desktop app: {softwareUpdate?.error||softwareUpdate?.message}</p>}
-        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white"><table className="w-full min-w-[940px] text-left text-sm"><caption className="sr-only">Auction date, lot number, proposed value, justification and previous IREPS results</caption><thead className="border-b border-slate-200 bg-slate-100 text-slate-700"><tr><th scope="col" className="w-32 px-4 py-3">Auction date</th><th scope="col" className="w-24 px-4 py-3">Lot number</th><th scope="col" className="w-36 px-4 py-3">Proposed value (₹)</th><th scope="col" className="px-4 py-3">Justification</th><th scope="col" className="w-56 px-4 py-3">Previous IREPS results</th></tr></thead><tbody>{lots.map(lot=><LotRow key={lot.key} lot={lot}/>)}{!lots.length&&<tr><td colSpan={5} className="px-4 py-8 text-center text-slate-500">{!overview?overviewError?"Rows could not be loaded.":"Loading lots…":assetSearch?"No current lots match. See previous similar assets below.":"No lots in this category."}</td></tr>}</tbody></table></div>
+        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white"><table className="w-full min-w-[940px] text-left text-sm"><caption className="sr-only">Auction date, lot number, proposed value, justification and previous IREPS results</caption><thead className="border-b border-slate-200 bg-slate-100 text-slate-700"><tr><th scope="col" className="w-32 px-4 py-3">Auction date</th><th scope="col" className="w-24 px-4 py-3">Lot number</th><th scope="col" className="w-36 px-4 py-3">Proposed value (₹)</th><th scope="col" className="px-4 py-3">Justification</th><th scope="col" className="min-w-72 px-4 py-3">Previous IREPS results</th></tr></thead><tbody>{lots.map(lot=><LotRow key={lot.key} lot={lot} token={token} revision={overview?.archive_sync?.revision}/>)}{!lots.length&&<tr><td colSpan={5} className="px-4 py-8 text-center text-slate-500">{!overview?overviewError?"Rows could not be loaded.":"Loading lots…":assetSearch?"No current lots match. See previous similar assets below.":"No current lots collected."}</td></tr>}</tbody></table></div>
         <details open className="rounded-lg border border-slate-200 bg-white p-4"><summary className="cursor-pointer text-sm font-medium">{assetSearch?"Previous similar assets":"Workbook history"}</summary><div className="mt-4"><DeskflowWorkbookHistory token={token} revision={overview?.archive_sync?.revision} assetSearch={assetSearch}/></div></details>
       </div>}
     </div>
@@ -81,7 +80,7 @@ export function Deskflow(){
 }
 
 const shortIssue:Record<string,string>={asset_identity:"Confirm this asset and its earlier lots.",benchmark_source:"Add the benchmark source.",standard_conditions:"Review the applicable conditions.",bid_and_lar:"Confirm the accepted rate and awardee.",previous_outcome:"Add the previous auction result.",contract_link:"Check the contract rate and awardee against the sold lot.",local_workbook:"Save the reviewed value to the workbook.",history_coverage:"Refresh auction history.",scheduled_freshness:"Refresh current lots.",auction_schedule:"Check the auction schedule."};
-function LotRow({lot}:{lot:Lot}){
+function LotRow({lot,token,revision}:{lot:Lot;token:string;revision?:string}){
   const checks=lot.verification?.checks||[];
   const issues=checks.filter(check=>check.state!=="pass");
   const issue=issues.find(check=>check.state==="fail")||issues[0];
@@ -105,10 +104,27 @@ function LotRow({lot}:{lot:Lot}){
         <Link href={`/eauction?category=${encodeURIComponent(lot.category)}&lotKey=${encodeURIComponent(lot.key)}`} className="mt-2 inline-block text-xs text-emerald-700 underline">Open auction schedule</Link>
       </details>
     </td>
-    <td className="px-4 py-3">{lot.history.length?<ul className="space-y-2">{[...lot.history].sort((a,b)=>b.date.localeCompare(a.date)).map((row,index)=>{
-      const outcome=row.outcome||({Failed:"No Bids",Running:"Sold",Completed:"Sold",Foreclosed:"Sold"}[row.status]||row.status);
-      const label=outcome==="No Bids"?"No bids":outcome;
-      return <li key={`${row.date}-${row.lot}-${index}`} className="text-xs"><span className="whitespace-nowrap">{dateText(row.date)}</span><span className={`ml-2 inline-block rounded px-2 py-0.5 font-medium ${outcome==="Sold"?"bg-emerald-50 text-emerald-800":outcome==="No Bids"?"bg-amber-50 text-amber-900":"bg-slate-100 text-slate-700"}`}>{label}</span>{outcome==="Sold"&&row.accepted_rate&&<span className="mt-1 block text-slate-600">{valueText(row.accepted_rate)} {row.rate_unit}</span>}</li>;
-    })}</ul>:<span className="text-xs text-slate-500">No previous IREPS result collected.</span>}</td>
+    <td className="px-4 py-3"><PreviousResults lot={lot} token={token} revision={revision}/></td>
   </tr>;
+}
+
+function PreviousResults({lot,token,revision}:{lot:Lot;token:string;revision?:string}){
+  const [workings,setWorkings]=useState<WorkbookWorking[]>([]);
+  const [error,setError]=useState("");
+  const [loading,setLoading]=useState(false);
+  const [retry,setRetry]=useState(0);
+  const query=/^\d{5}/.exec(lot.lot)?.[0]||lot.lot;
+  useEffect(()=>{
+    if(!lot.history.length)return;
+    let current=true;setLoading(true);setError("");setWorkings([]);
+    loadWorkbookWorkings(token,query,revision).then(rows=>{if(current)setWorkings(rows);}).catch(reason=>{if(current)setError(deskflowError(reason,"Previous RP could not be loaded."));}).finally(()=>{if(current)setLoading(false);});
+    return()=>{current=false;};
+  },[token,query,revision,lot.history.length,retry]);
+  if(!lot.history.length)return <span className="text-xs text-slate-500">No previous IREPS result collected.</span>;
+  return <div className="text-xs">{loading&&<p className="mb-2 text-slate-500">Loading previous RP…</p>}{error&&<p role="alert" className="mb-2 text-red-700">{error} <button onClick={()=>setRetry(n=>n+1)} className="underline">Retry</button></p>}<ul className="space-y-3">{[...lot.history].sort((a,b)=>b.date.localeCompare(a.date)).map((row,index)=>{
+    const outcome=row.outcome||({Failed:"No Bids",Running:"Sold",Completed:"Sold",Foreclosed:"Sold"}[row.status]||row.status);
+    const matches=workings.filter(item=>item.date===row.date.slice(0,10));
+    const working=matches.length===1?matches[0]:undefined;
+    return <li key={`${row.date}-${row.lot}-${index}`} className="border-b border-slate-100 pb-2 last:border-0"><div className="flex flex-wrap items-center gap-2"><span>{dateText(row.date)}</span><span className={`rounded px-2 py-0.5 font-medium ${outcome==="Sold"?"bg-emerald-50 text-emerald-800":outcome==="No Bids"?"bg-amber-50 text-amber-900":"bg-slate-100 text-slate-700"}`}>{outcome==="No Bids"?"No bids":outcome}</span></div>{!loading&&!error&&<div className="mt-1 space-y-1 text-slate-600">{matches.length>1?<p>Multiple workbook matches — check the exact asset.</p>:<><p title={working?`${working.asset} · ${working.portfolio} · ${working.sheet}, row ${working.row}`:undefined}><b>Workbook RP:</b> {working?.rp!=null?valueText(working.rp):"Not recorded"}</p><p><b>Justification:</b> {working?.justification||"Not recorded"}</p>{working&&<p className="text-slate-500">Workbook asset: {working.asset}</p>}</>}</div>}{outcome==="Sold"&&row.accepted_rate&&<p className="mt-1 text-slate-600"><b>IREPS accepted rate:</b> {valueText(row.accepted_rate)} {row.rate_unit}</p>}</li>;
+  })}</ul></div>;
 }

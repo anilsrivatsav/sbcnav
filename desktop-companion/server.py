@@ -280,7 +280,15 @@ class WorkbookArchiveSync:
             self.state.update(changes)
             temp = self.path.with_suffix('.tmp')
             temp.write_text(json.dumps(self.state), encoding='utf-8')
-            temp.replace(self.path)
+            # Windows readers or scanners can briefly hold the destination open.
+            for attempt in range(10):
+                try:
+                    temp.replace(self.path)
+                    break
+                except PermissionError:
+                    if attempt == 9:
+                        raise
+                    time.sleep(.1)
 
     def start(self, force=False):
         with self.lock:

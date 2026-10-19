@@ -9,9 +9,21 @@ if (!(Test-Path -LiteralPath $launcher)) {
     throw 'SBC NAV desktop companion is not installed on this computer.'
 }
 
+function Set-CompanionText([string]$path, [string]$text) {
+    for ($writeAttempt = 0; $writeAttempt -lt 10; $writeAttempt++) {
+        try {
+            [IO.File]::WriteAllText($path, $text, (New-Object Text.UTF8Encoding($false)))
+            return
+        } catch {
+            if ($writeAttempt -eq 9) { throw }
+            Start-Sleep -Milliseconds 100
+        }
+    }
+}
+
 function Set-UpdateState([string]$phase, [string]$message) {
     $payload = @{ phase = $phase; message = $message } | ConvertTo-Json -Compress
-    Set-Content -LiteralPath (Join-Path $destination 'software-update.json') -Value $payload -Encoding UTF8
+    Set-CompanionText (Join-Path $destination 'software-update.json') $payload
 }
 
 trap {
@@ -27,6 +39,7 @@ $commit = Invoke-RestMethod -Uri 'https://api.github.com/repos/anilsrivatsav/sbc
 $revision = [string]$commit.sha
 if ($revision -notmatch '^[0-9a-f]{40}$') { throw 'GitHub returned an invalid revision.' }
 $revisionFile = Join-Path $destination '.installed-commit'
+$previousRevision = if (Test-Path -LiteralPath $revisionFile) { (Get-Content -LiteralPath $revisionFile -Raw).Trim() } else { $null }
 if ((Test-Path -LiteralPath $revisionFile) -and ((Get-Content -LiteralPath $revisionFile -Raw).Trim() -eq $revision)) {
     Set-UpdateState 'current' "Desktop companion is current ($($revision.Substring(0, 7)))."
     Write-Output "SBC NAV desktop companion is current ($($revision.Substring(0, 7)))."
@@ -122,16 +135,17 @@ try {
         try {
             $status = Invoke-RestMethod -Uri 'http://127.0.0.1:48722/status' -Headers @{ Origin = 'https://sbcnav-38t2.vercel.app' } -TimeoutSec 2
             if ($status.connected) { $online = $true; break }
-        } catch [System.Net.WebException] {
+        } catch {
             # Python is still starting.
         }
     }
     if (!$online) { throw 'The updated desktop companion did not start within 30 seconds.' }
-    Set-Content -LiteralPath $revisionFile -Value $revision -NoNewline
+    Set-CompanionText $revisionFile $revision
     Set-UpdateState 'complete' "Desktop companion updated to $($revision.Substring(0, 7))."
     Write-Output "SBC NAV desktop companion updated to $($revision.Substring(0, 7))."
 } catch {
-    Set-UpdateState 'error' $_.Exception.Message
+    $updateError = $_.Exception.Message
+    try { Set-UpdateState 'error' $updateError } catch { }
     if ($started) {
         @(Get-CompanionProcesses) | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     }
@@ -144,6 +158,8 @@ try {
                 Move-Item -LiteralPath $old -Destination $destination -Force
             }
         }
+        if ($previousRevision) { Set-CompanionText $revisionFile $previousRevision }
+        elseif (Test-Path -LiteralPath $revisionFile) { Remove-Item -LiteralPath $revisionFile -Force }
     }
     if ($stopped -and (Test-Path -LiteralPath $launcher) -and $pythonWindowless) {
         Start-Process -FilePath $pythonWindowless -ArgumentList ('"' + $launcher + '" --background') -WorkingDirectory $destination -WindowStyle Hidden
