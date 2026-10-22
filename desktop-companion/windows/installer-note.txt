@@ -1,0 +1,15 @@
+SBC NAV Updater — Windows setup
+
+This installer includes the desktop connection, Python and the browser driver.
+You do not need Codex or a separate Python installation.
+
+For a new PC:
+1. Keep "SBC NAV Connection.sbcnav" beside this installer.
+2. Install Google Chrome and your digital token driver / signer software.
+3. Finish setup and click "Connect this PC".
+
+Then open SBC NAV, choose MCDO and click "Update now". Sign in to IREPS with your digital token when asked. Keep this PC on until the update finishes.
+
+Your connection file is private. Share it only with authorised operators. The generic installer contains no connection key, passwords or Google/IREPS sessions.
+
+Uninstalling the app keeps saved progress and connection data in your Windows profile.

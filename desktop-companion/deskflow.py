@@ -326,7 +326,8 @@ class Deskflow:
                     self.state.update(phase='complete',message=f'{len(rows)} contract candidates collected. Verify the exact asset before using a candidate.',error=None)
                     page.close();return
                 endpoint=json.loads((self.engine.STATE/'browser.json').read_text())['port']
-                runtime=Path.home()/'.cache/codex-runtimes/codex-primary-runtime/dependencies/node'
+                from rp.browser_runtime import browser_reader_runtime
+                node, playwright_module = browser_reader_runtime()
                 job={'id':uuid.uuid4().hex,'action':{'collect':'scheduled','history':'closed','contracts':'contracts','workbook-history':'closed'}[action]}
                 if action!='collect':job.update(from_date=start,to_date=end)
                 if action=='workbook-history':job['metadata_only']=True
@@ -335,11 +336,11 @@ class Deskflow:
                     if not job['lots']:raise ValueError('Collect pending lots first.')
                 marker='deskflow-'+uuid.uuid4().hex
                 page.evaluate('(value) => {window.name=value}',marker)
-                payload={'modules':str(runtime/'node_modules'),'endpoint':f'http://127.0.0.1:{endpoint}','marker':marker,'job':job}
+                payload={'playwright_module':str(playwright_module),'endpoint':f'http://127.0.0.1:{endpoint}','marker':marker,'job':job}
                 rows=None;failure=''
                 if self.cancelled.is_set():raise ValueError('Collection cancelled before reading further catalogues.')
                 with tempfile.TemporaryFile(mode='w+',encoding='utf-8') as diagnostics:
-                    self.process=subprocess.Popen([str(runtime/'bin/node.exe'),str(Path(__file__).parent/'rp/collect.mjs')],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=diagnostics,text=True,encoding='utf-8',creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+                    self.process=subprocess.Popen([str(node),str(Path(__file__).parent/'rp/collect.mjs')],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=diagnostics,text=True,encoding='utf-8',creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
                     timer=threading.Timer(1800,self.process.kill);timer.start()
                     try:
                         self.process.stdin.write(json.dumps(payload));self.process.stdin.close()
@@ -428,11 +429,8 @@ class Deskflow:
                 last=max(events,key=lambda a:a['date']) if events else {};sold=[a for a in events if a['outcome']=='Sold'];s=max(sold,key=lambda a:a['date']) if sold else {}
                 values=[lot.get('start'),inputs.get('family',''),lot['lot'],lot.get('station',''),lot.get('rate_unit',''),float(result['rp']) if ready else None,public_text(result.get('justification') or result.get('missing')),float(result['base']) if ready else None,float(result['multiplier']) if ready else None,'Proposed value ready' if ready else 'Pending evidence',last.get('date',''),last.get('outcome',''),s.get('bid_rate',''),s.get('awardee',''),c.get('status',''),c.get('award_date',''),c.get('start',''),c.get('end',''),c.get('closed',''),lot.get('catalogue',''),public_text(inputs.get('benchmark_source','')+'; '+lot.get('source','')),'2026-10-17']
                 rows.append({'values':values,'formula':result.get('formula','') if ready else '', 'expected':result.get('rp','')})
-            runtime=Path.home()/'.cache/codex-runtimes/codex-primary-runtime/dependencies/node'
             folder=self.userdir/'Reviews';folder.mkdir(exist_ok=True)
             output=folder/('Deskflow-value-review-'+datetime.now().strftime('%Y%m%d-%H%M%S')+'.xlsx')
-            with tempfile.TemporaryDirectory() as temp:
-                request=Path(temp)/'export.json';request.write_text(json.dumps({'module_root':str(runtime/'node_modules'),'output':str(output),'rows':rows}),encoding='utf-8')
-                proc=subprocess.run([str(runtime/'bin/node.exe'),str(Path(__file__).parent/'rp/excel_export.mjs'),str(request)],capture_output=True,text=True,timeout=120,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
-                if proc.returncode:raise ValueError('The Excel review could not be created: '+proc.stderr[-700:])
+            from rp.export_review import export_review
+            export_review(output, rows)
             return {'filename':output.name,'content':base64.b64encode(output.read_bytes()).decode(),'message':'Excel review created. Missing evidence remains visible and uncalculated.'}

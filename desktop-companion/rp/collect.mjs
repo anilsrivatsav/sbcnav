@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {createRequire} from 'node:module';
 const input=JSON.parse(fs.readFileSync(0,'utf8'));
-const {chromium}=createRequire(input.modules+'/package.json')('playwright');
+const {chromium}=createRequire(import.meta.url)(input.playwright_module);
 const browser=await chromium.connectOverCDP(input.endpoint);
 const context=browser.contexts()[0], pages=new Map();let sequence=0;
 const register=p=>{const id=++sequence;pages.set(id,p);return id;};

@@ -1,6 +1,8 @@
 node_modules/
 .env
 .env.local
+*.sbcnav
+*PRIVATE.zip
 __pycache__/
 *.pyc
 .venv/

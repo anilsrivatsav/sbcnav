@@ -116,7 +116,7 @@ class Controller:
             deskflow_busy = bool(deskflow_instance and deskflow_instance.thread and deskflow_instance.thread.is_alive())
             return {**self.state, 'busy': bool(self.thread and self.thread.is_alive()),
                     'deskflow_busy': deskflow_busy,
-                    'connected': True, 'version': '2.0.2', 'configured': (STATE / 'operator.key').exists()}
+                    'connected': True, 'version': '2.1.0', 'configured': (STATE / 'operator.key').exists()}
 
     def log(self, message):
         message = str(message).split('\nCall log:', 1)[0]
@@ -398,6 +398,12 @@ def start_software_update():
             raise RuntimeError('Wait for the current MCDO or Deskflow work to finish.')
         if software_update_running():
             raise RuntimeError('A desktop update is already running.')
+        if getattr(sys, 'frozen', False):
+            import webbrowser
+            webbrowser.open('https://github.com/anilsrivatsav/sbcnav/releases/latest')
+            result = {'phase': 'ready', 'message': 'Download and run the latest SBC NAV Windows installer. Your saved connection and progress are kept.'}
+            write_state(STATE / 'software-update.json', result)
+            return result
         script = BASE / 'update.ps1'
         if not script.is_file():
             raise RuntimeError('The desktop updater is not installed. Run the one-time setup on this PC.')
@@ -540,6 +546,10 @@ def deskflow_relay_loop():
         time.sleep(4)
 
 
-if __name__ == '__main__':
+def serve():
     threading.Thread(target=deskflow_relay_loop, daemon=True).start()
     ThreadingHTTPServer(('127.0.0.1', PORT), Handler).serve_forever()
+
+
+if __name__ == '__main__':
+    serve()
