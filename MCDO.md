@@ -54,6 +54,13 @@ check; complete evidence and partial writes can be resumed. Payment scans use th
 desktop collector's full installment range and filter actual receipt dates; this
 avoids losing late payments on old installment schedules.
 
+Local MCDO and workbook-archive checkpoints use unique temporary files, flushed
+before replacement, with retries for Windows sharing locks. If the primary stays
+locked, a separate recovery checkpoint preserves progress without truncating the
+last good file. Restart reads the newest valid checkpoint; the recovery file is
+removed after the primary can be saved again. If both locations are unwritable,
+the updater stops instead of proceeding without a durable checkpoint.
+
 Verification: `python -m unittest discover -s desktop-companion -p test_server.py -v`
 and the frontend production build. A real IREPS token sign-in remains necessary to
 verify a new end-to-end collection. The sections below describe the retained legacy

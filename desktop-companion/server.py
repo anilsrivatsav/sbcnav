@@ -27,6 +27,7 @@ import app
 from core import day, key
 from ireps import Ireps, HOME
 from playwright.sync_api import sync_playwright
+from state_store import read_state, write_state
 
 PORT = 48722
 ORIGIN = 'https://sbcnav-38t2.vercel.app'
@@ -96,7 +97,7 @@ class Controller:
         self.thread = None
         self.state = {'phase': 'ready', 'message': 'Ready to update.', 'run': None, 'logs': []}
         try:
-            self.state.update(json.loads((STATE / 'state.json').read_text()))
+            self.state.update(read_state(STATE / 'state.json'))
             if self.state['phase'] not in ('ready', 'complete', 'error'):
                 self.state.update(phase='interrupted', message='The computer restarted. Resume checks saved progress before continuing.')
         except (OSError, ValueError):
@@ -105,9 +106,9 @@ class Controller:
     def save(self, **values):
         with self.lock:
             self.state.update(values)
-            temp = STATE / 'state.tmp'
-            temp.write_text(json.dumps(self.state), encoding='utf-8')
-            temp.replace(STATE / 'state.json')
+            self.state.pop('persistence_warning', None)
+            if write_state(STATE / 'state.json', self.state):
+                self.state['persistence_warning'] = 'Windows locked the main progress file. Progress is safely saved in a recovery checkpoint.'
 
     def snapshot(self):
         with self.lock:
@@ -115,7 +116,7 @@ class Controller:
             deskflow_busy = bool(deskflow_instance and deskflow_instance.thread and deskflow_instance.thread.is_alive())
             return {**self.state, 'busy': bool(self.thread and self.thread.is_alive()),
                     'deskflow_busy': deskflow_busy,
-                    'connected': True, 'version': '2.0.1', 'configured': (STATE / 'operator.key').exists()}
+                    'connected': True, 'version': '2.0.2', 'configured': (STATE / 'operator.key').exists()}
 
     def log(self, message):
         message = str(message).split('\nCall log:', 1)[0]
@@ -265,7 +266,7 @@ class WorkbookArchiveSync:
         self.thread = None
         self.path = STATE / 'workbook-sync.json'
         try:
-            self.state = json.loads(self.path.read_text(encoding='utf-8'))
+            self.state = read_state(self.path)
         except (OSError, ValueError):
             self.state = {}
         self.state.setdefault('phase', 'waiting')
@@ -278,17 +279,7 @@ class WorkbookArchiveSync:
     def save(self, **changes):
         with self.lock:
             self.state.update(changes)
-            temp = self.path.with_suffix('.tmp')
-            temp.write_text(json.dumps(self.state), encoding='utf-8')
-            # Windows readers or scanners can briefly hold the destination open.
-            for attempt in range(10):
-                try:
-                    temp.replace(self.path)
-                    break
-                except PermissionError:
-                    if attempt == 9:
-                        raise
-                    time.sleep(.1)
+            write_state(self.path, self.state)
 
     def start(self, force=False):
         with self.lock:
