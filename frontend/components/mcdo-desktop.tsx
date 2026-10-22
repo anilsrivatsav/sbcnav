@@ -1,12 +1,12 @@
 "use client";
 import {useCallback,useEffect,useRef,useState} from "react";
-import {RefreshCw,Pause,Play,CheckCircle2} from "lucide-react";
+import {RefreshCw,Pause,Play,CheckCircle2,Download} from "lucide-react";
 import {fetchJson} from "../lib/api";
 import {Button,Panel} from "./ui";
 import {McdoDeadlines,type Deadlines} from "./mcdo-deadlines";
 
 type Run={run_id:string;state:string;mode?:string;summary?:Record<string,number>;result?:Record<string,unknown>;warnings?:string[];overdue?:unknown[][];error?:string};
-type Status={configured:boolean;busy:boolean;phase:string;message:string;error?:string;start?:string;end?:string;run?:Run;logs:string[]};
+type Status={configured:boolean;busy:boolean;phase:string;message:string;error?:string;start?:string;end?:string;run?:Run;logs:string[];installer_available?:boolean};
 type Summary={deadlines?:Deadlines;earnings:{latest_receipt_date:string|null;source:{row_count:number}|null}};
 const LOCAL="http://127.0.0.1:48722";
 const money=(v:number|undefined)=>v===undefined?"—":v.toLocaleString("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:2});
@@ -16,6 +16,7 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
   const [status,setStatus]=useState<Status|null>(null),[summary,setSummary]=useState<Summary|null>(null);
   const [reachable,setReachable]=useState(false),[checking,setChecking]=useState(true),[sending,setSending]=useState(false);
   const [error,setError]=useState(""),[reportError,setReportError]=useState("");
+  const [downloading,setDownloading]=useState(false),[downloadMessage,setDownloadMessage]=useState("");
   const completed=useRef("");
   const onUpdatedRef=useRef(onUpdated);onUpdatedRef.current=onUpdated;
   const refreshReport=useCallback(async()=>{
@@ -47,6 +48,20 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
     }catch(e){setError(e instanceof Error?e.message:"Could not reach the desktop updater. Reconnect and check saved progress before trying again.");void check();}
     finally{setSending(false);}
   }
+  async function downloadOfficeSetup(){
+    setDownloading(true);setDownloadMessage("Preparing your ready-to-use office installer…");
+    try{
+      const response=await fetch(`${LOCAL}/windows-setup`,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}",cache:"no-store",signal:AbortSignal.timeout(120000)});
+      if(!response.ok){const data=await response.json();throw new Error(data.error||"The office installer is unavailable. Retry after reconnecting the desktop connection.");}
+      const file=await response.blob();
+      if(file.size<1000000)throw new Error("The installer download was incomplete. Please retry.");
+      const url=URL.createObjectURL(file),link=document.createElement("a");
+      link.href=url;link.download="SBC-NAV-Office-Setup-2.2.0.exe";document.body.appendChild(link);link.click();link.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),60000);
+      setDownloadMessage("Download started. Copy this single EXE to the new PC and run it. It includes the private office connection; share it only with authorised operators.");
+    }catch(e){setDownloadMessage(e instanceof Error?e.message:"The installer could not download. Reconnect and retry.");}
+    finally{setDownloading(false);}
+  }
   const busy=Boolean(status?.busy),paused=status?.phase==="paused",run=status?.run;
   const resume=Boolean(run&&["error","interrupted","paused"].includes(status?.phase||""));
   const ready=reachable&&status?.configured&&!sending;
@@ -57,6 +72,15 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
     {label:"Import and verify Oracle",done:run?.state==="complete",active:status?.phase==="applying"&&run?.result?.active_stage===5,skip:false}
   ];
   return <div className="space-y-4">
+    <Panel title="Set up another Windows PC" subtitle="One installer. Guided checks. No Codex or separate Python installation.">
+      <p className="text-sm text-muted">Run setup on Windows 10 or 11. It installs the desktop connection and shortcuts, offers missing Chrome and IREPS Signer, and verifies your digital-token sign-in before showing Ready.</p>
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        {reachable&&status?.installer_available?<Button onClick={downloadOfficeSetup} disabled={downloading}><Download size={16}/>{downloading?"Preparing download…":"Download ready-to-use office setup (.exe)"}</Button>:<a className="focus-ring inline-flex h-11 items-center gap-2 rounded-lg border border-accent bg-accent px-4 text-sm font-extrabold text-white" href="/downloads/sbc-nav-windows"><Download size={16}/>Download Windows setup (.exe)</a>}
+        <span className="text-xs text-muted">64-bit Windows · about 40 MB</span>
+      </div>
+      <p className="mt-3 text-xs text-muted">{reachable&&status?.installer_available?"This office installer includes the saved connection. Copy the EXE to the new PC; no separate key file is needed.":"For setup with the office connection included, download the ready-to-use office EXE from MCDO on an already connected office PC. The public installer needs that private connection during setup."}</p>
+      {downloadMessage&&<p role="status" aria-live="polite" className="mt-3 text-sm font-bold text-ink">{downloadMessage}</p>}
+    </Panel>
     <Panel title="Update from IREPS" subtitle="The working desktop updater, controlled from this page.">
       <p className="text-sm text-muted">Connect your digital token and choose <strong>Check for new payments</strong>. Sign in to IREPS when Chrome opens. The updater reads the dates, updates both Sheets and verifies Oracle automatically.</p>
       <div className="my-4 rounded-lg border border-line p-4">

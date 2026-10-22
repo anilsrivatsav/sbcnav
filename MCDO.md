@@ -1,5 +1,15 @@
 # MCDO source updater
 
+## Windows onboarding (22 October 2026)
+
+The MCDO page has a Windows setup download. On a configured office PC with its private installer saved, **Download ready-to-use office setup (.exe)** downloads one preconfigured EXE through the loopback companion. Copy that EXE to the new PC and run it; no separate connection file, operator-key entry, Codex or system Python is needed. Only the exact production origin can request that private attachment. Keep the office EXE private; it carries the same office authorisation as the configured PC.
+
+The generic public download at `/downloads/sbc-nav-windows` redirects to the credential-free GitHub release and requires private office authorisation during onboarding. It never makes the office credential publicly downloadable.
+
+Setup installs the desktop app, shortcuts, startup connection and URL handler. Its onboarding screen validates the office connection, offers missing Chrome and IREPS Signer from fixed official sources, and waits for successful IREPS Payments access in the normal token sign-in window. Windows installer approvals and any manufacturer-specific token driver remain user steps. Installed-software detection alone does not establish successful token sign-in. Completed setup steps are retained for Retry.
+
+The office installer also keeps a private copy and size/hash manifest under LocalAppData for future authorised office-PC downloads. Building the generic and private EXEs is described in `desktop-companion/windows/README.md`.
+
 ## Current Windows-backed web workflow (17 October 2026)
 
 The MCDO page now controls `desktop-companion/server.py` on the operator's PC.

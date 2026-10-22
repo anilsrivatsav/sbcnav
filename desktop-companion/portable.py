@@ -11,7 +11,7 @@ import urllib.error
 import urllib.request
 import webbrowser
 
-VERSION = '2.1.0'
+VERSION = '2.2.0'
 ORIGIN = 'https://sbcnav-38t2.vercel.app'
 API = 'https://sbcnav.137-23-58-53.sslip.io/api/mcdo'
 DASHBOARD = ORIGIN + '/?view=mcdo'
@@ -35,8 +35,7 @@ def connection_token(path):
     return token
 
 
-def install_connection(path):
-    token = connection_token(path)
+def validate_token(token):
     req = urllib.request.Request(API + '/session', headers={'Authorization': 'Bearer ' + token})
     try:
         with urllib.request.urlopen(req, timeout=30) as response:
@@ -49,6 +48,10 @@ def install_connection(path):
         raise ValueError('SBC NAV is temporarily unavailable. Try again later.') from None
     except (urllib.error.URLError, TimeoutError):
         raise ValueError('Cannot reach SBC NAV. Check the internet connection and try again.') from None
+
+def install_connection(path):
+    token = connection_token(path)
+    validate_token(token)
     from state_store import write_state
     STATE.mkdir(parents=True, exist_ok=True)
     # Same-directory replacement preserves a previous working credential on failure.
@@ -98,79 +101,11 @@ def start_service():
 
 
 def setup():
-    import tkinter as tk
-    from tkinter import ttk, filedialog, messagebox
-    from app import chrome_path
-    window = tk.Tk()
-    window.title('SBC NAV · Set up this PC')
-    window.geometry('660x560')
-    window.minsize(640, 540)
-    window.configure(bg='#edf2f7')
-    style = ttk.Style(window)
-    style.theme_use('clam')
-    style.configure('TFrame', background='white')
-    style.configure('TLabel', background='white', foreground='#142c49')
-    style.configure('Primary.TButton', font=('Segoe UI', 11, 'bold'), padding=(18, 12), background='#1d64b5', foreground='white')
-    style.map('Primary.TButton', background=[('disabled', '#8199b5'), ('active', '#174e8d')])
-    header = tk.Frame(window, bg='#142c49', padx=28, pady=24)
-    header.pack(fill='x')
-    tk.Label(header, text='SBC NAV', font=('Segoe UI', 24, 'bold'), bg='#142c49', fg='white').pack(anchor='w')
-    tk.Label(header, text='Connect this Windows PC once', font=('Segoe UI', 12), bg='#142c49', fg='#cbdcee').pack(anchor='w')
-    body = ttk.Frame(window, padding=28)
-    body.pack(fill='both', expand=True)
-    text = tk.StringVar()
-    chrome = chrome_path()
-    pending = STATE / 'pending.sbcnav'
-    candidate = pending if pending.is_file() else ROOT / 'SBC NAV Connection.sbcnav'
-    selected = [candidate if candidate.is_file() else None]
-    text.set('Your private connection file is ready. Click Connect this PC.' if selected[0] else
-             'Choose the SBC NAV Connection.sbcnav file supplied with the installer.')
-    ttk.Label(body, text='1  Connect to SBC NAV', font=('Segoe UI', 13, 'bold')).pack(anchor='w')
-    ttk.Label(body, textvariable=text, wraplength=550, font=('Segoe UI', 11)).pack(anchor='w', pady=(10, 16))
-    def choose():
-        name = filedialog.askopenfilename(parent=window, title='Choose your connection file', filetypes=[('SBC NAV connection', '*.sbcnav')])
-        if name:
-            selected[0] = Path(name)
-            text.set('Connection file selected. Click Connect this PC.')
-    browse = ttk.Button(body, text='Choose connection file…', command=choose)
-    browse.pack(anchor='w')
-    ttk.Label(body, text='2  Sign in when you update', font=('Segoe UI', 13, 'bold')).pack(anchor='w', pady=(22, 8))
-    ttk.Label(body, text='Use Google Chrome and your digital token to sign in to IREPS.\nInstall your token driver and signer software on this PC first.', font=('Segoe UI', 11), wraplength=550).pack(anchor='w')
-    if not chrome:
-        ttk.Button(body, text='Install Google Chrome', command=lambda: webbrowser.open('https://www.google.com/chrome/')).pack(anchor='w', pady=8)
-    def completed(error=None):
-        connect.configure(state='normal')
-        browse.configure(state='normal')
-        if error:
-            text.set(error)
-            return
-        if selected[0] == pending:
-            pending.unlink(missing_ok=True)
-        window.destroy()
-        webbrowser.open(DASHBOARD)
-    def connect_now():
-        if not selected[0]:
-            choose()
-            if not selected[0]:
-                return
-        if not chrome_path():
-            messagebox.showinfo('Install Chrome first', 'Install Google Chrome, then click Connect this PC again.', parent=window)
-            return
-        connect.configure(state='disabled')
-        browse.configure(state='disabled')
-        text.set('Checking your connection…')
-        def work():
-            try:
-                install_connection(selected[0])
-                start_service()
-                error = None
-            except Exception as exc:
-                error = str(exc) if isinstance(exc, ValueError) else 'Setup could not finish. Check your internet connection and try again.'
-            window.after(0, lambda: completed(error))
-        threading.Thread(target=work, daemon=True).start()
-    connect = ttk.Button(body, text='Connect this PC', style='Primary.TButton', command=connect_now)
-    connect.pack(anchor='w', pady=(24, 0))
-    window.mainloop()
+    from rp.setup_ui import show
+    def validate_existing():
+        token = (STATE / 'operator.key').read_text(encoding='utf-8').strip()
+        validate_token(token)
+    show(STATE, ROOT, VERSION, DASHBOARD, install_connection, start_service, validate_existing)
 
 
 def diagnostics(output):
@@ -233,7 +168,14 @@ def main():
     parser.add_argument('--setup', action='store_true')
     parser.add_argument('--diagnostics')
     parser.add_argument('--connect-file')
+    parser.add_argument('link', nargs='?')
     args, _ = parser.parse_known_args()
+    if args.link:
+        from urllib.parse import urlparse
+        link = urlparse(args.link)
+        if link.scheme == 'sbcnav-updater':
+            args.setup = link.netloc == 'setup'
+            args.background = not args.setup
     if args.diagnostics:
         diagnostics(args.diagnostics)
     elif args.connect_file:

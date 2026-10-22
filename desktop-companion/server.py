@@ -1,6 +1,7 @@
 """Loopback-only web controller for the proven Windows IREPS collector.
 
-The operator credential never enters browser JavaScript. Only the configured
+The operator credential is never returned as a JSON value. The explicit office-setup
+download carries its private connection inside the installer. Only the configured
 dashboard origin can invoke commands; no arbitrary URLs, files or scripts are accepted.
 """
 import base64
@@ -28,6 +29,7 @@ from core import day, key
 from ireps import Ireps, HOME
 from playwright.sync_api import sync_playwright
 from state_store import read_state, write_state
+from rp.setup_download import installer_path
 
 PORT = 48722
 ORIGIN = 'https://sbcnav-38t2.vercel.app'
@@ -116,7 +118,8 @@ class Controller:
             deskflow_busy = bool(deskflow_instance and deskflow_instance.thread and deskflow_instance.thread.is_alive())
             return {**self.state, 'busy': bool(self.thread and self.thread.is_alive()),
                     'deskflow_busy': deskflow_busy,
-                    'connected': True, 'version': '2.1.0', 'configured': (STATE / 'operator.key').exists()}
+                    'connected': True, 'version': '2.2.0', 'configured': (STATE / 'operator.key').exists(),
+                    'installer_available': installer_path(STATE) is not None}
 
     def log(self, message):
         message = str(message).split('\nCall log:', 1)[0]
@@ -468,6 +471,31 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.permitted() or self.headers.get('Content-Type') != 'application/json':
             return self.respond(403, {'error': 'Origin or content type not allowed.'})
+        if self.path == '/windows-setup':
+            if self.headers.get('Origin') != ORIGIN:
+                return self.respond(403, {'error': 'The private installer is available only from the SBC NAV production page.'})
+            try:
+                length = int(self.headers.get('Content-Length', '0'))
+                if not 0 < length <= 256 or json.loads(self.rfile.read(length)) != {}:
+                    return self.respond(400, {'error': 'Expected an empty JSON object.'})
+                path = installer_path(STATE)
+                if path is None:
+                    return self.respond(404, {'error': 'The ready-to-use office installer is not available on this PC yet.'})
+                import shutil
+                with path.open('rb') as stream:
+                    self.send_response(200)
+                    self.send_header('Access-Control-Allow-Origin', self.headers.get('Origin'))
+                    self.send_header('Vary', 'Origin')
+                    self.send_header('Content-Type', 'application/vnd.microsoft.portable-executable')
+                    self.send_header('Content-Disposition', 'attachment; filename="' + path.name + '"')
+                    self.send_header('Cache-Control', 'no-store')
+                    self.send_header('X-Content-Type-Options', 'nosniff')
+                    self.send_header('Content-Length', str(path.stat().st_size))
+                    self.end_headers()
+                    shutil.copyfileobj(stream, self.wfile, length=1024 * 1024)
+                return
+            except (ValueError, OSError):
+                return self.respond(400, {'error': 'The installer download could not finish. Retry the download.'})
         if self.path.startswith('/deskflow/'):
             try:
                 length = int(self.headers.get('Content-Length', '0'))

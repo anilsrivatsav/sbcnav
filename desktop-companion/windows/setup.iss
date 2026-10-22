@@ -4,7 +4,7 @@
 #ifndef OutputDir
   #define OutputDir "."
 #endif
-#define AppVersion "2.1.0"
+#define AppVersion "2.2.0"
 
 [Setup]
 AppId={{9E2CAB45-43B1-492E-82D4-D5C13A68BE32}
@@ -23,7 +23,11 @@ DisableDirPage=yes
 WizardStyle=modern
 SetupLogging=yes
 OutputDir={#OutputDir}
+#ifdef PrivateConnection
+OutputBaseFilename=SBC-NAV-Office-Setup-{#AppVersion}
+#else
 OutputBaseFilename=SBC-NAV-Setup-{#AppVersion}
+#endif
 Compression=lzma2
 SolidCompression=yes
 CloseApplications=yes
@@ -40,7 +44,11 @@ Name: startup; Description: "Keep the desktop connection ready when I sign in to
 
 [Files]
 Source: "{#BuildDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+#ifdef PrivateConnection
+Source: "{#PrivateConnection}"; DestDir: "{code:SetupStateDir}"; DestName: "pending.sbcnav"; Flags: ignoreversion uninsneveruninstall
+#else
 Source: "{src}\SBC NAV Connection.sbcnav"; DestDir: "{localappdata}\IREPS Earnings Updater\Web companion"; DestName: "pending.sbcnav"; Flags: external skipifsourcedoesntexist uninsneveruninstall; Check: Integrate
+#endif
 
 [Icons]
 Name: "{autodesktop}\SBC NAV Updater"; Filename: "{app}\SBCNAVUpdater.exe"; Tasks: desktopicon; Check: Integrate
@@ -52,10 +60,10 @@ Name: "{userstartup}\SBC NAV Updater"; Filename: "{app}\SBCNAVUpdater.exe"; Para
 [Registry]
 Root: HKCU; Subkey: "Software\Classes\sbcnav-updater"; ValueType: string; ValueData: "URL:SBC NAV Updater"; Flags: uninsdeletekey; Check: Integrate
 Root: HKCU; Subkey: "Software\Classes\sbcnav-updater"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""; Check: Integrate
-Root: HKCU; Subkey: "Software\Classes\sbcnav-updater\shell\open\command"; ValueType: string; ValueData: """{app}\SBCNAVUpdater.exe"" --background"; Check: Integrate
+Root: HKCU; Subkey: "Software\Classes\sbcnav-updater\shell\open\command"; ValueType: string; ValueData: """{app}\SBCNAVUpdater.exe"" ""%1"""; Check: Integrate
 
 [Run]
-Filename: "{app}\SBCNAVUpdater.exe"; Description: "Connect this PC and open SBC NAV"; Flags: postinstall nowait skipifsilent; Check: Integrate
+Filename: "{app}\SBCNAVUpdater.exe"; Parameters: "--setup"; Description: "Set up and check this PC"; Flags: postinstall nowait skipifsilent; Check: Integrate
 
 [Code]
 function IsTestInstall: Boolean;
@@ -66,6 +74,37 @@ end;
 function Integrate: Boolean;
 begin
   Result := not IsTestInstall;
+end;
+
+function SetupStateDir(Param: String): String;
+begin
+  if IsTestInstall then
+    Result := ExpandConstant('{param:TESTDATADIR|{app}\Test profile}') + '\IREPS Earnings Updater\Web companion'
+  else
+    Result := ExpandConstant('{localappdata}\IREPS Earnings Updater\Web companion');
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+#ifdef PrivateConnection
+var
+  Folder: String;
+  Destination: String;
+  Size: Integer;
+  Manifest: String;
+#endif
+begin
+#ifdef PrivateConnection
+  if CurStep = ssPostInstall then begin
+    Folder := SetupStateDir('') + '\Windows setup';
+    ForceDirectories(Folder);
+    Destination := Folder + '\SBC-NAV-Office-Setup-{#AppVersion}.exe';
+    if not FileCopy(ExpandConstant('{srcexe}'), Destination, False) then
+      RaiseException('The office installer could not be saved for future PC setup. Close setup and retry.');
+    if not FileSize(Destination, Size) then RaiseException('The office installer could not be verified.');
+    Manifest := '{"filename":"SBC-NAV-Office-Setup-{#AppVersion}.exe","size":' + IntToStr(Size) + ',"sha256":"' + GetSHA256OfFile(Destination) + '"}';
+    if not SaveStringToFile(Folder + '\installer.json', Manifest, False) then RaiseException('The office installer manifest could not be saved.');
+  end;
+#endif
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
