@@ -20,7 +20,7 @@ const chrome={scripting:{executeScript:async({target,func,args})=>[{result:await
 }};
 let source=fs.readFileSync(new URL('./reader.js',import.meta.url),'utf8');
 source=source.slice(source.indexOf('async function run('),source.indexOf('async function discover('));
-const sandbox={chrome,setTimeout,URL,console,api:async(path,data)=>{if(path==='progress')process.stdout.write(JSON.stringify({type:'progress',message:data.message,report:data.complete?data:undefined})+'\n');return{cancelled:false};}};
+const sandbox={chrome,setTimeout,URL,console,api:async(path,data)=>{if(path==='progress')process.stdout.write(JSON.stringify({type:'progress',message:data.message,report:data.complete?data:undefined,checkpoint:data.checkpoint})+'\n');return{cancelled:false};}};
 vm.createContext(sandbox);vm.runInContext(source,sandbox);
 // The IREPS viewer submits a form into a popup. A real locator click preserves
 // that form submission; intercepting window.open loses its POST payload.

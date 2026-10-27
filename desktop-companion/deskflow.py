@@ -11,6 +11,7 @@ from rp.rules import Result
 from rp.workbooks import WorkbookSelection, family_group, SPECS
 from rp.review import WorkbookPreview, digest
 from rp.verifier import verify
+from rp.history_refresh import refresh_start
 import re, base64
 from decimal import Decimal
 
@@ -280,13 +281,20 @@ class Deskflow:
         with self.updater.lock, self.lock:
             if self.updater.snapshot()['busy'] or (self.thread and self.thread.is_alive()):raise ValueError('A collection is already running. Wait for it to finish.')
             start=parse_day(data.get('from_date') or '2023-01-01');end=parse_day(data.get('to_date') or date.today().isoformat())
+            history_base=None
+            if action=='history' and not data.get('from_date') and not data.get('to_date'):
+                previous=self.store.evidence('__workspace__','history_snapshot')
+                codes=[lot['lot'] for _,lot in self.store.current_lots()]
+                recent=refresh_start(previous[-1] if previous else None,codes,start,end)
+                if recent:
+                    start=recent;history_base=previous[-1]
             if start>end:raise ValueError('History start must not follow its end.')
             self.cancelled.clear()
             self.state.update(phase='login',message='Sign in with your digital token in the updater Chrome window.',error=None)
-            self.thread=threading.Thread(target=self.work,args=(action,start,end),daemon=True);self.thread.start()
+            self.thread=threading.Thread(target=self.work,args=(action,start,end,history_base),daemon=True);self.thread.start()
         return self.snapshot()
 
-    def work(self,action,start,end):
+    def work(self,action,start,end,history_base=None):
         page=None
         try:
             with self.playwright() as pw:
@@ -332,8 +340,16 @@ class Deskflow:
                 if action!='collect':job.update(from_date=start,to_date=end)
                 if action=='workbook-history':job['metadata_only']=True
                 if action=='history':
-                    job['lots']=list({lot['lot'] for _,lot in self.store.current_lots()})
+                    job['lots']=sorted({lot['lot'] for _,lot in self.store.current_lots()})
                     if not job['lots']:raise ValueError('Collect pending lots first.')
+                checkpoint_path=None
+                if action=='history':
+                    identity={k:v for k,v in job.items() if k!='id'}
+                    checkpoint_path=self.userdir/'history-checkpoints'/(hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()+'.json')
+                    try:
+                        if datetime.now().timestamp()-checkpoint_path.stat().st_mtime<86400:
+                            job['resume']=json.loads(checkpoint_path.read_text(encoding='utf-8'))
+                    except (OSError,ValueError):pass
                 marker='deskflow-'+uuid.uuid4().hex
                 page.evaluate('(value) => {window.name=value}',marker)
                 payload={'playwright_module':str(playwright_module),'endpoint':f'http://127.0.0.1:{endpoint}','marker':marker,'job':job}
@@ -341,7 +357,7 @@ class Deskflow:
                 if self.cancelled.is_set():raise ValueError('Collection cancelled before reading further catalogues.')
                 with tempfile.TemporaryFile(mode='w+',encoding='utf-8') as diagnostics:
                     self.process=subprocess.Popen([str(node),str(Path(__file__).parent/'rp/collect.mjs')],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=diagnostics,text=True,encoding='utf-8',creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
-                    timer=threading.Timer(1800,self.process.kill);timer.start()
+                    timer=threading.Timer(7200 if action=='history' else 1800,self.process.kill);timer.start()
                     try:
                         self.process.stdin.write(json.dumps(payload));self.process.stdin.close()
                         for line in self.process.stdout:
@@ -349,6 +365,10 @@ class Deskflow:
                             if event.get('type')=='progress':
                                 self.state.update(message=event['message'])
                                 if event.get('report'):collection_report=event['report']
+                                if checkpoint_path and event.get('checkpoint'):
+                                    checkpoint_path.parent.mkdir(parents=True,exist_ok=True)
+                                    temporary=checkpoint_path.with_suffix('.tmp')
+                                    temporary.write_text(json.dumps(event['checkpoint']),encoding='utf-8');temporary.replace(checkpoint_path)
                             elif event.get('type')=='result':rows=event['rows']
                             elif event.get('type')=='error':failure=event['message']
                         code=self.process.wait()
@@ -388,14 +408,16 @@ class Deskflow:
                                     inputs=previous[-1]
                                     same=reviewed_continuation_matches(lot,self.store.evidence(key,'auction'),inputs)
                                     self.store.save_evidence(key,'inputs',{**inputs,'identity_verified':same})
-                    self.store.save_evidence('__workspace__','history_snapshot',{'from_date':start,'to_date':end,'complete':True,'count':len(rows),'collected_at':datetime.now().isoformat(),'reader_version':2,'coverage':collection_report})
+                    self.store.save_evidence('__workspace__','history_snapshot',{'from_date':history_base['from_date'] if history_base else start,'to_date':end,'complete':True,'count':len(rows),'collected_at':datetime.now().isoformat(),'reader_version':2,'coverage':collection_report,'lot_codes':job['lots'],'scanned_from':start,'baseline_coverage':(history_base.get('baseline_coverage') or history_base['coverage']) if history_base else collection_report})
                 else:
                     self.store.save_evidence('__workspace__','web_contract_candidates',{'rows':[{'raw':r,'fields':candidate_fields(r)} for r in rows]})
                 checked=len(collection_report['visited']) if collection_report else None
                 scope=f' from {checked} catalogues' if checked is not None else ''
                 missing=sum(bool(row.get('bid_details_unavailable')) for row in rows)
                 warning=f' {missing} sold outcome(s) need accepted rate and awardee verified separately.' if missing else ''
+                if history_base:warning+=f' Older verified history retained; refreshed since {start}.'
                 self.state.update(phase='complete',message=f'{len(rows)} records collected{scope}. Review the exact asset, dates and sources before calculating.'+warning,error=None)
+                if checkpoint_path:checkpoint_path.unlink(missing_ok=True)
                 page.close();page=None
         except Exception as exc:
             self.state.update(phase='error',error=str(exc).split('Call log:')[0][:1400],message='Collection stopped. Previously saved evidence is retained.')

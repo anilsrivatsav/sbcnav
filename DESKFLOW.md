@@ -16,6 +16,17 @@ The button waits for an active earnings update, collects pending lots, closed
 history and contracts, then writes the configured commercial, parcel and catering
 workbooks. Existing verified calculations are recomputed from their saved evidence;
 new or changed evidence still requires a supported benchmark and exact identity.
+Closed-catalogue collection follows the numbered `menuexpand` action behind the
+`next` link and reconciles the visited catalogue count before claiming completion.
+A sold catalogue without a bid-detail link retains its outcome and flags the
+missing bid evidence; existing sourced rates are preserved. After a full verified
+scan, repeated history refreshes for the same covered lot codes recheck the last
+30 days and retain the older evidence. New lot codes or explicit date filters
+require their requested scan; incomplete legacy scans cannot seed this cache.
+Long history scans checkpoint every ten catalogues in the local evidence folder.
+An interrupted scan can resume within 24 hours when its filters, lot codes and
+catalogue count match. Partial rows stay outside the reviewed evidence until the
+complete catalogue count is reconciled.
 Missing evidence is written as a workbook note. Existing values and working inputs
 are preserved for unresolved rows, and absent lots are appended with blank values.
 The result explicitly distinguishes calculated rows from rows needing evidence.
