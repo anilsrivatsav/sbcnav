@@ -34,6 +34,7 @@ assert.equal(result.rows.length,11,'Must follow the next link after the first te
 assert.equal(result.progress.at(-1).visited.length,11);
 assert.equal(result.progress.at(-1).expected,11);
 await assert.rejects(()=>scan(12,11),/Incomplete catalogue scan/);
+await assert.rejects(()=>scan(null,11),/catalogue count is unavailable/);
 const checkpoint=result.progress.find(event=>event.checkpoint)?.checkpoint;
 assert.equal(checkpoint.visited.length,10);
 const resumed=await scan(11,11,checkpoint);

@@ -76,6 +76,7 @@ async function execute(tab,job){
  await folder(tab,job.action==='scheduled'?'Scheduled Auctions (Yet to start)':'Closed Auctions (No Action Pending)',job);const collected=[],seen=new Set(),visited=[];
  const range=await run(tab,()=>({from:document.querySelector('#ddmmyyDateformat1')?.value||'current search',to:document.querySelector('#ddmmyyDateformat2')?.value||'current search'}));
  const expected=await run(tab,()=>{const match=document.body.innerText.match(/(\d+)\s+Records Found/i);return match?Number(match[1]):null;});
+ if(!Number.isInteger(expected)||expected<0)throw Error('IREPS catalogue count is unavailable. Collection stopped rather than claiming incomplete history.');
  const resume=job.action==='closed'&&job.resume?.expected===expected&&Array.isArray(job.resume?.visited)&&Array.isArray(job.resume?.records)?job.resume:null;
  if(resume){visited.push(...resume.visited);collected.push(...resume.records);}
  const completed=new Set(visited);
