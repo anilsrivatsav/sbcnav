@@ -3,7 +3,7 @@
 Open `/deskflow` directly. There is no navigation entry, and `?view=deskflow`
 does not open it. Screens and new review exports use proposed-value wording.
 On the configured Windows PC, open SBC NAV Updater and connect the digital token.
-Choose **Update local workbooks**, then sign in to IREPS if asked.
+Choose **Sync local workbooks**, then sign in to IREPS if asked.
 The shared desktop connection handles IREPS; no browser extension or operator key
 entry is needed in the web interface. MCDO and Deskflow serialize browser collection.
 
@@ -12,10 +12,26 @@ After the one-time setup in `MCDO.md`, that button checks GitHub and updates the
 Windows companion only when MCDO and Deskflow are idle. Update progress appears
 on the page; updates are manual rather than scheduled. Collected commercial
 records stay in the local database and are not included in progress responses.
-The button waits for an active earnings update, collects pending lots, closed
-history and contracts, then writes the configured commercial, parcel and catering
-workbooks. Existing verified calculations are recomputed from their saved evidence;
+The **Sync local workbooks** command performs two-way sync: it collects pending
+lots, closed history and contracts, writes the selected local workbooks, and then
+uploads those saved files to the website archive. A background archive upload is
+labelled separately and does not claim that Excel files were updated. Current
+website values and notes read the exact matching lot/catalogue workbook rows.
+New lots are appended even when their value is pending. Existing manually saved
+values are retained for review unless the workbook still matches the app's last
+saved version. Existing verified calculations are recomputed from their saved evidence;
 new or changed evidence still requires a supported benchmark and exact identity.
+Closed-catalogue collection follows the numbered `menuexpand` action behind the
+`next` link and reconciles the visited catalogue count before claiming completion.
+A sold catalogue without a bid-detail link retains its outcome and flags the
+missing bid evidence; existing sourced rates are preserved. After a full verified
+scan, repeated history refreshes for the same covered lot codes recheck the last
+30 days and retain the older evidence. New lot codes or explicit date filters
+require their requested scan; incomplete legacy scans cannot seed this cache.
+Long history scans checkpoint every ten catalogues in the local evidence folder.
+An interrupted scan can resume within 24 hours when its filters, lot codes and
+catalogue count match. Partial rows stay outside the reviewed evidence until the
+complete catalogue count is reconciled.
 Missing evidence is written as a workbook note. Existing values and working inputs
 are preserved for unresolved rows, and absent lots are appended with blank values.
 The result explicitly distinguishes calculated rows from rows needing evidence.
