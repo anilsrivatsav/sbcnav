@@ -47,6 +47,9 @@ class Store:
                 prior=c.execute('SELECT data FROM evidence WHERE lot_id=? AND kind=? AND evidence_key=?',(key,kind,evidence_key)).fetchone()
                 if prior:
                     old=json.loads(prior[0])
+                    if data.get('bid_details_unavailable') and old.get('outcome')==data.get('outcome')=='Sold' and old.get('rate_unit')==data.get('rate_unit'):
+                        # An outcome-only refresh must not erase separately sourced bid evidence.
+                        data={**data,**{field:old[field] for field in ('bid_rate','bid_value','bid_source','awardee','awardee_source') if old.get(field) not in (None,'')}}
                     try:same_rate=Decimal(str(old.get('bid_rate')).replace(',',''))==Decimal(str(data.get('bid_rate')).replace(',',''))
                     except Exception:same_rate=False
                     if same_rate and old.get('outcome')==data.get('outcome')=='Sold'and old.get('rate_unit')==data.get('rate_unit')and old.get('awardee'):

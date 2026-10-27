@@ -20,7 +20,7 @@ const chrome={scripting:{executeScript:async({target,func,args})=>[{result:await
 }};
 let source=fs.readFileSync(new URL('./reader.js',import.meta.url),'utf8');
 source=source.slice(source.indexOf('async function run('),source.indexOf('async function discover('));
-const sandbox={chrome,setTimeout,URL,console,api:async(path,data)=>{if(path==='progress')process.stdout.write(JSON.stringify({type:'progress',message:data.message})+'\n');return{cancelled:false};}};
+const sandbox={chrome,setTimeout,URL,console,api:async(path,data)=>{if(path==='progress')process.stdout.write(JSON.stringify({type:'progress',message:data.message,report:data.complete?data:undefined})+'\n');return{cancelled:false};}};
 vm.createContext(sandbox);vm.runInContext(source,sandbox);
 // The IREPS viewer submits a form into a popup. A real locator click preserves
 // that form submission; intercepting window.open loses its POST payload.
@@ -32,7 +32,9 @@ sandbox.acceptedBid=async(tab,lot)=>{
   const before=new Map();
   for(const candidate of context.pages())if(viewer.test(candidate.url()))before.set(candidate,await candidate.evaluate(()=>performance.timeOrigin));
   const bidLink=row.locator('a[title="View Bid Details"]');
-  if(await bidLink.count()!==1)throw Error('The exact sold lot does not have one bid-detail link.');
+  const linkCount=await bidLink.count();
+  if(linkCount===0)return {bid_details_unavailable:'IREPS catalogue shows Sold but exposes no bid-detail link. Verify the accepted rate and awardee separately.'};
+  if(linkCount!==1)throw Error('The exact sold lot has ambiguous bid-detail links.');
   await bidLink.click();
   let popup;
   for(let n=0;n<120&&!popup;n++){

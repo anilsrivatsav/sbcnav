@@ -337,7 +337,7 @@ class Deskflow:
                 marker='deskflow-'+uuid.uuid4().hex
                 page.evaluate('(value) => {window.name=value}',marker)
                 payload={'playwright_module':str(playwright_module),'endpoint':f'http://127.0.0.1:{endpoint}','marker':marker,'job':job}
-                rows=None;failure=''
+                rows=None;failure='';collection_report=None
                 if self.cancelled.is_set():raise ValueError('Collection cancelled before reading further catalogues.')
                 with tempfile.TemporaryFile(mode='w+',encoding='utf-8') as diagnostics:
                     self.process=subprocess.Popen([str(node),str(Path(__file__).parent/'rp/collect.mjs')],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=diagnostics,text=True,encoding='utf-8',creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
@@ -346,7 +346,9 @@ class Deskflow:
                         self.process.stdin.write(json.dumps(payload));self.process.stdin.close()
                         for line in self.process.stdout:
                             event=json.loads(line)
-                            if event.get('type')=='progress':self.state.update(message=event['message'])
+                            if event.get('type')=='progress':
+                                self.state.update(message=event['message'])
+                                if event.get('report'):collection_report=event['report']
                             elif event.get('type')=='result':rows=event['rows']
                             elif event.get('type')=='error':failure=event['message']
                         code=self.process.wait()
@@ -386,10 +388,14 @@ class Deskflow:
                                     inputs=previous[-1]
                                     same=reviewed_continuation_matches(lot,self.store.evidence(key,'auction'),inputs)
                                     self.store.save_evidence(key,'inputs',{**inputs,'identity_verified':same})
-                    self.store.save_evidence('__workspace__','history_snapshot',{'from_date':start,'to_date':end,'complete':True,'count':len(rows),'collected_at':datetime.now().isoformat()})
+                    self.store.save_evidence('__workspace__','history_snapshot',{'from_date':start,'to_date':end,'complete':True,'count':len(rows),'collected_at':datetime.now().isoformat(),'reader_version':2,'coverage':collection_report})
                 else:
                     self.store.save_evidence('__workspace__','web_contract_candidates',{'rows':[{'raw':r,'fields':candidate_fields(r)} for r in rows]})
-                self.state.update(phase='complete',message=f'{len(rows)} records collected. Review the exact asset, dates and sources before calculating.',error=None)
+                checked=len(collection_report['visited']) if collection_report else None
+                scope=f' from {checked} catalogues' if checked is not None else ''
+                missing=sum(bool(row.get('bid_details_unavailable')) for row in rows)
+                warning=f' {missing} sold outcome(s) need accepted rate and awardee verified separately.' if missing else ''
+                self.state.update(phase='complete',message=f'{len(rows)} records collected{scope}. Review the exact asset, dates and sources before calculating.'+warning,error=None)
                 page.close();page=None
         except Exception as exc:
             self.state.update(phase='error',error=str(exc).split('Call log:')[0][:1400],message='Collection stopped. Previously saved evidence is retained.')
