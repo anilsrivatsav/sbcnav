@@ -62,4 +62,4 @@ sandbox.acceptedBid=async(tab,lot)=>{
 };
 try{const rows=await sandbox.execute(tab,input.job);process.stdout.write(JSON.stringify({type:'result',rows})+'\n');}
 catch(error){process.stdout.write(JSON.stringify({type:'error',message:error.message.split('Call log:')[0].slice(0,1200)})+'\n');process.exitCode=1;}
-finally{await browser.close();}
+finally{try{await browser.close();}catch{/* Collection result is already reported; a lost cleanup connection is harmless. */}}

@@ -1,5 +1,5 @@
 import unittest
-from rp.history_refresh import refresh_start
+from rp.history_refresh import refresh_start, retry_connection
 
 
 def covered():
@@ -8,6 +8,13 @@ def covered():
 
 
 class RefreshTests(unittest.TestCase):
+    def test_lost_connection_retries_are_bounded_and_respect_cancellation(self):
+        message='page.evaluate: Target page, context or browser has been closed'
+        self.assertTrue(retry_connection(message,0,False))
+        self.assertFalse(retry_connection(message,3,False))
+        self.assertFalse(retry_connection(message,0,True))
+        self.assertFalse(retry_connection('Incomplete catalogue scan',0,False))
+
     def plan(self,previous,codes=('A',)):
         return refresh_start(previous,codes,'2023-01-01','2026-10-27')
 
