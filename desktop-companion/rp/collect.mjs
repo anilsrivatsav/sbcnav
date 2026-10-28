@@ -20,7 +20,7 @@ const chrome={scripting:{executeScript:async({target,func,args})=>[{result:await
 }};
 let source=fs.readFileSync(new URL('./reader.js',import.meta.url),'utf8');
 source=source.slice(source.indexOf('async function run('),source.indexOf('async function discover('));
-const sandbox={chrome,setTimeout,URL,console,api:async(path,data)=>{if(path==='progress')process.stdout.write(JSON.stringify({type:'progress',message:data.message,report:data.complete?data:undefined,checkpoint:data.checkpoint})+'\n');return{cancelled:false};}};
+const sandbox={chrome,setTimeout,URL,console,api:async(path,data)=>{if(path==='progress')process.stdout.write(JSON.stringify({type:'progress',message:data.message,report:data,checkpoint:data.checkpoint})+'\n');if(path==='catalogue')process.stdout.write(JSON.stringify({type:'catalogue',...data})+'\n');return{cancelled:false};}};
 vm.createContext(sandbox);vm.runInContext(source,sandbox);
 // The IREPS viewer submits a form into a popup. A real locator click preserves
 // that form submission; intercepting window.open loses its POST payload.
@@ -48,16 +48,20 @@ sandbox.acceptedBid=async(tab,lot)=>{
     await popup.waitForLoadState('load');
     if(!/^https:\/\/www\.ireps\.gov\.in\/epsn\/commAuction\/viewBiddingDetail\.do/.test(popup.url()))throw Error('Unexpected bid viewer.');
     return await popup.evaluate(lot=>{
+      if(document.querySelector('input[type="password"]'))throw Error('IREPS session expired. Sign in again before continuing.');
       if(![...document.querySelectorAll('select option:checked')].some(o=>o.textContent.trim()===lot))throw Error('Bid viewer belongs to another lot.');
       const rows=[...document.querySelectorAll('tr')].filter(r=>!r.querySelector('table'));
-      const header=rows.find(r=>[...r.cells].some(c=>c.innerText.trim()==='Bid Rate'));
+      const clean=value=>String(value||'').replace(/\s+/g,' ').trim();
+      const header=rows.find(r=>[...r.cells].some(c=>/^Bid\s*Rate(?:\s*\(.*\))?$/i.test(clean(c.innerText))));
       if(!header)throw Error('Bid Rate column was not found.');
-      const labels=[...header.cells].map(c=>c.innerText.trim()),ri=labels.indexOf('Bid Rate'),vi=labels.indexOf('Bid Value');
-      if(vi<0)throw Error('Bid Value column was not found.');
-      const bids=rows.filter(r=>r!==header&&r.cells.length===labels.length).map(r=>({bid_rate:Number(r.cells[ri].innerText.replace(/[₹,\s]/g,'')),bid_value:r.cells[vi].innerText.trim(),bid_source:location.href})).filter(b=>Number.isFinite(b.bid_rate)&&b.bid_rate>0);
+      const labels=[...header.cells].map(c=>clean(c.innerText)),ri=labels.findIndex(v=>/^Bid\s*Rate(?:\s*\(.*\))?$/i.test(v)),vi=labels.findIndex(v=>/^Bid\s*Value$/i.test(v));
+      const bids=rows.filter(r=>r!==header&&r.cells.length===labels.length).map(r=>({bid_rate:Number(r.cells[ri].innerText.replace(/[₹,\s]/g,'')),bid_value:vi>=0?r.cells[vi].innerText.trim():'',bid_source:location.href})).filter(b=>Number.isFinite(b.bid_rate)&&b.bid_rate>0);
       if(!bids.length)throw Error('No positive bid rate was found.');
       return bids.sort((a,b)=>b.bid_rate-a.bid_rate)[0];
     },lot);
+  }catch(error){
+    if(/Bid Rate column was not found|No positive bid rate was found/.test(error.message))return {bid_details_unavailable:'IREPS shows Sold; its bid viewer does not expose a readable accepted Bid Rate. Verify the rate and awardee separately.',bid_source:popup.url()};
+    throw error;
   }finally{if(!before.has(popup))await popup.close();}
 };
 try{const rows=await sandbox.execute(tab,input.job);process.stdout.write(JSON.stringify({type:'result',rows})+'\n');}

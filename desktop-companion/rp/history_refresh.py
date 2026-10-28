@@ -6,7 +6,8 @@ def retry_connection(error, attempt, cancelled):
     message=str(error).lower()
     return not cancelled and attempt<3 and any(text in message for text in (
         'target page, context or browser has been closed', 'connection closed',
-        'websocket', 'econnreset', 'epipe', 'open updater chrome connection did not respond'))
+        'websocket', 'econnreset', 'epipe', 'open updater chrome connection did not respond',
+        'page.goback: timeout', 'page.goto: timeout'))
 
 
 def refresh_start(previous, lot_codes, default_start, end):

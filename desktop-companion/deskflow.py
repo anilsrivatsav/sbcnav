@@ -13,6 +13,7 @@ from rp.review import WorkbookPreview, digest
 from rp.verifier import verify
 from rp.history_refresh import refresh_start, retry_connection
 from rp.workbook_sync import read_rows, preserve_excel_value
+from rp.history_library import HistoryLibrary, POLICY_VERSION, fingerprint
 import re, base64
 from decimal import Decimal
 
@@ -20,7 +21,7 @@ def public_text(value):
     if isinstance(value,str):
         return re.sub(r'\bRP\b','value',re.sub(r'reserve[- ]price','proposed value',value,flags=re.I),flags=re.I).replace('RPAssistant','Deskflow')
     if isinstance(value,(list,tuple)):return [public_text(v) for v in value]
-    if isinstance(value,dict):return {k:v if k in ('file','workbook','path','backup','source','bid_source') else public_text(v) for k,v in value.items()}
+    if isinstance(value,dict):return {k:v if k in ('file','workbook','path','backup','source','bid_source','justification','calculation_notes','review','workbook_candidates') else public_text(v) for k,v in value.items()}
     return value
 
 def parse_day(value):
@@ -31,15 +32,46 @@ def parse_day(value):
     raise ValueError('Unrecognised date: '+text)
 
 
-def short_justification(result):
+def short_justification(result, inputs=None):
+    continuation = (inputs or {}).get('continuation') or {}
+    if result.get('ready') and continuation.get('mode') == 'parcel_previous':
+        dates = ' & '.join(datetime.fromisoformat(day).strftime('%d.%m.%Y') for day in continuation['failed_dates'])
+        return f"No bids received on {dates}. Previous RP Rs {Decimal(continuation['base']):,.2f} reduced by 10% to Rs {Decimal(result['rp']):,.2f}."
     if result.get('ready') and result.get('rule') == 'workbook_continuation':
         factor = Decimal(result['multiplier']) * 100
         percent = format(factor.normalize(), 'f')
         base = Decimal(result['base'])
         return f'Continue the reviewed working at {percent}% of Rs {base:,.2f}; withdrawn auctions excluded.'
-    return result.get('justification') if result.get('ready') else result.get('missing', '')
+    if not result.get('ready'):return result.get('missing', '')
+    amount=lambda value:format(Decimal(str(value or 0)), ',.2f')
+    base=amount(result.get('base'));value=amount(result.get('rp'))
+    descriptions={
+        'running_lar':f'Running contract LAR Rs {base} retained.',
+        'completed_lar':f'Completed contract LAR Rs {base} increased by 10%.',
+        'foreclosed_lar':f'Reviewed foreclosure basis: LAR Rs {base} retained.',
+        'withdrawn_retry':f'Previous approved RP Rs {base} retained; withdrawal is not a failed auction.',
+        'first_two_attempts':f'Initial approved RP Rs {base} retained for the first two attempts.',
+        'successive_reduction':f'Two or more failed auctions. Previous RP Rs {base} reduced by 10%.',
+        'publicity_failure':f'Failed publicity auction. Previous RP Rs {base} reduced by 10%.',
+        'parcel_reduction':f'Original parcel benchmark Rs {base} multiplied by {result.get("multiplier")}.',
+        'non_commencement':'Non-commencement: higher of previous RP and verified distinct second-bidder rate adopted.',
+        'shop_market':f'Reviewed market bid Rs {base} adopted.',
+        'new_publicity':f'Sourced publicity benchmark Rs {base} adopted.',
+        'food_truck':f'Reviewed food-truck benchmark adopted subject to the recorded minimum.'}
+    return descriptions.get(result.get('rule'),result.get('justification',''))+f' Proposed RP Rs {value}.'
 
 class Deskflow:
+    def library(self):
+        if not hasattr(self,'_history_library'):self._history_library=HistoryLibrary(self.store)
+        return self._history_library
+
+    def import_baseline(self):
+        self.state.update(phase='importing',message='Importing the three workbooks into the local history library…',error=None)
+        paths=WorkbookSelection(self.userdir/'workbooks.json').paths('D:/ANIL/UK')
+        reports=self.library().import_workbooks(paths)
+        self.library().migrate_evidence()
+        return reports
+
     def __init__(self, updater, engine, playwright, reader):
         self.updater,self.engine,self.playwright,self.reader=updater,engine,playwright,reader
         self.store=Store(Path(os.environ.get('LOCALAPPDATA',str(Path.home())))/'RPAssistant'/'rpassistant.sqlite')
@@ -67,10 +99,20 @@ class Deskflow:
         lot=dict(self.store.current_lots()).get(key)
         if lot is None:raise ValueError('Collect or select a current pending lot.')
         auctions=self.store.evidence(key,'auction');c=self.store.evidence(key,'contract');i=self.store.evidence(key,'inputs')
+        merged={(a.get('date'),a.get('catalogue'),a.get('previous_lot',a.get('lot',lot['lot']))):a for a in auctions}
+        for row in self.library().auctions_for(lot):
+            identity=(row['date'],row['catalogue'],row['previous_lot'])
+            prior=merged.get(identity,{})
+            if prior.get('outcome')==row.get('outcome') and prior.get('rate_unit')==row.get('rate_unit'):
+                for field in ('bid_rate','bid_value','bid_source','awardee','awardee_source'):
+                    if row.get(field) in (None,'') and prior.get(field) not in (None,''):row[field]=prior[field]
+            merged[identity]=row
+        auctions=sorted(merged.values(),key=lambda a:(a.get('date',''),a.get('catalogue','')))
         contract=c[-1] if c else {};inputs=i[-1] if i else {}
         revision=hashlib.sha256(json.dumps([lot,auctions,contract,inputs],sort_keys=True).encode()).hexdigest()
         record={'key':key,'revision':revision,'lot':lot,'auctions':auctions,'contract':contract,'inputs':inputs,
                 'result':self.result(lot,auctions,contract,inputs),'conditions':review(contract)}
+        record['proposal']=self.library().proposal(key,revision,record['result'])
         scheduled=self.store.evidence('__workspace__','scheduled_snapshot')
         history=self.store.evidence('__workspace__','history_snapshot')
         written=self.store.evidence(key,'workbook_write')
@@ -141,13 +183,15 @@ class Deskflow:
                          'date':lot.get('start',''),'station':lot.get('station',''),'train':lot.get('train',''),
                          'catalogue':lot.get('catalogue',''),'details':lot.get('description',''),
                          'rate_unit':lot.get('rate_unit',''),'value':workbook['value'] if workbook else result.get('rp') if result.get('ready') else None,
-                         'justification':public_text(workbook['notes'] or short_justification(result)) if workbook else public_text(short_justification(result)),
+                         'justification':(workbook['notes'] or short_justification(result,record['inputs'])) if workbook else short_justification(result,record['inputs']),
                          'workbook_source':workbook,
                          'calculation_notes':public_text(result.get('justification','')),
-                         'rule':result.get('rule',''),'history':history,'verification':record['verification']})
+                         'rule':result.get('rule',''),'history':history,'verification':record['verification'],
+                         'proposal':{**record['proposal'],'value':result.get('rp') if result.get('ready') else None,'formula':result.get('formula',''),'base':result.get('base',''),'factor':result.get('multiplier',''),'justification':short_justification(result,record['inputs'])},'review':{name:record[name] for name in ('revision','inputs','contract','auctions')},
+                         'workbook_candidates':self.library().search_workbooks(lot['lot'],3)})
         rows.sort(key=lambda item:(item['date'],item['catalogue'],item['lot']),reverse=True)
         return {'collected_at':snapshot[-1].get('collected_at'),'categories':sorted({r['category'] for r in rows if r['category']}),
-                'lots':rows,'progress':self.progress()}
+                'lots':rows,'progress':self.progress(),'history_library':self.library().status()}
 
     def progress(self):
         # The page receives only progress, never the collected commercial records.
@@ -167,16 +211,22 @@ class Deskflow:
             while self.updater.snapshot()['busy']:
                 self.state.update(phase='waiting',message='Waiting for the earnings updater to finish…',error=None)
                 if self.cancelled.wait(1):raise ValueError('Update stopped.')
+            self.import_baseline()
             end=date.today().isoformat()
+            first=self.library().earliest_date()
             for action in ('collect','history','contracts'):
-                start='2023-01-01';history_base=None
-                if action=='history':
-                    previous=self.store.evidence('__workspace__','history_snapshot')
-                    recent=refresh_start(previous[-1] if previous else None,[lot['lot'] for _,lot in self.store.current_lots()],start,end)
-                    if recent:start=recent;history_base=previous[-1]
+                start=first;history_base=None
+                if action=='history':start=self.library().history_plan(end)['from_date']
+                if action=='contracts':
+                    previous=self.store.evidence('__workspace__','web_contract_candidates')
+                    if previous and previous[-1].get('complete') and previous[-1].get('from_date','9999')<=first:
+                        start=max(first,(date.fromisoformat(previous[-1]['to_date'])-timedelta(days=30)).isoformat())
                 self.work(action,start,end,history_base)
                 if self.state.get('error'):return
-            return self.write_workbooks(ready_only=False)
+            report=self.write_workbooks(ready_only=False)
+            self.import_baseline()
+            self.state.update(phase='needs_evidence' if report['pending'] else 'complete',message=f"Update saved. {len(report['pending'])} lots need evidence or proposal review.",error=None)
+            return report
         except Exception as exc:
             self.state.update(phase='error',message='Workbook update stopped. Backups and saved evidence are retained.',error=str(exc)[:1400])
 
@@ -207,18 +257,18 @@ class Deskflow:
             if len(matches)>1:raise ValueError('The same lot and catalogue appear in multiple workbooks; resolve the duplicate before updating.')
             group=next(iter(matches)) if matches else family_group(family)
             result=Result(**record['result'])
+            if result.ready and record['proposal']['status'] not in ('reviewed','saved'):
+                result=Result(False,missing='Proposed value is calculated. Review its working and justification before replacing the workbook value.')
             existing=existing_rows.get((lot['lot'],lot.get('catalogue','')))
             if existing and existing.get('ambiguous'):raise ValueError('Multiple workbook rows match this current lot and catalogue: '+lot['lot'])
             saved=self.store.evidence(key,'workbook_write')
             saved_digest=saved[-1].get('digest') if saved and saved[-1].get('ready') else None
-            if preserve_excel_value(existing,result,saved_digest,current_digests[group]):
+            reviewed_digest=record['proposal'].get('workbook_digests',{}).get(group)
+            explicit_review=record['proposal']['status']=='reviewed' and reviewed_digest==current_digests[group]
+            if preserve_excel_value(existing,result,saved_digest,current_digests[group]) and not explicit_review:
                 result=Result(False,missing='Existing Excel value and working retained. Review the website proposal before replacing a manually saved workbook value.')
             if result.ready:
-                ready+=1;ready_keys.add(key);result.justification=public_text(short_justification(asdict(result)))
-                continuation=inputs.get('continuation') or {}
-                if continuation.get('mode')=='parcel_previous':
-                    dates=' & '.join(datetime.fromisoformat(day).strftime('%d.%m.%Y') for day in continuation['failed_dates'])
-                    result.justification=f"No bids received on {dates}. Previous RP Rs {Decimal(continuation['base']):,.2f} reduced by 10% to Rs {Decimal(result.rp):,.2f}."
+                ready+=1;ready_keys.add(key);result.justification=short_justification(asdict(result),inputs)
             else:
                 pending.append({'lot':lot['lot'],'reason':public_text(result.missing)})
                 if ready_only:continue
@@ -250,6 +300,9 @@ class Deskflow:
                 for key in keys_by_group[group]:
                     self.store.save_evidence(key,'workbook_write',{'revision':revisions[key],
                         'ready':key in ready_keys,'workbook':str(preview.path),'digest':saved_digest})
+                    if key in ready_keys:
+                        proposal=self.detail(key)['proposal']
+                        self.library().mark_saved(key,proposal['revision'])
             report={'saved':saved,'calculated':ready,'pending':pending,'at':datetime.now().isoformat()}
             self.store.save_evidence('__workspace__','workbook_update',report)
             message=f'{len(saved)} local workbooks saved with backups. {ready} values calculated.'
@@ -292,6 +345,45 @@ class Deskflow:
             return self.detail(key)
 
     def command(self,action,data):
+        if action in ('link-asset','save-review','review-proposal'):
+            with self.lock:
+                if self.thread and self.thread.is_alive():raise ValueError('Wait for the current collection or save to finish.')
+                record=self.detail(data.get('key'))
+                if data.get('revision')!=record['revision']:raise ValueError('Evidence changed. Refresh this lot before reviewing it.')
+                if action=='link-asset':
+                    if data.get('confirmed') is not True:raise ValueError('Confirm that the previous lot belongs to this exact asset and scope.')
+                    self.library().link_asset(record['lot'],data.get('previous_lot'),data.get('source'))
+                elif action=='review-proposal':
+                    blocked=[check['message'] for check in record['verification']['checks'] if check['state']=='fail']
+                    if blocked:raise ValueError(blocked[0])
+                    if not any(check['code']=='history_coverage' and check['state']=='pass' for check in record['verification']['checks']):
+                        raise ValueError('Complete the historical coverage before reviewing this proposal.')
+                    paths=WorkbookSelection(self.userdir/'workbooks.json').paths('D:/ANIL/UK')
+                    self.library().review_proposal(record['key'],data.get('proposal_revision'),{group:digest(path) for group,path in paths.items()})
+                else:
+                    if not isinstance(data.get('inputs'),dict) or not isinstance(data.get('contract'),dict):raise ValueError('Invalid review inputs.')
+                    allowed={'family','benchmark_source','identity_verified','conditions_reviewed','new_asset','previous_rp','initial_rp','finance_fee','earlier_failures','reductions','important_amenity','use_market_bid'}
+                    contract_fields={'status','source','awardee','lar','rate_unit','award_date','start','end','closed','termination_source','second_bidder_verified','second_bidder_rate'}
+                    if set(data['inputs'])-allowed or set(data['contract'])-contract_fields:raise ValueError('Unsupported review field.')
+                    patches=data.get('auctions',[])
+                    if not isinstance(patches,list) or len(patches)>500:raise ValueError('Invalid auction review.')
+                    evidence={a.get('date','')+'|'+a.get('catalogue','')+'|'+a.get('previous_lot',a.get('lot',record['lot']['lot'])):dict(a) for a in record['auctions']}
+                    edited=set()
+                    for patch in patches:
+                        if not isinstance(patch,dict) or set(patch)-{'identity','bid_rate','bid_source','awardee','awardee_source'}:raise ValueError('Unsupported auction review field.')
+                        identity=patch.get('identity')
+                        if identity not in evidence or identity in edited:raise ValueError('Auction evidence changed or is duplicated. Refresh this lot.')
+                        edited.add(identity)
+                        evidence[identity].update({k:v for k,v in patch.items() if k!='identity'})
+                    self.save({**record,'auctions':list(evidence.values()),'inputs':{**record['inputs'],**data['inputs']},'contract':{**record['contract'],**data['contract']}})
+                self.state.update(phase='ready',message='Review saved. Use Save reviewed proposals to update the workbooks and website.',error=None)
+                return self.progress()
+        if action=='save-reviewed':
+            with self.lock,self.updater.lock:
+                if self.updater.snapshot()['busy'] or (self.thread and self.thread.is_alive()):raise ValueError('Wait for the current collection or save to finish.')
+                self.cancelled.clear()
+                self.thread=threading.Thread(target=self.write_workbooks,kwargs={'ready_only':True},daemon=True);self.thread.start()
+            return self.progress()
         if action=='update':
             with self.lock,self.updater.lock:
                 if self.thread and self.thread.is_alive():return self.progress()
@@ -315,11 +407,7 @@ class Deskflow:
             start=parse_day(data.get('from_date') or '2023-01-01');end=parse_day(data.get('to_date') or date.today().isoformat())
             history_base=None
             if action=='history' and not data.get('from_date') and not data.get('to_date'):
-                previous=self.store.evidence('__workspace__','history_snapshot')
-                codes=[lot['lot'] for _,lot in self.store.current_lots()]
-                recent=refresh_start(previous[-1] if previous else None,codes,start,end)
-                if recent:
-                    start=recent;history_base=previous[-1]
+                start=self.library().history_plan(end)['from_date']
             if start>end:raise ValueError('History start must not follow its end.')
             self.cancelled.clear()
             self.state.update(phase='login',message='Sign in with your digital token in the updater Chrome window.',error=None)
@@ -327,7 +415,7 @@ class Deskflow:
         return self.snapshot()
 
     def work(self,action,start,end,history_base=None,attempt=0):
-        page=None
+        page=None;library_scan=None;collection_report={}
         try:
             with self.playwright() as pw:
                 browser=self.engine.browser(pw,{},lambda message:self.state.update(message=message))
@@ -362,7 +450,11 @@ class Deskflow:
                                 try:fields[field]=parse_day(fields[field])
                                 except ValueError:fields[field]=''
                         rows.append({'raw':raw,'fields':fields})
-                    self.store.save_evidence('__workspace__','web_contract_candidates',{'rows':rows,'from_date':start,'to_date':end,'warnings':reader.warnings})
+                    previous=self.store.evidence('__workspace__','web_contract_candidates')
+                    old=previous[-1] if previous else {}
+                    merged={r['raw'].get('Contract No.'):r for r in old.get('rows',[])}
+                    merged.update({r['raw'].get('Contract No.'):r for r in rows})
+                    self.store.save_evidence('__workspace__','web_contract_candidates',{'rows':list(merged.values()),'from_date':min(start,old.get('from_date',start)),'to_date':end,'warnings':reader.warnings,'complete':not reader.warnings})
                     self.state.update(phase='complete',message=f'{len(rows)} contract candidates collected. Verify the exact asset before using a candidate.',error=None)
                     try:page.close()
                     except Exception:pass
@@ -374,10 +466,15 @@ class Deskflow:
                 if action!='collect':job.update(from_date=start,to_date=end)
                 if action=='workbook-history':job['metadata_only']=True
                 if action=='history':
-                    job['lots']=sorted({lot['lot'] for _,lot in self.store.current_lots()})
-                    if not job['lots']:raise ValueError('Collect pending lots first.')
+                    plan=self.library().history_plan(end)
+                    enrichment=self.library().bid_enrichment_plan([lot for _,lot in self.store.current_lots()])
+                    start=min(start,enrichment['from_date'] or start)
+                    library_scan=self.library().start_scan(start,end)
+                    job.update(library=True,known_catalogues=plan['known_catalogues'],refresh_after=plan['refresh_after'],
+                               from_date=start,detail_lots=enrichment['detail_lots'],
+                               force_catalogues=sorted(set(plan['force_catalogues']+enrichment['force_catalogues'])))
                 checkpoint_path=None
-                if action=='history':
+                if action=='history' and not job.get('library'):
                     identity={k:v for k,v in job.items() if k!='id'}
                     checkpoint_path=self.userdir/'history-checkpoints'/(hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()+'.json')
                     try:
@@ -387,7 +484,7 @@ class Deskflow:
                 marker='deskflow-'+uuid.uuid4().hex
                 page.evaluate('(value) => {window.name=value}',marker)
                 payload={'playwright_module':str(playwright_module),'endpoint':f'http://127.0.0.1:{endpoint}','marker':marker,'job':job}
-                rows=None;failure='';collection_report=None
+                rows=None;failure='';collection_report={}
                 if self.cancelled.is_set():raise ValueError('Collection cancelled before reading further catalogues.')
                 with tempfile.TemporaryFile(mode='w+',encoding='utf-8') as diagnostics:
                     self.process=subprocess.Popen([str(node),str(Path(__file__).parent/'rp/collect.mjs')],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=diagnostics,text=True,encoding='utf-8',creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
@@ -399,10 +496,13 @@ class Deskflow:
                             if event.get('type')=='progress':
                                 self.state.update(message=event['message'])
                                 if event.get('report'):collection_report=event['report']
+                                if library_scan and event.get('report'):self.library().scan_progress(library_scan,event['report'])
                                 if checkpoint_path and event.get('checkpoint'):
                                     checkpoint_path.parent.mkdir(parents=True,exist_ok=True)
                                     temporary=checkpoint_path.with_suffix('.tmp')
                                     temporary.write_text(json.dumps(event['checkpoint']),encoding='utf-8');temporary.replace(checkpoint_path)
+                            elif event.get('type')=='catalogue' and library_scan:
+                                self.library().save_catalogue(library_scan,event['catalogue'],event['fingerprint'],event['rows'])
                             elif event.get('type')=='result':rows=event['rows']
                             elif event.get('type')=='error':failure=event['message']
                         code=self.process.wait()
@@ -410,7 +510,7 @@ class Deskflow:
                         timer.cancel()
                         if self.process.poll() is None:self.process.kill();self.process.wait()
                         self.process=None
-                if self.cancelled.is_set():raise ValueError('Collection cancelled. No partial results were imported.')
+                if self.cancelled.is_set():raise ValueError('Collection stopped. Completed history catalogues are saved; resume to continue.' if library_scan else 'Collection cancelled. No partial results were imported.')
                 if code or rows is None:raise ValueError(failure or 'Collection stopped or timed out. Retry the scan; saved evidence is retained.')
                 if action=='collect':
                     for row in rows:row['start']=parse_day(row['start'])
@@ -430,10 +530,11 @@ class Deskflow:
                         self.state.update(phase='needs_evidence',message=f'{len(valid)} dated catalogue records saved; {len(undated)} records retained separately because IREPS did not show their auction start date.',error=None)
                         page.close();page=None;return
                 elif action=='history':
+                    self.library().finish_scan(library_scan,collection_report)
                     for row in rows:row['date']=parse_day(row['date'])
                     for key,lot in self.store.current_lots():
-                        for row in rows:
-                            if row['lot']==lot['lot']:
+                        for row in self.library().auctions_for(lot):
+                            if row['outcome'] in ('Sold','Rejected','No Bids','Withdrawn'):
                                 existing=self.store.evidence(key,'auction')
                                 changed=not any(all(a.get(field)==row.get(field) for field in ('date','catalogue','lot','outcome','bid_rate','rate_unit')) for a in existing)
                                 self.store.save_evidence(key,'auction',{**row,'captured':True,'previous_lot':row['lot']},row['date']+'|'+row.get('catalogue','')+'|'+row['lot'])
@@ -442,7 +543,9 @@ class Deskflow:
                                     inputs=previous[-1]
                                     same=reviewed_continuation_matches(lot,self.store.evidence(key,'auction'),inputs)
                                     self.store.save_evidence(key,'inputs',{**inputs,'identity_verified':same})
-                    self.store.save_evidence('__workspace__','history_snapshot',{'from_date':history_base['from_date'] if history_base else start,'to_date':end,'complete':True,'count':len(rows),'collected_at':datetime.now().isoformat(),'reader_version':2,'coverage':collection_report,'lot_codes':job['lots'],'scanned_from':start,'baseline_coverage':(history_base.get('baseline_coverage') or history_base['coverage']) if history_base else collection_report})
+                    prior=self.store.evidence('__workspace__','history_snapshot')
+                    first=min(start,prior[-1]['from_date']) if prior and prior[-1].get('library_version')==1 else start
+                    self.store.save_evidence('__workspace__','history_snapshot',{'from_date':first,'to_date':end,'complete':True,'count':self.library().status()['auction_records'],'collected_at':datetime.now().isoformat(),'reader_version':2,'library_version':1,'coverage':collection_report,'lot_codes':[lot['lot'] for _,lot in self.store.current_lots()],'scanned_from':start})
                 else:
                     self.store.save_evidence('__workspace__','web_contract_candidates',{'rows':[{'raw':r,'fields':candidate_fields(r)} for r in rows]})
                 checked=len(collection_report['visited']) if collection_report else None
@@ -456,6 +559,7 @@ class Deskflow:
                 except Exception:pass
                 page=None
         except Exception as exc:
+            if library_scan:self.library().scan_progress(library_scan,collection_report or {},interrupted=True)
             if action=='history' and retry_connection(exc,attempt,self.cancelled.is_set()):
                 self.state.update(phase='reconnecting',message='Browser connection interrupted. Reconnecting to resume the saved history checkpoint…',error=None)
                 if not self.cancelled.wait(2):return self.work(action,start,end,history_base,attempt+1)
