@@ -182,8 +182,14 @@ def workbook_history(book: str = '', q: str = Query('', max_length=120), page: i
 
 @router.post('/{action}', dependencies=[Depends(_browser)])
 def command(action: str, payload: dict = Body(...)):
-    if action not in ('collect', 'history', 'software-update', 'sync-workbooks') or payload != {}:
+    simple=('collect','history','software-update','sync-workbooks','save-reviewed','cancel')
+    review=('link-asset','save-review','review-proposal')
+    if action not in simple+review or (action in simple and payload != {}):
         raise HTTPException(400, 'Invalid Deskflow command.')
+    if action in review:
+        allowed={'key','revision'}|({'previous_lot','source','confirmed'} if action=='link-asset' else {'inputs','contract','auctions'} if action=='save-review' else {'proposal_revision'})
+        if set(payload)-allowed or not all(isinstance(payload.get(name),str) and 0<len(payload[name])<=512 for name in ('key','revision')) or len(json.dumps(payload))>50_000:
+            raise HTTPException(400,'Invalid review payload.')
     with SessionLocal.begin() as session:
         row = _row(session)
         if not row.last_seen_at or (datetime.now(timezone.utc) - row.last_seen_at.replace(tzinfo=row.last_seen_at.tzinfo or timezone.utc)).total_seconds() >= 30:
@@ -191,7 +197,7 @@ def command(action: str, payload: dict = Body(...)):
         if row.command_id:
             raise HTTPException(409, 'A desktop command is already pending.')
         row.command_id = str(uuid4())
-        row.command = {'action': action}
+        row.command = {'action': action, **({'payload':payload} if payload else {})}
         return {'queued': True}
 
 

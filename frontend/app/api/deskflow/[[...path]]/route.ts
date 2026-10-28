@@ -5,7 +5,7 @@ export const dynamic="force-dynamic";
 
 async function proxy(request:NextRequest,{params}:{params:Promise<{path?:string[]}>}){
   const parts=(await params).path||[];
-  if(parts.length!==1||!["unlock","overview","software-update","collect","history","workbook-history","sync-workbooks","eauction","holidays"].includes(parts[0]))return NextResponse.json({error:"Unknown Deskflow route."},{status:404});
+  if(parts.length!==1||!["unlock","overview","software-update","collect","history","workbook-history","sync-workbooks","eauction","holidays","link-asset","save-review","review-proposal","save-reviewed","cancel"].includes(parts[0]))return NextResponse.json({error:"Unknown Deskflow route."},{status:404});
   if(request.method!=="GET"&&request.headers.get("origin")!==new URL(request.url).origin)return NextResponse.json({error:"Untrusted request."},{status:403});
   const body=request.method==="POST"?await request.text():undefined;
   if(body&&new TextEncoder().encode(body).length>100000)return NextResponse.json({error:"Request is too large."},{status:413});

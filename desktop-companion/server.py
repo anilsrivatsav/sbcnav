@@ -274,6 +274,11 @@ class WorkbookArchiveSync:
             self.state = {}
         self.state.setdefault('phase', 'waiting')
         self.state.setdefault('message', 'Waiting for selected workbooks on this PC.')
+        previous=deskflow.store.evidence('__workspace__','workbook_update')
+        if previous:
+            report=previous[-1]
+            if report.get('at','')>=self.state.get('writeback',{}).get('at',''):
+                self.state['writeback']={'files':report.get('saved',[]),'calculated':report.get('calculated',0),'pending':len(report.get('pending',[])),'at':report.get('at')}
 
     def snapshot(self):
         with self.lock:
@@ -284,7 +289,7 @@ class WorkbookArchiveSync:
             self.state.update(changes)
             write_state(self.path, self.state)
 
-    def start(self, force=False):
+    def start(self, force=False, update_local=False, reviewed_only=False):
         with self.lock:
             if self.thread and self.thread.is_alive():
                 if force:
@@ -294,12 +299,35 @@ class WorkbookArchiveSync:
                 if force:
                     raise RuntimeError('This computer needs administrator setup.')
                 return
-            self.thread = threading.Thread(target=self.work, args=(force,), daemon=True)
+            if not update_local and not reviewed_only and (controller.snapshot()['busy'] or (deskflow.thread and deskflow.thread.is_alive())):
+                return
+            if update_local or reviewed_only:
+                with controller.lock, deskflow.lock:
+                    if controller.snapshot()['busy'] or (deskflow.thread and deskflow.thread.is_alive()):
+                        raise RuntimeError('Finish the current IREPS collection before syncing Excel and the website.')
+                    from rp.workbooks import WorkbookSelection
+                    selection=WorkbookSelection(deskflow.userdir/'workbooks.json')
+                    for group in ('commercial','parcel','catering'):
+                        path=selection.target('D:/ANIL/UK',group)
+                        if path.with_name('~$'+path.name).exists():
+                            raise RuntimeError('Save and close this workbook in Excel before two-way sync: '+path.name)
+                    self.thread=threading.Thread(target=self.work,args=(force,update_local,reviewed_only),daemon=True)
+                    deskflow.thread=self.thread
+            else:
+                self.thread = threading.Thread(target=self.work, args=(force,False), daemon=True)
             self.thread.start()
 
-    def work(self, force):
+    def work(self, force, update_local=False, reviewed_only=False):
         from rp.workbooks import WorkbookSelection
         try:
+            if update_local or reviewed_only:
+                self.save(phase='collecting',message='Collecting IREPS lots and updating the selected Excel files before uploading the website copy.',error=None)
+                report=deskflow.write_workbooks(ready_only=True) if reviewed_only else deskflow.update_workbooks()
+                if not report or deskflow.state.get('error'):
+                    raise RuntimeError(deskflow.state.get('error') or 'Excel update did not complete. Website upload stopped.')
+                self.save(writeback={'files':report['saved'],'calculated':report['calculated'],'pending':len(report['pending']),'at':report['at']})
+                if reviewed_only:
+                    state=dict(deskflow.state);deskflow.import_baseline();deskflow.state.update(state)
             self.save(phase='checking', message='Checking selected local workbooks.', error=None)
             selection = WorkbookSelection(deskflow.userdir / 'workbooks.json')
             names = {'parcel': 'parcels.xlsx', 'catering': 'catering.xlsx', 'commercial': 'others.xlsx'}
@@ -309,7 +337,11 @@ class WorkbookArchiveSync:
                 data[name] = path.read_bytes()
             digest = hashlib.sha256(b''.join(hashlib.sha256(data[name]).digest() for name in sorted(data))).hexdigest()
             if not force and digest == self.snapshot().get('digest'):
-                self.save(phase='complete', message='Local workbooks are already synced.', error=None)
+                last=self.snapshot().get('writeback')
+                message='Website archive matches the saved Excel files.'
+                if last:message+=f" Last Excel update: {len(last['files'])} files saved at {last['at']}."
+                else:message+=' Excel write-back has not run yet.'
+                self.save(phase='complete', message=message, error=None)
                 return
             memory = io.BytesIO()
             with zipfile.ZipFile(memory, 'w', compression=zipfile.ZIP_DEFLATED) as package:
@@ -332,7 +364,11 @@ class WorkbookArchiveSync:
                 except (OSError, ValueError):
                     detail = 'Workbook archive update failed.'
                 raise RuntimeError(str(detail)) from None
-            self.save(phase='complete', message='Local workbook history is up to date.',
+            message='Saved Excel files uploaded to the website archive.'
+            if update_local:message=f"Two-way sync complete: {len(report['saved'])} Excel files updated with backups; the website archive now matches the saved files."
+            elif self.snapshot().get('writeback'):
+                last=self.snapshot()['writeback'];message+=f" Last Excel update: {len(last['files'])} files saved at {last['at']}."
+            self.save(phase='complete', message=message,
                 digest=digest, revision=result['generatedAt'], rows=result['totalRows'],
                 records=result['auctionRecordCount'], error=None)
         except Exception as exc:
@@ -509,6 +545,10 @@ class Handler(BaseHTTPRequestHandler):
                 if self.path == '/deskflow/software-update':
                     if data != {}: raise ValueError('Expected an empty JSON object.')
                     return self.respond(202, start_software_update())
+                if self.path == '/deskflow/save-reviewed':
+                    if data != {}:raise ValueError('Expected an empty JSON object.')
+                    archive_sync.start(force=True,reviewed_only=True)
+                    return self.respond(200,deskflow.progress())
                 with controller.lock, deskflow.lock:
                     if software_update_running():
                         raise RuntimeError('The desktop companion is updating. Wait for it to finish.')
@@ -561,12 +601,14 @@ def deskflow_relay_loop():
                     elif command.get('action') == 'sync-workbooks':
                         if software_update_running():
                             raise RuntimeError('The desktop companion is updating. Wait for it to finish.')
-                        archive_sync.start(force=True)
-                    elif command.get('action') in ('collect', 'history'):
+                        archive_sync.start(force=True,update_local=True)
+                    elif command.get('action') == 'save-reviewed':
+                        archive_sync.start(force=True,reviewed_only=True)
+                    elif command.get('action') in ('collect', 'history','link-asset','save-review','review-proposal','cancel'):
                         with controller.lock, deskflow.lock:
                             if software_update_running():
                                 raise RuntimeError('The desktop companion is updating. Wait for it to finish.')
-                            deskflow.command(command['action'], {})
+                            deskflow.command(command['action'], command.get('payload',{}))
                 except (ValueError, RuntimeError) as exc:
                     deskflow.state.update(phase='error', error=str(exc), message='Deskflow command could not start.')
         except Exception:

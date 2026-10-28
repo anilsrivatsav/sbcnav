@@ -193,6 +193,9 @@ def verify(record, scheduled=None, history=None, workbook=None, today=None):
           'Previous auctions are stored in date order.' if ordered else 'Previous auctions are out of date order; review the latest outcome.')
 
     sold = [a for a in auctions if a.get('outcome') == 'Sold']
+    missing_viewers = sum(bool(a.get('bid_details_unavailable')) for a in sold)
+    if missing_viewers:
+        check('bid_refresh', 'warn', f'{missing_viewers} sold outcome(s) have no catalogue bid-detail link. Previously sourced rates are retained; verify the accepted rate and awardee separately.')
     sold_complete = all(_amount(a.get('bid_rate')) is not None and _amount(a.get('bid_rate')) > 0 and a.get('awardee') and a.get('rate_unit') == lot.get('rate_unit') for a in sold)
     check('bid_and_lar', 'pass' if sold_complete else 'fail',
           f'{len(sold)} sold outcomes include accepted bid rate, awardee and comparable unit.' if sold_complete else 'Sold outcomes need an accepted bid rate/LAR, awardee and matching rate unit.')
