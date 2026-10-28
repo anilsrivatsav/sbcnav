@@ -354,6 +354,8 @@ class Deskflow:
                     if data.get('confirmed') is not True:raise ValueError('Confirm that the previous lot belongs to this exact asset and scope.')
                     self.library().link_asset(record['lot'],data.get('previous_lot'),data.get('source'))
                 elif action=='review-proposal':
+                    if not self.library().coverage()['complete']:
+                        raise ValueError('Finish and verify the one-time outcome backfill before reviewing proposals.')
                     blocked=[check['message'] for check in record['verification']['checks'] if check['state']=='fail']
                     if blocked:raise ValueError(blocked[0])
                     if not any(check['code']=='history_coverage' and check['state']=='pass' for check in record['verification']['checks']):

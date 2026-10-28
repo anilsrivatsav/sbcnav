@@ -45,6 +45,8 @@ class ReviewWorkflowTests(unittest.TestCase):
             'start':(date.today()+timedelta(days=5)).isoformat(),'status':'RP Pending','rate_unit':'Annual Licensing Fee'})
         self.d.store.save_evidence('__workspace__','scheduled_snapshot',{'ids':[self.key],'complete':True,'count':1,'collected_at':today})
         self.d.store.save_evidence('__workspace__','history_snapshot',{'complete':True,'from_date':'2022-01-01','to_date':today,'collected_at':today})
+        scan=self.d.library().start_scan('2022-01-01',today)
+        self.d.library().finish_scan(scan,{'complete':True,'expected':0,'visited':[]})
 
     def evidence(self):
         record = self.d.detail(self.key)
@@ -98,6 +100,12 @@ class ReviewWorkflowTests(unittest.TestCase):
                 self.d.command('save-review',{'key':self.key,'revision':record['revision'],'inputs':{},'contract':{},'auctions':[patch]})
         with self.assertRaisesRegex(ValueError,'Evidence changed'):
             self.d.command('save-review',{'key':self.key,'revision':'old','inputs':{},'contract':{}})
+
+    def test_legacy_snapshot_cannot_bypass_incomplete_library(self):
+        record=self.evidence()
+        with self.d.store.connect() as c:c.execute('DELETE FROM df_scans')
+        with self.assertRaisesRegex(ValueError,'one-time outcome backfill'):
+            self.d.command('review-proposal',{'key':self.key,'revision':record['revision'],'proposal_revision':record['proposal']['revision']})
 
 
 if __name__ == '__main__':
