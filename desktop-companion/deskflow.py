@@ -16,6 +16,21 @@ from rp.workbook_sync import read_rows, preserve_excel_value
 from rp.history_library import HistoryLibrary, POLICY_VERSION, fingerprint
 import re, base64
 from decimal import Decimal
+from contextlib import contextmanager
+
+
+@contextmanager
+def reader_lifetime():
+    """Close the collector's own tab while its browser driver is still alive."""
+    pages = []
+    try:
+        yield pages
+    finally:
+        for page in pages:
+            try:
+                if not page.is_closed():page.close()
+            except Exception:
+                pass
 
 def public_text(value):
     if isinstance(value,str):
@@ -419,10 +434,10 @@ class Deskflow:
     def work(self,action,start,end,history_base=None,attempt=0):
         page=None;library_scan=None;collection_report={}
         try:
-            with self.playwright() as pw:
+            with self.playwright() as pw, reader_lifetime() as owned_pages:
                 browser=self.engine.browser(pw,{},lambda message:self.state.update(message=message))
                 reader=self.reader(browser.contexts[0],lambda message:self.state.update(message=message),self.cancelled.is_set)
-                page=reader.page;page.bring_to_front();reader.login()
+                page=reader.page;owned_pages.append(page);page.bring_to_front();reader.login()
                 self.state.update(phase='collecting',message='Reading IREPS catalogues. Keep the updater Chrome window open.')
                 if action=='contracts':
                     reader.navigate('Contracts')

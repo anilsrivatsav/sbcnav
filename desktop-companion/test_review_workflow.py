@@ -8,13 +8,23 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import openpyxl
-from deskflow import Deskflow
+from deskflow import Deskflow, reader_lifetime
 from rp.store import Store
 from rp.workbooks import SPECS
 from rp.review import digest
 
 
 class ReviewWorkflowTests(unittest.TestCase):
+    def test_navigation_failure_closes_only_the_owned_reader_tab(self):
+        owned=Mock();owned.is_closed.return_value=False
+        unrelated=Mock()
+        with self.assertRaisesRegex(RuntimeError,'navigation failed'):
+            with reader_lifetime() as pages:
+                pages.append(owned)
+                raise RuntimeError('navigation failed')
+        owned.close.assert_called_once()
+        unrelated.close.assert_not_called()
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
