@@ -28,6 +28,15 @@ class MobileApi {
 
   final Dio _dio;
 
+  Future<Map<String, dynamic>> cateringUnits() => _request(
+        () => _dio.get('/api/units', queryParameters: {'page_size': 1000}),
+      );
+
+  Future<Map<String, dynamic>> referenceWorks() => _request(
+        () => _dio
+            .get('/api/works/monitoring', queryParameters: {'page_size': 1000}),
+      );
+
   Future<Map<String, dynamic>> bootstrap() => _request(
         () => _dio.get('/api/mobile/v1/bootstrap'),
       );
@@ -96,26 +105,6 @@ class MobileApi {
         () => _dio.post(
           '/api/ai/query',
           data: {'question': question, 'context': const {}},
-        ),
-      );
-
-  Future<Map<String, dynamic>> syncCateringFromGoogleSheet() => _request(
-        () => _dio.post(
-          '/api/catering/sync',
-          options: Options(
-            receiveTimeout: const Duration(seconds: 180),
-            sendTimeout: const Duration(seconds: 30),
-          ),
-        ),
-      );
-
-  Future<Map<String, dynamic>> syncSanctionedWorksFromGoogleSheet() => _request(
-        () => _dio.post(
-          '/api/works/import-sanctioned',
-          options: Options(
-            receiveTimeout: const Duration(seconds: 180),
-            sendTimeout: const Duration(seconds: 30),
-          ),
         ),
       );
 

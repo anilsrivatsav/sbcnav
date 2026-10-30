@@ -4,9 +4,10 @@ import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
-import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
+import '../sync/reference_snapshot.dart';
+import 'database_platform.dart';
 
 final databaseProvider = Provider<AppDatabase>(
   (_) => throw StateError('AppDatabase must be initialized before use'),
@@ -23,9 +24,9 @@ class AppDatabase {
   }
 
   Future<void> open() async {
-    final root = await getDatabasesPath();
+    final path = await configureDatabase();
     _db = await openDatabase(
-      join(root, 'rail_inspect.db'),
+      path,
       version: 6,
       onConfigure: (database) => database.execute('PRAGMA foreign_keys = ON'),
       onUpgrade: (database, oldVersion, _) async {
@@ -222,10 +223,25 @@ class AppDatabase {
         ) ??
         0;
     final detailCount = await offlineStationDetailCount();
-    if (stationCount > 0 &&
-        detailCount > 0 &&
-        bundledVersion.isNotEmpty &&
-        bundledVersion == installedVersion) {
+    if (stationCount > 0 && detailCount > 0 && bundledVersion.isNotEmpty) {
+      if (bundledVersion == installedVersion) return;
+      final lastRefresh =
+          DateTime.tryParse(await metadata('last_reference_sync_at') ?? '');
+      final bundleDate = DateTime.tryParse(bundledVersion);
+      if (lastRefresh == null ||
+          bundleDate == null ||
+          lastRefresh.isBefore(bundleDate)) {
+        final units = pack['all_units'] as List? ?? const [];
+        final works = pack['all_works'] as List? ?? const [];
+        await cacheReferenceData(ReferenceSnapshot.fromResponses(pack, {
+          'items': units,
+          'pagination': {'total': units.length}
+        }, {
+          'items': works,
+          'pagination': {'total': works.length}
+        }));
+      }
+      await setMetadata('bundled_offline_pack_at', bundledVersion);
       return;
     }
     await cacheBootstrap(pack);
@@ -318,6 +334,55 @@ class AppDatabase {
         .toList();
   }
 
+  Future<List<Map<String, dynamic>>> cateringUnits() async {
+    final raw = await metadata('portfolio_units_json');
+    if (raw == null) return const [];
+    return (jsonDecode(raw) as List)
+        .map((row) => Map<String, dynamic>.from(row as Map))
+        .toList();
+  }
+
+  Future<void> cacheReferenceData(ReferenceSnapshot snapshot) async {
+    final now = DateTime.now().toUtc().toIso8601String();
+    await db.transaction((txn) async {
+      final values = <String, String>{
+        'portfolio_units_json': jsonEncode(snapshot.units),
+        'portfolio_works_json': jsonEncode(snapshot.works),
+        'last_reference_sync_at': now,
+        'data_version': snapshot.version,
+      };
+      final totalsRow = await txn.query('metadata',
+          where: 'key = ?', whereArgs: ['portfolio_totals_json']);
+      final totals = totalsRow.isEmpty
+          ? <String, dynamic>{}
+          : Map<String, dynamic>.from(
+              jsonDecode(totalsRow.first['value'] as String) as Map);
+      values['portfolio_totals_json'] = jsonEncode({
+        ...totals,
+        'units': snapshot.units.length,
+        'works': snapshot.works.length
+      });
+      for (final entry in values.entries) {
+        await txn.insert('metadata', {'key': entry.key, 'value': entry.value},
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      for (final station in await txn.query('station_details')) {
+        final code = station['station_code'] as String;
+        final detail = Map<String, dynamic>.from(
+            jsonDecode(station['payload_json'] as String) as Map);
+        await txn.update(
+            'station_details',
+            {
+              'payload_json': jsonEncode(snapshot.updateStation(code, detail)),
+              'cached_at': now
+            },
+            where: 'station_code = ?',
+            whereArgs: [code]);
+      }
+      // Inspection drafts, photos, the outbox and its cursor are not changed.
+    });
+  }
+
   Future<Map<String, dynamic>> portfolioTotals() async {
     final raw = await metadata('portfolio_totals_json');
     if (raw == null || raw.isEmpty) return const {};
@@ -372,6 +437,15 @@ class AppDatabase {
             {
               'key': 'data_version',
               'value': '${data['data_version']}',
+            },
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      if (data['all_units'] is List) {
+        await txn.insert(
+            'metadata',
+            {
+              'key': 'portfolio_units_json',
+              'value': jsonEncode(data['all_units'])
             },
             conflictAlgorithm: ConflictAlgorithm.replace);
       }
@@ -758,7 +832,8 @@ class AppDatabase {
       final row = Map<String, dynamic>.from(raw);
       final target = _notificationDate(row['target_date']);
       if (target == null) continue;
-      final days = target.difference(DateTime(now.year, now.month, now.day)).inDays;
+      final days =
+          target.difference(DateTime(now.year, now.month, now.day)).inDays;
       if (days > 30) continue;
       final key = '${row['finding_id'] ?? row['title'] ?? 'finding'}';
       final id = 'finding-action-$stationCode-$key';
@@ -769,12 +844,18 @@ class AppDatabase {
         {
           'notification_id': id,
           'type': 'inspection_action',
-          'title': overdue ? 'Inspection action overdue' : 'Inspection action due',
-          'body': '${row['title'] ?? 'Finding'} at $stationCode ${overdue ? 'is overdue by ${-days} days' : 'is due in $days days'}.',
+          'title':
+              overdue ? 'Inspection action overdue' : 'Inspection action due',
+          'body':
+              '${row['title'] ?? 'Finding'} at $stationCode ${overdue ? 'is overdue by ${-days} days' : 'is due in $days days'}.',
           'related_type': 'finding',
           'related_id': key,
           'station_code': stationCode,
-          'severity': row['severity'] == 'critical' || overdue ? 'critical' : row['severity'] == 'high' ? 'high' : 'medium',
+          'severity': row['severity'] == 'critical' || overdue
+              ? 'critical'
+              : row['severity'] == 'high'
+                  ? 'high'
+                  : 'medium',
           'is_read': 0,
           'due_at': target.toIso8601String(),
           'created_at': DateTime.now().toUtc().toIso8601String(),
@@ -790,7 +871,8 @@ class AppDatabase {
           '${row['status'] ?? ''}'.toLowerCase().contains('done')) continue;
       final tdc = _notificationDate(row['tdc']);
       if (tdc == null) continue;
-      final days = tdc.difference(DateTime(now.year, now.month, now.day)).inDays;
+      final days =
+          tdc.difference(DateTime(now.year, now.month, now.day)).inDays;
       if (days > 30) continue;
       final key = '${row['project_id'] ?? row['source_project_id'] ?? 'work'}';
       final id = 'work-tdc-$stationCode-$key';
@@ -802,11 +884,16 @@ class AppDatabase {
           'notification_id': id,
           'type': 'work_tdc',
           'title': overdue ? 'Work TDC overdue' : 'Work TDC approaching',
-          'body': '${row['short_name_of_work'] ?? key} at $stationCode ${overdue ? 'is overdue by ${-days} days' : 'is due in $days days'}.',
+          'body':
+              '${row['short_name_of_work'] ?? key} at $stationCode ${overdue ? 'is overdue by ${-days} days' : 'is due in $days days'}.',
           'related_type': 'work',
           'related_id': key,
           'station_code': stationCode,
-          'severity': overdue ? 'critical' : days <= 10 ? 'high' : 'medium',
+          'severity': overdue
+              ? 'critical'
+              : days <= 10
+                  ? 'high'
+                  : 'medium',
           'is_read': 0,
           'due_at': tdc.toIso8601String(),
           'created_at': DateTime.now().toUtc().toIso8601String(),
@@ -823,7 +910,8 @@ class AppDatabase {
     for (final row in existing) {
       final id = '${row['notification_id']}';
       if (!activeIds.contains(id)) {
-        await db.delete('notifications', where: 'notification_id = ?', whereArgs: [id]);
+        await db.delete('notifications',
+            where: 'notification_id = ?', whereArgs: [id]);
       }
     }
   }

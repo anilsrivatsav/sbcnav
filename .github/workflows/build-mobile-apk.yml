@@ -6,7 +6,7 @@ on:
       api_base_url:
         description: FastAPI base URL embedded in the release APKs
         required: true
-        default: https://your-central-api.example.com
+        default: https://sbcnav.137-23-58-53.sslip.io
         type: string
   push:
     branches: [main]
@@ -29,7 +29,7 @@ jobs:
       run:
         working-directory: mobile_flutter
     env:
-      API_BASE_URL: ${{ inputs.api_base_url || vars.MOBILE_API_BASE_URL || 'https://sbcnav.onrender.com' }}
+      API_BASE_URL: ${{ inputs.api_base_url || 'https://sbcnav.137-23-58-53.sslip.io' }}
 
     steps:
       - name: Check out source

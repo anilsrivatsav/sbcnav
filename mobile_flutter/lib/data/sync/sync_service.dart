@@ -3,6 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../local/app_database.dart';
 import '../remote/mobile_api.dart';
+import 'reference_snapshot.dart';
+
+final referenceRevisionProvider = StateProvider<int>((ref) => 0);
 
 final syncServiceProvider = Provider<SyncService>(
   (ref) => SyncService(
@@ -26,6 +29,8 @@ class SyncSnapshot {
     this.lastSyncAt,
     this.lastCateringSyncAt,
     this.lastWorksSyncAt,
+    this.lastReferenceSyncAt,
+    this.offlineCateringUnits = 0,
     this.dataVersion,
     this.message = 'Ready',
     this.busy = false,
@@ -41,6 +46,8 @@ class SyncSnapshot {
   final String? lastSyncAt;
   final String? lastCateringSyncAt;
   final String? lastWorksSyncAt;
+  final String? lastReferenceSyncAt;
+  final int offlineCateringUnits;
   final String? dataVersion;
   final String message;
   final bool busy;
@@ -62,36 +69,27 @@ class SyncRunResult {
   final int pulled;
 }
 
-class CateringSyncResult {
-  const CateringSyncResult({
-    required this.units,
-    required this.sourceEarnings,
-    required this.uniqueEarnings,
-    required this.duplicatesRemoved,
-    required this.linkedEarnings,
-    required this.miscellaneousEarnings,
-  });
-
-  final int units;
-  final int sourceEarnings;
-  final int uniqueEarnings;
-  final int duplicatesRemoved;
-  final int linkedEarnings;
-  final int miscellaneousEarnings;
-}
-
-class WorksSyncResult {
-  const WorksSyncResult({required this.rows, required this.upserted});
-
-  final int rows;
-  final int upserted;
-}
-
 class SyncService {
-  const SyncService({required this.database, required this.api});
+  SyncService({required this.database, required this.api});
 
   final AppDatabase database;
   final MobileApi api;
+  Future<ReferenceSnapshot>? _referenceDownload;
+
+  Future<ReferenceSnapshot> refreshReferenceData() => _referenceDownload ??=
+      _downloadReferenceData().whenComplete(() => _referenceDownload = null);
+
+  Future<ReferenceSnapshot> _downloadReferenceData() async {
+    final responses = await Future.wait([
+      api.bootstrap(),
+      api.cateringUnits(),
+      api.referenceWorks(),
+    ]);
+    final snapshot = ReferenceSnapshot.fromResponses(
+        responses[0], responses[1], responses[2]);
+    await database.cacheReferenceData(snapshot);
+    return snapshot;
+  }
 
   Future<void> _reportDeviceState() async {
     try {
@@ -101,95 +99,19 @@ class SyncService {
           'cached_stations': await database.cachedStationCount(),
           'cached_station_details': await database.offlineStationDetailCount(),
           'cached_works': (await database.portfolioWorks()).length,
-          'cached_units': 0,
+          'cached_units': (await database.cateringUnits()).length,
           'cached_earnings': 0,
           'pending_operations': await database.pendingCount(),
           'failed_operations': await database.failedSyncCount(),
           'data_version': await database.metadata('data_version'),
-          'cache_updated_at': await database.metadata('offline_station_details_at'),
+          'cache_updated_at':
+              await database.metadata('offline_station_details_at'),
           'last_sync_at': await database.metadata('last_sync_at'),
         },
       );
     } catch (_) {
       // Cache reporting must never make offline work or sync fail.
     }
-  }
-
-  Future<CateringSyncResult> refreshCateringFromGoogleSheet() async {
-    final connectivity = await Connectivity().checkConnectivity();
-    if (connectivity.every((item) => item == ConnectivityResult.none)) {
-      throw const MobileApiException(
-        'An internet connection is required to refresh catering data.',
-      );
-    }
-
-    final data = await api.syncCateringFromGoogleSheet();
-    final source =
-        Map<String, dynamic>.from(data['source'] as Map? ?? const {});
-    final reconciliation = Map<String, dynamic>.from(
-      data['reconciliation'] as Map? ?? const {},
-    );
-    final result = CateringSyncResult(
-      units: (source['units'] as num?)?.toInt() ?? 0,
-      sourceEarnings: (source['earning_source_rows'] as num?)?.toInt() ?? 0,
-      uniqueEarnings: (source['earnings'] as num?)?.toInt() ?? 0,
-      duplicatesRemoved:
-          (source['duplicate_earning_rows'] as num?)?.toInt() ?? 0,
-      linkedEarnings:
-          (reconciliation['linked_earning_rows'] as num?)?.toInt() ?? 0,
-      miscellaneousEarnings:
-          (reconciliation['miscellaneous_earning_rows'] as num?)?.toInt() ?? 0,
-    );
-
-    try {
-      await bootstrap();
-    } catch (error) {
-      throw MobileApiException(
-        'PostgreSQL was updated, but this device could not refresh its offline data: $error',
-      );
-    }
-      await database.setMetadata(
-        'last_catering_sync_at',
-        DateTime.now().toUtc().toIso8601String(),
-      );
-      await _reportDeviceState();
-      return result;
-  }
-
-  Future<WorksSyncResult> refreshSanctionedWorksFromGoogleSheet() async {
-    final connectivity = await Connectivity().checkConnectivity();
-    if (connectivity.every((item) => item == ConnectivityResult.none)) {
-      throw const MobileApiException(
-        'An internet connection is required to refresh sanctioned works.',
-      );
-    }
-
-    final data = await api.syncSanctionedWorksFromGoogleSheet();
-    final result = WorksSyncResult(
-      rows: (data['rows'] as num?)?.toInt() ?? 0,
-      upserted: (data['upserted'] as num?)?.toInt() ?? 0,
-    );
-    if (result.rows == 0 || result.upserted != result.rows) {
-      throw MobileApiException(
-        'The server returned an incomplete works import '
-        '(${result.upserted} of ${result.rows}).',
-      );
-    }
-
-    try {
-      await bootstrap();
-    } catch (error) {
-      throw MobileApiException(
-        'PostgreSQL was updated, but this device could not refresh its '
-        'offline works: $error',
-      );
-    }
-      await database.setMetadata(
-        'last_works_sync_at',
-        DateTime.now().toUtc().toIso8601String(),
-      );
-      await _reportDeviceState();
-      return result;
   }
 
   Future<void> bootstrap({
@@ -201,11 +123,15 @@ class SyncService {
     await database.cacheBootstrap(data);
     final selectionKey = [
       section?.trim() ?? '',
-      ...(stationCodes ?? const <String>[]).map((code) => code.trim().toUpperCase()),
+      ...(stationCodes ?? const <String>[])
+          .map((code) => code.trim().toUpperCase()),
     ].join('|');
-    final previousSelection = await database.metadata('offline_download_selection');
+    final previousSelection =
+        await database.metadata('offline_download_selection');
     var offset = previousSelection == selectionKey
-        ? int.tryParse(await database.metadata('offline_download_offset') ?? '0') ?? 0
+        ? int.tryParse(
+                await database.metadata('offline_download_offset') ?? '0') ??
+            0
         : 0;
     await database.setMetadata('offline_download_selection', selectionKey);
     await database.setMetadata('offline_download_offset', '$offset');
@@ -356,6 +282,8 @@ class SyncController extends AsyncNotifier<SyncSnapshot> {
       lastSyncAt: await _database.metadata('last_sync_at'),
       lastCateringSyncAt: await _database.metadata('last_catering_sync_at'),
       lastWorksSyncAt: await _database.metadata('last_works_sync_at'),
+      lastReferenceSyncAt: await _database.metadata('last_reference_sync_at'),
+      offlineCateringUnits: (await _database.cateringUnits()).length,
       dataVersion: await _database.metadata('data_version'),
       offlineWorks: (await _database.portfolioWorks()).length,
       queue: await _database.syncQueueItems(),
@@ -384,52 +312,19 @@ class SyncController extends AsyncNotifier<SyncSnapshot> {
     });
   }
 
-  /// Downloads the current PostgreSQL-backed station snapshot and replaces
-  /// the cached station details while preserving local inspection work.
-  Future<void> refreshFromServer() => bootstrap();
-
-  Future<CateringSyncResult> refreshCateringFromGoogleSheet() async {
-    state = AsyncData(
-      await _snapshot(
-        message: 'Refreshing catering units and earnings...',
-        busy: true,
-      ),
-    );
+  /// Refreshes catering and PH-53 works while preserving local inspection work.
+  Future<void> refreshFromServer() async {
+    state = AsyncData(await _snapshot(
+        message: 'Updating catering and works from Oracle...', busy: true));
     try {
-      final result = await _sync.refreshCateringFromGoogleSheet();
-      state = AsyncData(
-        await _snapshot(
+      final snapshot = await _sync.refreshReferenceData();
+      ref.read(referenceRevisionProvider.notifier).state++;
+      state = AsyncData(await _snapshot(
           message:
-              '${result.units} units and ${result.uniqueEarnings} receipts refreshed',
-        ),
-      );
-      return result;
+              '${snapshot.units.length} catering units and ${snapshot.works.length} works updated from Oracle'));
     } catch (error) {
       state = AsyncData(
-        await _snapshot(message: 'Catering refresh failed: $error'),
-      );
-      rethrow;
-    }
-  }
-
-  Future<WorksSyncResult> refreshSanctionedWorksFromGoogleSheet() async {
-    state = AsyncData(
-      await _snapshot(
-        message: 'Refreshing sanctioned works...',
-        busy: true,
-      ),
-    );
-    try {
-      final result = await _sync.refreshSanctionedWorksFromGoogleSheet();
-      state = AsyncData(
-        await _snapshot(message: '${result.rows} sanctioned works refreshed'),
-      );
-      return result;
-    } catch (error) {
-      state = AsyncData(
-        await _snapshot(message: 'Works refresh failed: $error'),
-      );
-      rethrow;
+          await _snapshot(message: 'Offline · saved data kept. $error'));
     }
   }
 

@@ -104,7 +104,9 @@ class _WorksScreenState extends ConsumerState<WorksScreen> {
           'name': row['authority'],
           'total': row['total'],
           'completed': row['completed'],
-          'open': (row['tender'] as int) + (row['wip'] as int) + (row['other'] as int),
+          'open': (row['tender'] as int) +
+              (row['wip'] as int) +
+              (row['other'] as int),
           'tender': row['tender'],
           'wip': row['wip'],
         });
@@ -119,14 +121,24 @@ class _WorksScreenState extends ConsumerState<WorksScreen> {
         });
     await exportReportPdf(
       title: 'Sanctioned Works Summary',
-      subtitle: 'Calculated from ${rows.length} works in the current database snapshot',
+      subtitle:
+          'Calculated from ${rows.length} works in the current database snapshot',
       rows: [...sectionRows, ...yearRows],
-      columns: const ['group', 'name', 'total', 'completed', 'open', 'tender', 'wip'],
+      columns: const [
+        'group',
+        'name',
+        'total',
+        'completed',
+        'open',
+        'tender',
+        'wip'
+      ],
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    ref.listen(referenceRevisionProvider, (_, __) => _reload());
     ref.listen(syncControllerProvider, (_, __) => _reload());
     return FutureBuilder<_WorksData>(
       future: _future,
@@ -142,20 +154,45 @@ class _WorksScreenState extends ConsumerState<WorksScreen> {
         final rows = _filtered(allRows);
         final sections = _orderedWorkOptions(
           allRows.map((row) => '${row['work_section'] ?? 'Not specified'}'),
-          const ['North', 'South', 'East', 'West', 'GSU/SBC', 'Division', 'CAO/CN', 'Sr.DCM', 'Sr.DSTE', 'Sr.DEE'],
+          const [
+            'North',
+            'South',
+            'East',
+            'West',
+            'GSU/SBC',
+            'Division',
+            'CAO/CN',
+            'Sr.DCM',
+            'Sr.DSTE',
+            'Sr.DEE'
+          ],
         );
         final categories = _orderedWorkOptions(
           allRows.map((row) => '${row['work_category'] ?? 'Other works'}'),
-          const ['ABSS works', 'Passenger amenity works', 'FOB works', 'Platform extension works', 'Platform shelter works', 'Divyangjan works', 'Goods / CSGR works', 'CAO/CN works', 'Other works'],
+          const [
+            'ABSS works',
+            'Passenger amenity works',
+            'FOB works',
+            'Platform extension works',
+            'Platform shelter works',
+            'Divyangjan works',
+            'Goods / CSGR works',
+            'CAO/CN works',
+            'Other works'
+          ],
         );
         final completed =
             allRows.where((row) => isComplete(row['status'])).length;
         final deletion =
             allRows.where((row) => row['deletion_recommended'] == true).length;
         final open = allRows.length - completed;
-        final completedRows = allRows.where((row) => isComplete(row['status'])).toList();
-        final openRows = allRows.where((row) => !isComplete(row['status'])).toList();
-        final deletionRows = allRows.where((row) => row['deletion_recommended'] == true).toList();
+        final completedRows =
+            allRows.where((row) => isComplete(row['status'])).toList();
+        final openRows =
+            allRows.where((row) => !isComplete(row['status'])).toList();
+        final deletionRows = allRows
+            .where((row) => row['deletion_recommended'] == true)
+            .toList();
         return Column(
           children: [
             Padding(
@@ -180,7 +217,8 @@ class _WorksScreenState extends ConsumerState<WorksScreen> {
                     AppIconButton(
                       tooltip: 'Open Section and Work Type filters',
                       icon: Icons.tune_rounded,
-                      selected: _sectionFilter != 'All' || _categoryFilter != 'All',
+                      selected:
+                          _sectionFilter != 'All' || _categoryFilter != 'All',
                       onPressed: () => showGlassBottomSheet<void>(
                         context,
                         builder: (_) => _WorksFilterSheet(
@@ -211,9 +249,11 @@ class _WorksScreenState extends ConsumerState<WorksScreen> {
                       alignment: Alignment.centerLeft,
                       child: Wrap(spacing: 8, runSpacing: 6, children: [
                         if (_sectionFilter != 'All')
-                          StatusBadge('Section: $_sectionFilter', tone: AppPalette.indigo),
+                          StatusBadge('Section: $_sectionFilter',
+                              tone: AppPalette.indigo),
                         if (_categoryFilter != 'All')
-                          StatusBadge('Type: $_categoryFilter', tone: AppPalette.teal),
+                          StatusBadge('Type: $_categoryFilter',
+                              tone: AppPalette.teal),
                       ]),
                     ),
                   ],
@@ -256,7 +296,8 @@ class _WorksScreenState extends ConsumerState<WorksScreen> {
                     const EmptyState(
                         icon: Icons.construction_rounded,
                         title: 'No works found',
-                        message: 'Try another section, category or search term.')
+                        message:
+                            'Try another section, category or search term.')
                   else
                     ...rows.expand((row) => [
                           _WorkRow(
@@ -278,19 +319,24 @@ class _WorksScreenState extends ConsumerState<WorksScreen> {
               deletion: deletion,
               onTotal: () => showGlassBottomSheet<void>(
                 context,
-                builder: (_) => _WorksSubsetSheet(title: 'All works · ${allRows.length}', rows: allRows),
+                builder: (_) => _WorksSubsetSheet(
+                    title: 'All works · ${allRows.length}', rows: allRows),
               ),
               onCompleted: () => showGlassBottomSheet<void>(
                 context,
-                builder: (_) => _WorksSubsetSheet(title: 'Completed works · $completed', rows: completedRows),
+                builder: (_) => _WorksSubsetSheet(
+                    title: 'Completed works · $completed', rows: completedRows),
               ),
               onOpen: () => showGlassBottomSheet<void>(
                 context,
-                builder: (_) => _WorksSubsetSheet(title: 'Open works · $open', rows: openRows),
+                builder: (_) => _WorksSubsetSheet(
+                    title: 'Open works · $open', rows: openRows),
               ),
               onDeletion: () => showGlassBottomSheet<void>(
                 context,
-                builder: (_) => _WorksSubsetSheet(title: 'Deletion recommended · $deletion', rows: deletionRows),
+                builder: (_) => _WorksSubsetSheet(
+                    title: 'Deletion recommended · $deletion',
+                    rows: deletionRows),
               ),
               onSummary: () => showGlassBottomSheet<void>(
                 context,
@@ -338,7 +384,8 @@ class _WorksFloatingActions extends StatelessWidget {
   Widget build(BuildContext context) => SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(AppSpacing.page, 4, AppSpacing.page, 10),
+          padding: const EdgeInsets.fromLTRB(
+              AppSpacing.page, 4, AppSpacing.page, 10),
           child: Align(
             alignment: Alignment.centerRight,
             child: IconButton(
@@ -395,22 +442,51 @@ class _WorksActionSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) => SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(AppSpacing.page, 8, AppSpacing.page, 24),
-          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('Work views', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
-            const SizedBox(height: 12),
-            _ActionRow(label: 'All works', value: total, icon: Icons.list_alt_rounded, onTap: onTotal),
-            _ActionRow(label: 'Completed works', value: completed, icon: Icons.check_circle_outline_rounded, onTap: onCompleted),
-            _ActionRow(label: 'Open works', value: open, icon: Icons.pending_actions_rounded, onTap: onOpen),
-            _ActionRow(label: 'Deletion recommended', value: deletion, icon: Icons.delete_outline_rounded, onTap: onDeletion),
-            _ActionRow(label: 'Summary + PDF', icon: Icons.picture_as_pdf_rounded, onTap: onSummary),
-          ]),
+          padding: const EdgeInsets.fromLTRB(
+              AppSpacing.page, 8, AppSpacing.page, 24),
+          child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Work views',
+                    style:
+                        TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+                const SizedBox(height: 12),
+                _ActionRow(
+                    label: 'All works',
+                    value: total,
+                    icon: Icons.list_alt_rounded,
+                    onTap: onTotal),
+                _ActionRow(
+                    label: 'Completed works',
+                    value: completed,
+                    icon: Icons.check_circle_outline_rounded,
+                    onTap: onCompleted),
+                _ActionRow(
+                    label: 'Open works',
+                    value: open,
+                    icon: Icons.pending_actions_rounded,
+                    onTap: onOpen),
+                _ActionRow(
+                    label: 'Deletion recommended',
+                    value: deletion,
+                    icon: Icons.delete_outline_rounded,
+                    onTap: onDeletion),
+                _ActionRow(
+                    label: 'Summary + PDF',
+                    icon: Icons.picture_as_pdf_rounded,
+                    onTap: onSummary),
+              ]),
         ),
       );
 }
 
 class _ActionRow extends StatelessWidget {
-  const _ActionRow({required this.label, required this.onTap, this.value, required this.icon});
+  const _ActionRow(
+      {required this.label,
+      required this.onTap,
+      this.value,
+      required this.icon});
   final String label;
   final int? value;
   final IconData icon;
@@ -423,7 +499,8 @@ class _ActionRow extends StatelessWidget {
         title: Text(label, style: const TextStyle(fontWeight: FontWeight.w800)),
         trailing: value == null
             ? const Icon(Icons.chevron_right_rounded)
-            : Text('$value', style: const TextStyle(fontWeight: FontWeight.w900)),
+            : Text('$value',
+                style: const TextStyle(fontWeight: FontWeight.w900)),
         onTap: () {
           Navigator.of(context).pop();
           onTap();
@@ -432,7 +509,8 @@ class _ActionRow extends StatelessWidget {
 }
 
 class _BottomMetric extends StatelessWidget {
-  const _BottomMetric({required this.label, required this.value, required this.onTap});
+  const _BottomMetric(
+      {required this.label, required this.value, required this.onTap});
   final String label;
   final int value;
   final VoidCallback onTap;
@@ -452,7 +530,11 @@ class _BottomMetric extends StatelessWidget {
 }
 
 class _WorksTotalsSheet extends StatelessWidget {
-  const _WorksTotalsSheet({required this.total, required this.completed, required this.open, required this.deletion});
+  const _WorksTotalsSheet(
+      {required this.total,
+      required this.completed,
+      required this.open,
+      required this.deletion});
   final int total;
   final int completed;
   final int open;
@@ -461,17 +543,23 @@ class _WorksTotalsSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) => SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(AppSpacing.page, 8, AppSpacing.page, 24),
-          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('Works overview', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
-            const SizedBox(height: 14),
-            Wrap(spacing: 10, runSpacing: 10, children: [
-              _WorkMetric(label: 'Total works', value: total),
-              _WorkMetric(label: 'Completed', value: completed),
-              _WorkMetric(label: 'Open', value: open),
-              _WorkMetric(label: 'Deletion recommended', value: deletion),
-            ]),
-          ]),
+          padding: const EdgeInsets.fromLTRB(
+              AppSpacing.page, 8, AppSpacing.page, 24),
+          child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Works overview',
+                    style:
+                        TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+                const SizedBox(height: 14),
+                Wrap(spacing: 10, runSpacing: 10, children: [
+                  _WorkMetric(label: 'Total works', value: total),
+                  _WorkMetric(label: 'Completed', value: completed),
+                  _WorkMetric(label: 'Open', value: open),
+                  _WorkMetric(label: 'Deletion recommended', value: deletion),
+                ]),
+              ]),
         ),
       );
 }
@@ -484,13 +572,15 @@ class _WorksSubsetSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) => SafeArea(
         child: ListView.separated(
-          padding: const EdgeInsets.fromLTRB(AppSpacing.page, 8, AppSpacing.page, 24),
+          padding: const EdgeInsets.fromLTRB(
+              AppSpacing.page, 8, AppSpacing.page, 24),
           itemCount: rows.length + 1,
           separatorBuilder: (_, __) => const SizedBox(height: 8),
           itemBuilder: (_, index) {
             if (index == 0) {
               return Text(title,
-                  style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900));
+                  style: const TextStyle(
+                      fontSize: 22, fontWeight: FontWeight.w900));
             }
             final row = rows[index - 1];
             return _WorkRow(
@@ -512,28 +602,63 @@ class _WorksSummarySheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => SafeArea(
-        child: ListView(padding: const EdgeInsets.fromLTRB(AppSpacing.page, 8, AppSpacing.page, 24), children: [
-          Row(children: [
-            const Expanded(child: Text('Works summary', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900))),
-            AppIconButton(tooltip: 'Export summary PDF', icon: Icons.picture_as_pdf_rounded, onPressed: onExportPdf),
-          ]),
-          const SizedBox(height: 4),
-          Text('Calculated from ${rows.length} sanctioned works'),
-          const SizedBox(height: 16),
-          _SummaryTableSection(
-            title: 'Works pending with · source Section column',
-            columns: const ['Section', 'Total', 'Completed', 'Tender', 'WIP', 'Other'],
-            rows: _pendingSummary(rows),
-            fields: const ['authority', 'total', 'completed', 'tender', 'wip', 'other'],
-          ),
-          const SizedBox(height: 22),
-          _SummaryTableSection(
-            title: 'Year-wise progress',
-            columns: const ['Year', 'Sanctioned', 'Completed', 'WIP', 'Tender'],
-            rows: _yearSummary(rows),
-            fields: const ['year', 'sanctioned', 'completed', 'wip', 'tender'],
-          ),
-        ]),
+        child: ListView(
+            padding: const EdgeInsets.fromLTRB(
+                AppSpacing.page, 8, AppSpacing.page, 24),
+            children: [
+              Row(children: [
+                const Expanded(
+                    child: Text('Works summary',
+                        style: TextStyle(
+                            fontSize: 22, fontWeight: FontWeight.w900))),
+                AppIconButton(
+                    tooltip: 'Export summary PDF',
+                    icon: Icons.picture_as_pdf_rounded,
+                    onPressed: onExportPdf),
+              ]),
+              const SizedBox(height: 4),
+              Text('Calculated from ${rows.length} sanctioned works'),
+              const SizedBox(height: 16),
+              _SummaryTableSection(
+                title: 'Works pending with · source Section column',
+                columns: const [
+                  'Section',
+                  'Total',
+                  'Completed',
+                  'Tender',
+                  'WIP',
+                  'Other'
+                ],
+                rows: _pendingSummary(rows),
+                fields: const [
+                  'authority',
+                  'total',
+                  'completed',
+                  'tender',
+                  'wip',
+                  'other'
+                ],
+              ),
+              const SizedBox(height: 22),
+              _SummaryTableSection(
+                title: 'Year-wise progress',
+                columns: const [
+                  'Year',
+                  'Sanctioned',
+                  'Completed',
+                  'WIP',
+                  'Tender'
+                ],
+                rows: _yearSummary(rows),
+                fields: const [
+                  'year',
+                  'sanctioned',
+                  'completed',
+                  'wip',
+                  'tender'
+                ],
+              ),
+            ]),
       );
 }
 
@@ -558,9 +683,23 @@ class _WorksSummaryPanel extends StatelessWidget {
         children: [
           _SummaryTableSection(
             title: 'Works pending with · source Section column',
-            columns: const ['Section', 'Total', 'Completed', 'Tender', 'WIP', 'Other'],
+            columns: const [
+              'Section',
+              'Total',
+              'Completed',
+              'Tender',
+              'WIP',
+              'Other'
+            ],
             rows: pending,
-            fields: const ['authority', 'total', 'completed', 'tender', 'wip', 'other'],
+            fields: const [
+              'authority',
+              'total',
+              'completed',
+              'tender',
+              'wip',
+              'other'
+            ],
           ),
           const SizedBox(height: 16),
           _SummaryTableSection(
@@ -579,14 +718,16 @@ List<Map<String, dynamic>> _pendingSummary(List<Map<String, dynamic>> rows) {
   final groups = <String, Map<String, dynamic>>{};
   for (final row in rows) {
     final authority = workSection(row);
-    final item = groups.putIfAbsent(authority, () => {
-          'authority': authority,
-          'total': 0,
-          'completed': 0,
-          'tender': 0,
-          'wip': 0,
-          'other': 0,
-        });
+    final item = groups.putIfAbsent(
+        authority,
+        () => {
+              'authority': authority,
+              'total': 0,
+              'completed': 0,
+              'tender': 0,
+              'wip': 0,
+              'other': 0,
+            });
     item['total'] = (item['total'] as int) + 1;
     final status = '${row['status'] ?? ''}'.toLowerCase();
     if (isComplete(status)) {
@@ -600,11 +741,13 @@ List<Map<String, dynamic>> _pendingSummary(List<Map<String, dynamic>> rows) {
     }
   }
   final result = groups.values.toList()
-    ..sort((a, b) => a['authority'].toString().compareTo(b['authority'].toString()));
+    ..sort((a, b) =>
+        a['authority'].toString().compareTo(b['authority'].toString()));
   final total = <String, dynamic>{
     'authority': 'Total Works',
     'total': rows.length,
-    'completed': result.fold<int>(0, (sum, row) => sum + (row['completed'] as int)),
+    'completed':
+        result.fold<int>(0, (sum, row) => sum + (row['completed'] as int)),
     'tender': result.fold<int>(0, (sum, row) => sum + (row['tender'] as int)),
     'wip': result.fold<int>(0, (sum, row) => sum + (row['wip'] as int)),
     'other': result.fold<int>(0, (sum, row) => sum + (row['other'] as int)),
@@ -616,13 +759,15 @@ List<Map<String, dynamic>> _yearSummary(List<Map<String, dynamic>> rows) {
   final groups = <String, Map<String, dynamic>>{};
   for (final row in rows) {
     final year = _displayYear('${row['year_of_sanction'] ?? 'Unknown'}');
-    final item = groups.putIfAbsent(year, () => {
-          'year': year,
-          'sanctioned': 0,
-          'completed': 0,
-          'wip': 0,
-          'tender': 0,
-        });
+    final item = groups.putIfAbsent(
+        year,
+        () => {
+              'year': year,
+              'sanctioned': 0,
+              'completed': 0,
+              'wip': 0,
+              'tender': 0,
+            });
     item['sanctioned'] = (item['sanctioned'] as int) + 1;
     final status = '${row['status'] ?? ''}'.toLowerCase();
     if (isComplete(status)) {
@@ -640,15 +785,20 @@ List<Map<String, dynamic>> _yearSummary(List<Map<String, dynamic>> rows) {
   final total = <String, dynamic>{
     'year': 'Total Works',
     'sanctioned': rows.length,
-    'completed': result.fold<int>(0, (sum, row) => sum + (row['completed'] as int)),
+    'completed':
+        result.fold<int>(0, (sum, row) => sum + (row['completed'] as int)),
     'wip': result.fold<int>(0, (sum, row) => sum + (row['wip'] as int)),
     'tender': result.fold<int>(0, (sum, row) => sum + (row['tender'] as int)),
   };
   return [...result, total];
 }
 
-List<String> _orderedWorkOptions(Iterable<String> values, List<String> preferred) {
-  final available = values.map((value) => value.trim()).where((value) => value.isNotEmpty).toSet();
+List<String> _orderedWorkOptions(
+    Iterable<String> values, List<String> preferred) {
+  final available = values
+      .map((value) => value.trim())
+      .where((value) => value.isNotEmpty)
+      .toSet();
   final ordered = <String>['All'];
   ordered.addAll(preferred.where(available.contains));
   final remaining = available.difference(ordered.toSet()).toList()..sort();
@@ -852,11 +1002,14 @@ class _WorksFilterSheet extends StatelessWidget {
   Widget build(BuildContext context) => SafeArea(
         child: ListView(
           shrinkWrap: true,
-          padding: const EdgeInsets.fromLTRB(AppSpacing.page, 8, AppSpacing.page, 24),
+          padding: const EdgeInsets.fromLTRB(
+              AppSpacing.page, 8, AppSpacing.page, 24),
           children: [
             Row(children: [
               const Expanded(
-                child: Text('Filter works', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+                child: Text('Filter works',
+                    style:
+                        TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
               ),
               AppIconButton(
                 tooltip: 'Clear all filters',
@@ -897,7 +1050,8 @@ class _WorksFilterSheet extends StatelessWidget {
 }
 
 class _FilterHeading extends StatelessWidget {
-  const _FilterHeading({required this.title, required this.icon, required this.children});
+  const _FilterHeading(
+      {required this.title, required this.icon, required this.children});
   final String title;
   final IconData icon;
   final List<Widget> children;
@@ -909,7 +1063,9 @@ class _FilterHeading extends StatelessWidget {
           Row(children: [
             Icon(icon, size: 18, color: Theme.of(context).colorScheme.primary),
             const SizedBox(width: 8),
-            Text(title, style: Theme.of(context).textTheme.labelMedium?.copyWith(letterSpacing: 1.4, fontWeight: FontWeight.w900)),
+            Text(title,
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    letterSpacing: 1.4, fontWeight: FontWeight.w900)),
           ]),
           const SizedBox(height: 10),
           Wrap(spacing: 8, runSpacing: 8, children: children),
@@ -918,7 +1074,8 @@ class _FilterHeading extends StatelessWidget {
 }
 
 class _FilterChoice extends StatelessWidget {
-  const _FilterChoice({required this.label, required this.selected, required this.onTap});
+  const _FilterChoice(
+      {required this.label, required this.selected, required this.onTap});
   final String label;
   final bool selected;
   final VoidCallback onTap;
@@ -935,13 +1092,17 @@ class _FilterChoice extends StatelessWidget {
           fontWeight: FontWeight.w800,
           color: selected ? Theme.of(context).colorScheme.onPrimary : null,
         ),
-        side: BorderSide(color: selected ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.outlineVariant),
+        side: BorderSide(
+            color: selected
+                ? Theme.of(context).colorScheme.primary
+                : Theme.of(context).colorScheme.outlineVariant),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       );
 }
 
 class _WorksFilterTabs extends StatelessWidget {
-  const _WorksFilterTabs({required this.values, required this.selected, required this.onSelected});
+  const _WorksFilterTabs(
+      {required this.values, required this.selected, required this.onSelected});
   final List<String> values;
   final String selected;
   final ValueChanged<String> onSelected;
@@ -973,7 +1134,8 @@ class _WorksFilterTabs extends StatelessWidget {
                     ? Theme.of(context).colorScheme.primary
                     : Theme.of(context).colorScheme.outlineVariant,
               ),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14)),
             );
           },
         ),
@@ -1149,7 +1311,8 @@ List<Map<String, dynamic>> _deduplicateWorks(
         .trim()
         .toLowerCase();
     final section = '${row['section'] ?? ''}'.trim().toLowerCase();
-    final sanctionDate = '${row['date_of_sanction'] ?? ''}'.trim().toLowerCase();
+    final sanctionDate =
+        '${row['date_of_sanction'] ?? ''}'.trim().toLowerCase();
     final key = projectId.isNotEmpty
         ? 'pid:$projectId'
         : 'fallback:$name|$section|$sanctionDate|${row['cost'] ?? ''}';

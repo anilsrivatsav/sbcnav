@@ -1,7 +1,10 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/remote/mobile_api.dart';
+import '../../data/local/app_database.dart';
+import '../../data/sync/sync_service.dart';
 import '../../shared/widgets.dart';
 import '../reports/report_pdf_export.dart';
 import 'contract_filters.dart';
@@ -14,8 +17,8 @@ class ContractsScreen extends ConsumerStatefulWidget {
 }
 
 class _ContractsScreenState extends ConsumerState<ContractsScreen> {
-  String _family = 'publicity';
-  String _publicityStatus = 'running';
+  String _family = 'catering';
+  String _publicityStatus = 'all';
   String _policy = 'all';
   String _asset = 'all';
   String _cateringView = 'active';
@@ -39,26 +42,47 @@ class _ContractsScreenState extends ConsumerState<ContractsScreen> {
 
   Future<Map<String, dynamic>> _load() async {
     final api = ref.read(mobileApiProvider);
-    final results = await Future.wait([
-      api.contracts(status: 'all'),
-      api.dashboardBootstrap(),
-    ]);
-    final publicity = results[0];
-    final dashboard = results[1];
+    final database = ref.read(databaseProvider);
+    final saved = await database.metadata('publicity_contracts_json');
+    List<dynamic> publicity =
+        saved == null ? const [] : jsonDecode(saved) as List;
+    if (_family == 'publicity') {
+      try {
+        final page = await api.contracts(status: 'all');
+        final rows = page['items'] as List? ?? const [];
+        if ((page['pagination'] as Map?)?['total'] != rows.length) {
+          throw StateError('Incomplete contract registry. Saved data kept.');
+        }
+        publicity =
+            rows.whereType<Map>().where(isPublicityRegistryContract).toList();
+        await database.setMetadata(
+            'publicity_contracts_json', jsonEncode(publicity));
+      } catch (_) {
+        if (saved == null) rethrow;
+      }
+    }
+    final cachedUnits = await database.cateringUnits();
     return {
-      'publicity': publicity['items'] as List? ?? const [],
-      'units': (dashboard['units'] as Map?)?['items'] as List? ?? const [],
+      'publicity': publicity,
+      'units': cachedUnits.isNotEmpty
+          ? cachedUnits
+          : (await api.cateringUnits())['items'] as List? ?? const [],
     };
   }
 
-  void _refresh() => setState(() => _future = _load());
+  Future<void> _refresh() async {
+    if (_family == 'catering') {
+      await ref.read(syncControllerProvider.notifier).refreshFromServer();
+    }
+    if (mounted) setState(() => _future = _load());
+  }
 
   void _resetFilters() {
     setState(() {
       _query = '';
       _searchController.clear();
       if (_family == 'publicity') {
-        _publicityStatus = 'running';
+        _publicityStatus = 'all';
         _policy = 'all';
         _asset = 'all';
       } else {
@@ -78,6 +102,9 @@ class _ContractsScreenState extends ConsumerState<ContractsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen(referenceRevisionProvider, (_, __) {
+      if (mounted) setState(() => _future = _load());
+    });
     return FutureBuilder<Map<String, dynamic>>(
       future: _future,
       builder: (context, snapshot) {
@@ -142,11 +169,11 @@ class _ContractsScreenState extends ConsumerState<ContractsScreen> {
                               .headlineMedium
                               ?.copyWith(fontWeight: FontWeight.w800)),
                       const SizedBox(height: 4),
-                      Text('Catering and publicity contracts from PostgreSQL',
+                      Text('Catering and publicity contracts',
                           style: Theme.of(context).textTheme.bodyMedium),
                     ])),
                 IconButton.filledTonal(
-                    tooltip: 'Refresh PostgreSQL data',
+                    tooltip: 'Refresh Oracle data',
                     onPressed: _refresh,
                     icon: const Icon(Icons.refresh_rounded)),
               ]),
@@ -156,7 +183,9 @@ class _ContractsScreenState extends ConsumerState<ContractsScreen> {
                   ButtonSegment(
                       value: 'publicity',
                       icon: const Icon(Icons.campaign_outlined),
-                      label: Text('Publicity (${publicity.length})')),
+                      label: Text(_family == 'publicity'
+                          ? 'Publicity (${publicity.length})'
+                          : 'Publicity')),
                   ButtonSegment(
                       value: 'catering',
                       icon: const Icon(Icons.restaurant_outlined),
@@ -165,6 +194,7 @@ class _ContractsScreenState extends ConsumerState<ContractsScreen> {
                 selected: {_family},
                 onSelectionChanged: (value) => setState(() {
                   _family = value.first;
+                  _future = _load();
                   _query = '';
                   _searchController.clear();
                 }),

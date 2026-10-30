@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.6+33 - 2026-10-30
+
+- Matches the Next.js Publicity register using the e-auction source boundary, with all statuses shown initially and the complete fetched register cached for offline use.
+
+- Defaults to the Oracle API and refreshes catering and PH-53 works on open, resume and Refresh data.
+- Bundles 369 current catering units and 150 works with station links; 8 works without a matching station remain in the full register.
+- Validates complete downloads before replacing local reference records in one transaction, preserving inspections, upload queues and Publicity.
+- Adds a Flutter browser target with persistent SQLite in IndexedDB.
+
+
 ## 0.9.2+19 - 2026-08-04
 
 - Classifies units without a licensee and contract period as available for allotment.

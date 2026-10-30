@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app.dart';
@@ -8,6 +10,7 @@ import 'data/local/app_database.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (kIsWeb) SemanticsBinding.instance.ensureSemantics();
   final database = AppDatabase();
   await database.open();
   final initialTheme = AppThemePresetInfo.fromStorage(

@@ -97,10 +97,19 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
     }
 
     final totals = await database.portfolioTotals();
+    final register = await database.portfolioWorks();
+    if (register.isNotEmpty) {
+      openWorks = register.where((work) {
+        final status = '${work['status'] ?? ''}'.toLowerCase();
+        return work['completed'] != true &&
+            !status.contains('complete') &&
+            !status.contains('done');
+      }).length;
+    }
     final profile = await database.metadata('profile_name');
     return _PortfolioData(
       stations: (totals['stations'] as num?)?.toInt() ?? rows.length,
-      units: units,
+      units: (totals['units'] as num?)?.toInt() ?? units,
       contracts: contracts,
       works: (totals['works'] as num?)?.toInt() ?? works,
       amenities: amenities,
@@ -235,7 +244,7 @@ class _PortfolioHeader extends StatelessWidget {
                 .headlineSmall
                 ?.copyWith(fontWeight: FontWeight.w900)),
         const SizedBox(height: 2),
-        Text('Station portfolio dashboard - v1.0.3',
+        Text('Station portfolio dashboard - v1.0.6',
             style: Theme.of(context).textTheme.bodySmall),
       ])),
       Stack(clipBehavior: Clip.none, children: [

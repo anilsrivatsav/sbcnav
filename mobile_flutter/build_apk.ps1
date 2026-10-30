@@ -1,5 +1,5 @@
 param(
-  [string]$ApiBaseUrl = "http://10.0.2.2:8000",
+  [string]$ApiBaseUrl = "https://sbcnav.137-23-58-53.sslip.io",
   [ValidateSet("arm64", "arm32", "universal")]
   [string]$Architecture = "arm64"
 )

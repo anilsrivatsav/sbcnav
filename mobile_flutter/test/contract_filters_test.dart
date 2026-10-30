@@ -2,6 +2,33 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:rail_inspect/features/contracts/contract_filters.dart';
 
 void main() {
+  test('Publicity uses the same e-auction source boundary as Next.js', () {
+    expect(
+        isPublicityRegistryContract({
+          'source': {'system': 'e_auction'},
+          'contract_name': 'Parking'
+        }),
+        isTrue);
+    expect(
+        isPublicityRegistryContract({
+          'source': {'system': 'E-Auction'},
+          'contract_family': 'other'
+        }),
+        isTrue);
+    expect(
+        isPublicityRegistryContract({
+          'source': {'system': 'legacy_catering'},
+          'contract_name': 'Advertisement'
+        }),
+        isFalse);
+    expect(
+        isPublicityRegistryContract({
+          'source': {'system': 'legacy_commercial'}
+        }),
+        isFalse);
+    expect(
+        isPublicityRegistryContract({'contract_name': 'Publicity'}), isFalse);
+  });
   final publicity = <Map<String, dynamic>>[
     {
       'status': 'running',

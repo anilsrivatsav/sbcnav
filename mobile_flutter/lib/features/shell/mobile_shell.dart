@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../data/sync/sync_service.dart';
+import '../sync/reference_sync_banner.dart';
 
 import '../../shared/widgets.dart';
 import '../assistant/assistant_screen.dart';
@@ -9,14 +12,46 @@ import '../stations/stations_screen.dart';
 import '../works/works_screen.dart';
 import '../contracts/contracts_screen.dart';
 
-class MobileShell extends StatefulWidget {
+class MobileShell extends ConsumerStatefulWidget {
   const MobileShell({super.key});
 
   @override
-  State<MobileShell> createState() => _MobileShellState();
+  ConsumerState<MobileShell> createState() => _MobileShellState();
 }
 
-class _MobileShellState extends State<MobileShell> {
+class _MobileShellState extends ConsumerState<MobileShell>
+    with WidgetsBindingObserver {
+  DateTime? _lastRefresh;
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _refreshReference();
+    });
+  }
+
+  void _refreshReference() {
+    if (!mounted) return;
+    final now = DateTime.now();
+    if (_lastRefresh != null && now.difference(_lastRefresh!).inSeconds < 60) {
+      return;
+    }
+    _lastRefresh = now;
+    ref.read(syncControllerProvider.notifier).refreshFromServer();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _refreshReference();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
   int _index = 0;
   var _exitDialogOpen = false;
 
@@ -106,17 +141,21 @@ class _MobileShellState extends State<MobileShell> {
                         ),
                       ),
                     Expanded(
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 240),
-                        switchInCurve: Curves.easeOutCubic,
-                        switchOutCurve: Curves.easeInCubic,
-                        transitionBuilder: (child, animation) =>
-                            FadeTransition(opacity: animation, child: child),
-                        child: KeyedSubtree(
-                          key: ValueKey(_index),
-                          child: pages[_index],
-                        ),
-                      ),
+                      child: Column(children: [
+                        const ReferenceSyncBanner(),
+                        Expanded(
+                            child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 240),
+                          switchInCurve: Curves.easeOutCubic,
+                          switchOutCurve: Curves.easeInCubic,
+                          transitionBuilder: (child, animation) =>
+                              FadeTransition(opacity: animation, child: child),
+                          child: KeyedSubtree(
+                            key: ValueKey(_index),
+                            child: pages[_index],
+                          ),
+                        )),
+                      ]),
                     ),
                   ],
                 ),

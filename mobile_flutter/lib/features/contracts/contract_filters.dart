@@ -1,3 +1,13 @@
+/// Same authoritative source boundary as the Next.js Publicity module.
+bool isPublicityRegistryContract(Map<dynamic, dynamic> row) {
+  final source = row['source'];
+  if (source is! Map) return false;
+  final system = '${source['system'] ?? ''}'
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]'), '');
+  return system == 'eauction';
+}
+
 String normalizeContractText(Object? value) => '${value ?? ''}'
     .toLowerCase()
     .replaceAll(RegExp(r'[\u2013\u2014]'), '-')

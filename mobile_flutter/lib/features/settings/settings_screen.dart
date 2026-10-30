@@ -59,8 +59,8 @@ class HomeActionsSheet extends ConsumerWidget {
               icon: Icons.cloud_download_outlined,
               title: 'Fetch latest data',
               subtitle: busy
-                  ? 'Downloading from PostgreSQL...'
-                  : 'Refresh station data now',
+                  ? 'Downloading from Oracle...'
+                  : 'Refresh catering and passenger amenity works',
               onTap: busy ? null : onFetchLatest,
             ),
             _ActionRow(
@@ -82,74 +82,6 @@ class SettingsSheet extends ConsumerWidget {
 
   final VoidCallback onFetchLatest;
   final VoidCallback onSync;
-
-  Future<void> _refreshCatering(
-    BuildContext context,
-    WidgetRef ref,
-  ) async {
-    final confirmed = await showAppConfirmation(
-      context,
-      title: 'Refresh catering data?',
-      subtitle:
-          'This imports the latest units and earnings from the configured Google Sheet into PostgreSQL, then replaces the offline station snapshot on this device.',
-      confirmLabel: 'Refresh',
-    );
-    if (!confirmed || !context.mounted) return;
-
-    try {
-      final result = await ref
-          .read(syncControllerProvider.notifier)
-          .refreshCateringFromGoogleSheet();
-      if (!context.mounted) return;
-      showAppNotice(
-        context,
-        kind: AppNoticeKind.success,
-        message:
-            '${result.units} units and ${result.uniqueEarnings} receipts refreshed. ${result.duplicatesRemoved} duplicate rows removed.',
-      );
-    } catch (error) {
-      if (!context.mounted) return;
-      showAppNotice(
-        context,
-        kind: AppNoticeKind.error,
-        message: '$error',
-      );
-    }
-  }
-
-  Future<void> _refreshSanctionedWorks(
-    BuildContext context,
-    WidgetRef ref,
-  ) async {
-    final confirmed = await showAppConfirmation(
-      context,
-      title: 'Refresh sanctioned works?',
-      subtitle: 'This imports the latest All Sanctioned Works sheet into '
-          'PostgreSQL and then replaces the offline works snapshot on this '
-          'device.',
-      confirmLabel: 'Refresh',
-    );
-    if (!confirmed || !context.mounted) return;
-
-    try {
-      final result = await ref
-          .read(syncControllerProvider.notifier)
-          .refreshSanctionedWorksFromGoogleSheet();
-      if (!context.mounted) return;
-      showAppNotice(
-        context,
-        kind: AppNoticeKind.success,
-        message: '${result.rows} sanctioned works refreshed.',
-      );
-    } catch (error) {
-      if (!context.mounted) return;
-      showAppNotice(
-        context,
-        kind: AppNoticeKind.error,
-        message: '$error',
-      );
-    }
-  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -186,44 +118,8 @@ class SettingsSheet extends ConsumerWidget {
                     loading: busy,
                     onPressed: busy ? null : onFetchLatest,
                     icon: Icons.cloud_download_rounded,
-                    label: 'Fetch latest from PostgreSQL',
+                    label: 'Fetch latest from Oracle',
                   ),
-                  const SizedBox(height: AppSpacing.x1),
-                  AppButton(
-                    expand: true,
-                    kind: AppButtonKind.secondary,
-                    loading: busy,
-                    onPressed:
-                        busy ? null : () => _refreshCatering(context, ref),
-                    icon: Icons.restaurant_menu_rounded,
-                    label: 'Refresh catering from Google Sheet',
-                  ),
-                  if (state.asData?.value.lastCateringSyncAt != null) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      'Last catering refresh ${shortDate(state.asData!.value.lastCateringSyncAt)}',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ],
-                  const SizedBox(height: AppSpacing.x1),
-                  AppButton(
-                    expand: true,
-                    kind: AppButtonKind.secondary,
-                    loading: busy,
-                    onPressed: busy
-                        ? null
-                        : () => _refreshSanctionedWorks(context, ref),
-                    icon: Icons.engineering_rounded,
-                    label: 'Refresh sanctioned works',
-                  ),
-                  if (state.asData?.value.lastWorksSyncAt != null) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      'Last works refresh '
-                      '${shortDate(state.asData!.value.lastWorksSyncAt)}',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ],
                   const SizedBox(height: AppSpacing.x1),
                   AppButton(
                     expand: true,
