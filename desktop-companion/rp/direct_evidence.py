@@ -304,12 +304,16 @@ class DirectCollector:
             if number and in_scope(raw.get('Category')) and number not in contracts:
                 contracts[number]={**raw,'listing_requires_refresh':True}
         desk.store.save_evidence('__workspace__','direct_contract_snapshot',{'rows':list(contracts.values()),'complete':not issues,'warnings':issues,'all_category_counter_notes':all_notes,'category_checks':category_checks,'from_date':first,'to_date':last,'collected_at':datetime.now().isoformat()})
+        # Agreement pages install their own form/navigation handlers. Use a
+        # fresh owned page for each document, as for each collection stage.
+        reader.page.close()
         for index,(number,raw) in enumerate(contracts.items(),1):
             self.check()
             revision=hashlib.sha256(json.dumps({'reader_version':3,'listing':{k:v for k,v in raw.items() if k not in ('Actions','source_links')}},sort_keys=True).encode()).hexdigest()
-            with desk.store.connect() as c:prior=c.execute('SELECT listing_revision FROM df_direct_contract_details WHERE contract=?',(number,)).fetchone()
-            if prior and prior[0]==revision:continue
+            with desk.store.connect() as c:prior=c.execute('SELECT listing_revision,data FROM df_direct_contract_details WHERE contract=?',(number,)).fetchone()
+            if prior and prior[0]==revision and not json.loads(prior[1]).get('unavailable'):continue
             self.message(f'Reading agreement {index} of {len(contracts)}: {number}')
+            reader.page=reader.context.new_page()
             try:
                 reader.navigate('Contracts')
                 reader.search('---All---',start='01/01/2000',end=date.fromisoformat(last).strftime('%d/%m/%Y'),contract=number)
@@ -337,5 +341,8 @@ class DirectCollector:
                 if any(word in message.casefold() for word in ('session expired','target page','browser has been closed','connection closed','cancelled','outside ireps')):raise
                 self.check()
                 detail={'contract':number,'listing':raw,'fields':{},'source':raw['source'],'unavailable':message,'captured_at':datetime.now().isoformat()}
+            finally:
+                try:reader.page.close()
+                except Exception:pass
             with desk.store.connect() as c:c.execute('INSERT OR REPLACE INTO df_direct_contract_details VALUES(?,?,?,?)',(number,revision,json.dumps(detail,ensure_ascii=False),datetime.now().isoformat()))
         if issues:raise RuntimeError('IREPS contract list did not reconcile its displayed count. All explicitly listed contracts and available agreements were retained; completeness remains unverified.')
