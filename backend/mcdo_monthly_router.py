@@ -14,6 +14,7 @@ from models import McdoMonthlyPeriod, McdoMonthlyVersion, utcnow
 from publicity_earnings import read_ledger
 from mcdo.auth import administrator
 from mcdo.monthly import ASSETS, MonthlyConfiguration, calculate, export_workbook, filename, period_dates
+from mcdo.reference import parse_reference
 
 router = APIRouter(prefix='/api/mcdo/monthly', tags=['Monthly MCDO'])
 
@@ -42,6 +43,9 @@ def versions(session, period):
 def report_state(session, period, rows, source):
     draft = session.get(McdoMonthlyPeriod, period)
     saved = versions(session, period)
+    if saved and saved[0].snapshot.get('origin')=='supplied_reference' and draft and draft.configuration==saved[0].snapshot['configuration']:
+        return {**saved[0].snapshot, 'status':'Ready to Download','revision':draft.revision,
+                'versions':[version_info(v) for v in saved],'asset_categories':ASSETS}
     report = calculate(period, rows, source, draft.configuration if draft else {}, today())
     if saved and report['fingerprint'] == saved[0].fingerprint:
         report['status'] = 'Ready to Download'
@@ -115,6 +119,36 @@ def save_draft(period: str, payload: SaveDraft):
 class CompleteMonth(BaseModel):
     model_config = ConfigDict(extra='forbid')
     fingerprint: str = Field(pattern=r'^[a-f0-9]{64}$')
+
+
+class SuppliedReference(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    filename: str = Field(min_length=1,max_length=200)
+    workbook_base64: str = Field(min_length=1,max_length=1400000)
+
+
+@router.post('/{period}/reference', dependencies=[Depends(administrator)])
+def import_reference(period: str, payload: SuppliedReference):
+    import base64
+    checked_period(period)
+    try:
+        content=base64.b64decode(payload.workbook_base64,validate=True)
+        report=parse_reference(content,payload.filename,period)
+    except Exception as exc:
+        raise HTTPException(422,'The supplied MCDO could not be read: '+str(exc)[:300]) from exc
+    with SessionLocal.begin() as session:
+        draft=session.scalar(select(McdoMonthlyPeriod).where(McdoMonthlyPeriod.period==period).with_for_update())
+        if draft is None:
+            draft=McdoMonthlyPeriod(period=period,revision=0,configuration={})
+            session.add(draft);session.flush()
+        saved=versions(session,period)
+        existing=next((v for v in saved if v.fingerprint==report['fingerprint']),None)
+        if existing:return envelope(version_info(existing))
+        draft.configuration=report['configuration'];draft.revision+=1;draft.updated_at=utcnow()
+        row=McdoMonthlyVersion(id=str(uuid4()),period=period,version=saved[0].version+1 if saved else 1,
+                              fingerprint=report['fingerprint'],snapshot=report,workbook=content,created_at=utcnow())
+        session.add(row);session.flush()
+        return envelope(version_info(row))
 
 
 @router.post('/{period}/complete', dependencies=[Depends(administrator)])

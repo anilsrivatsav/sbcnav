@@ -59,6 +59,9 @@ def digest(value):
 
 def policy_code(row):
     # The Main Sheet Detailed Head owns the Z policy; broad Policy labels do not.
+    detailed = re.fullmatch(r'Z\s*-\s*(\d{3})', str(row.get('detailed_head') or '').strip().upper())
+    if detailed:
+        return 'Z-' + detailed[1]
     found = set()
     for value in (row.get('detailed_head'), row.get('allocation_code')):
         value = str(value or '').strip().upper()
@@ -74,7 +77,7 @@ def calculate(period, rows, source, configuration, today):
     fy_start, month_start, month_end, fy = period_dates(period)
     config = MonthlyConfiguration.model_validate(configuration or {})
     config_data = config.model_dump(mode='json')
-    issues, pending = [], []
+    issues, pending, notes = [], [], []
     if month_end >= today:
         pending.append('The selected month has not closed.')
     if not source:
@@ -99,7 +102,10 @@ def calculate(period, rows, source, configuration, today):
             except ValueError:
                 dt = None
         if not dt or not fy_start <= dt <= month_end or dt.month != row['month']:
-            issues.append(f"Earnings row {row['source_row']}: date does not agree with the reporting period.")
+            notes.append(f"Earnings row {row['source_row']}: receipt date differs; reporting follows the maintained Year/Month.")
+        allocation = str(row.get('allocation_code') or '').split('.')[0]
+        if re.fullmatch(r'\d{8}', allocation) and policy_code(row) and 'Z-'+allocation[-5:-2] != policy_code(row):
+            notes.append(f"Earnings row {row['source_row']}: reporting follows Detailed Head {policy_code(row)}; allocation code is retained unchanged.")
         division = str((row.get('source_values') or {}).get('Division', 'SBC')).strip().upper()
         if division not in ('SBC', 'BENGALURU', 'BANGALORE'):
             issues.append(f"Earnings row {row['source_row']}: division is not SBC.")
@@ -173,7 +179,7 @@ def calculate(period, rows, source, configuration, today):
                          'annual_variance_percent': str((cum_crore-target)/target*100) if target else None},
             'policies_crore': {k: str(v/CRORE) for k,v in policy_totals.items()},
             'assets': asset_rows, 'asset_totals': totals, 'row_count': len(scope),
-            'source': source, 'issues': issues, 'pending': pending}
+            'source': source, 'issues': issues, 'pending': pending, 'notes': notes}
     # Later months/imports do not stale a completed month when its underlying rows are unchanged.
     fingerprint = digest({'period': period, 'configuration': config_data,
                           'rows': [{k: v for k,v in r.items() if k != 'import_id'} for r in scope],

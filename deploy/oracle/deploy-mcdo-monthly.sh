@@ -21,6 +21,7 @@ cat > Dockerfile <<'DOCKER'
 FROM sbcnav-backend:before-mcdo-monthly-20261102
 COPY backend/app.py backend/models.py backend/mcdo_router.py backend/mcdo_monthly_router.py backend/test_mcdo_monthly.py /app/
 COPY backend/mcdo/monthly.py /app/mcdo/monthly.py
+COPY backend/mcdo/reference.py /app/mcdo/reference.py
 COPY backend/mcdo/templates/sbc_mcdo.xlsx /app/mcdo/templates/sbc_mcdo.xlsx
 COPY backend/alembic/versions/0035_mcdo_monthly.py /app/alembic/versions/0035_mcdo_monthly.py
 DOCKER

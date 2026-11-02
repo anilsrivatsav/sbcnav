@@ -1,6 +1,7 @@
 import os
 os.environ.setdefault('DATABASE_URL', 'sqlite:///:memory:')
 import io
+import base64
 import unittest
 from copy import deepcopy
 from datetime import date
@@ -59,15 +60,17 @@ class MonthlyCalculationTests(unittest.TestCase):
         self.assertTrue(any('missing' in i for i in report['issues']))
         with self.assertRaises(ValueError):export_workbook(report,1)
 
-    def test_conflicting_allocation_blocks(self):
+    def test_detailed_head_owns_reporting_policy(self):
         rows=deepcopy(ROWS);rows[0]['allocation_code']='00617000'
-        self.assertEqual(self.report(rows)['status'],'Needs Correction')
+        report=self.report(rows)
+        self.assertEqual(report['status'],'Ready to Complete')
+        self.assertTrue(any('Detailed Head' in n for n in report['notes']))
 
     def test_duplicate_invoice_and_wrong_date_block(self):
         rows=deepcopy(ROWS);rows[1]['source_values']['Invoice']='ES2';rows[0]['receipt_date']=date(2025,4,10)
         issues=self.report(rows)['issues']
         self.assertTrue(any('duplicate' in i for i in issues))
-        self.assertTrue(any('date' in i for i in issues))
+        self.assertTrue(any('date' in i for i in self.report(rows)['notes']))
 
     def test_open_month_cannot_complete(self):
         self.assertIn('The selected month has not closed.',self.report(period='2026-11')['pending'])
@@ -174,6 +177,22 @@ class MonthlyApiTests(unittest.TestCase):
         config=configuration();config['annual_target_crore']='30'
         self.assertEqual(self.draft(config,1).status_code,200)
         self.assertEqual(self.complete(report['fingerprint']).status_code,409)
+
+    def test_supplied_workbook_download_is_byte_identical(self):
+        content=export_workbook(calculate('2026-10',ROWS,SOURCE,configuration(),NOW),1)
+        payload={'filename':'Supplied October.xlsx','workbook_base64':base64.b64encode(content).decode()}
+        response=self.client.post('/api/mcdo/monthly/2026-10/reference',json=payload)
+        self.assertEqual(response.status_code,200,response.text)
+        version=response.json()['data']
+        again=self.client.post('/api/mcdo/monthly/2026-10/reference',json=payload).json()['data']
+        self.assertEqual(version['id'],again['id'])
+        state=self.client.get('/api/mcdo/monthly/2026-10').json()['data']
+        self.assertEqual(state['status'],'Ready to Download')
+        self.assertEqual(state['origin'],'supplied_reference')
+        self.rows[0]['nfr_earnings']='999999'
+        self.assertEqual(self.client.get('/api/mcdo/monthly/2026-10').json()['data']['earnings']['previous_crore'],'1.0')
+        downloaded=self.client.get('/api/mcdo/monthly/2026-10/download/'+version['id'])
+        self.assertEqual(downloaded.content,content)
 
 
 if __name__=='__main__':unittest.main()

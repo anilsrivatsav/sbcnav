@@ -9,16 +9,27 @@ blank template is derived from the supplied October workbook, with all source
 business figures removed. Only SBC cells are populated; other divisions and
 zone totals remain empty and the submission is labelled SBC-only.
 
+Previously supplied completed MCDO files are archived separately from generated
+reports using `POST /api/mcdo/monthly/{period}/reference`. Their original workbook
+bytes, cached formulas, values, formatting and all sheets are preserved exactly.
+SHA256 and source filename identify the archived version. Their displayed figures
+come from the supplied workbook and do not change when the live ledger refreshes.
+Reference import is operator-only and idempotent by workbook checksum. Original
+source workbooks must never be committed to Git. Download verification compares
+each returned file byte-for-byte with its supplied original.
+
 Mapping:
 
 - `PublicityEarning.nfr_earnings` is the receipt amount used for both earnings
   sheets. It excludes GST. `pub_earnings` overlaps and is never added to NFR.
-- Source financial year/month/date determine April–March cutoffs. Previous
+- Maintained source financial year/month determine April–March reporting cutoffs. Receipt-date differences are retained as source notes, matching the existing earnings report. Previous
   cumulative plus current month equals cumulative. Conversion is INR / 10,000,000;
   aggregation uses Decimal, without rolling forward rounded prior reports.
-- `detailed_head` supplies Z-611 through Z-618 and Z-248. Where present, the
-  eight-digit `allocation_code` must agree. Missing/conflicting classifications,
-  missing amounts, duplicate invoices and inconsistent dates block completion.
+- `detailed_head` owns Z-611 through Z-618 and Z-248. The allocation code is a
+  fallback only when Detailed Head is absent. Differences remain source notes;
+  Radio Taxi rows explicitly reported as Z-248 are not reclassified as Z-246.
+  Missing/unsupported reporting heads, missing amounts and duplicate invoices
+  block completion.
 - Annual target is an explicit monthly input with an order/source reference;
   no target is inferred from contract value. Proportionate target uses elapsed
   financial-year months / 12. Percentages retain the template's actual

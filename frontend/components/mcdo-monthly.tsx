@@ -9,7 +9,7 @@ type Configuration={annual_target_crore:string|null;target_source:string;earning
 type Version={id:string;version:number;filename:string;created_at:string};
 type Monthly={period:string;month_name:string;status:string;issues:string[];pending:string[];versions:Version[]};
 type Overview={years:string[];selected_year:string;months:Monthly[]};
-type Report=Monthly&{revision:number;configuration:Configuration;fingerprint:string;asset_categories:string[];earnings:Record<string,string|null>;policies_crore:Record<string,string>;row_count:number;source:{filename:string;imported_at:string}|null};
+type Report=Monthly&{origin?:string;notes?:string[];revision:number;configuration:Configuration;fingerprint:string;asset_categories:string[];earnings:Record<string,string|null>;policies_crore:Record<string,string>;row_count:number;source:{filename:string;imported_at:string}|null};
 type FileHandle={createWritable:()=>Promise<{write:(blob:Blob)=>Promise<void>;close:()=>Promise<void>}>};
 type Directory={name:string;getFileHandle:(name:string,options?:{create:boolean})=>Promise<FileHandle>;queryPermission:(options:{mode:string})=>Promise<string>;requestPermission:(options:{mode:string})=>Promise<string>};
 const blank:Configuration={annual_target_crore:null,target_source:"",earnings_complete:false,earnings_checked_through:null,earnings_note:"",asset_position_date:null,asset_source:"",assets:{},assets_verified:false};
@@ -39,7 +39,7 @@ export function McdoMonthly({refreshKey=""}:{refreshKey?:string}){
   const [overview,setOverview]=useState<Overview|null>(null),[year,setYear]=useState(""),[period,setPeriod]=useState("");
   const [report,setReport]=useState<Report|null>(null),[config,setConfig]=useState<Configuration>(blank);
   const [busy,setBusy]=useState(false),[loading,setLoading]=useState(false),[error,setError]=useState(""),[message,setMessage]=useState("");
-  const [authenticated,setAuthenticated]=useState(false),[key,setKey]=useState("");
+  const [authenticated,setAuthenticated]=useState(false);
   const [desktopAuth,setDesktopAuth]=useState(false);
   const [folder,setFolder]=useState<Directory|null>(null),[dirty,setDirty]=useState(false);
   const [selectedVersion,setSelectedVersion]=useState("");
@@ -72,11 +72,6 @@ export function McdoMonthly({refreshKey=""}:{refreshKey?:string}){
   },[period]);
   useEffect(()=>{void loadReport();return()=>{sequence.current++;};},[loadReport,refreshKey]);
   function change<K extends keyof Configuration>(field:K,value:Configuration[K]){setConfig(old=>({...old,[field]:value}));setDirty(true);setMessage("");}
-  async function signIn(){
-    setBusy(true);setError("");
-    try{await fetchJson(`${window.location.origin}/api/mcdo/session`,{method:"POST",headers:{Authorization:`Bearer ${key.trim()}`,"Content-Type":"application/json"},body:"{}"});setAuthenticated(true);setKey("");}
-    catch(e){setError(e instanceof Error?e.message:"Operator sign-in failed.");}finally{setBusy(false);}
-  }
   async function save(){
     if(!report)return;setBusy(true);setError("");setMessage("");
     try{
@@ -134,11 +129,12 @@ export function McdoMonthly({refreshKey=""}:{refreshKey?:string}){
     {message&&<p role="status" className="mt-3 text-sm font-bold">{message}</p>}
     {loading&&<p role="status" className="mt-3 text-sm">Loading monthly data…</p>}
     {report&&<>
-      <div className="my-4 flex flex-wrap gap-3 rounded-lg border border-line p-3 text-sm"><strong>{dirty?"Unsaved inputs":report.status}</strong><span>{report.row_count} financial-year receipts through this month</span><span>Source: {report.source?.filename||"Not imported"}</span></div>
+      <div className="my-4 flex flex-wrap gap-3 rounded-lg border border-line p-3 text-sm"><strong>{dirty?"Unsaved inputs":report.status}</strong><span>{report.origin==="supplied_reference"?"Original supplied workbook · downloaded unchanged":`${report.row_count} financial-year receipts through this month`}</span><span>Source: {report.source?.filename||"Not imported"}</span></div>
       <div className="grid gap-3 sm:grid-cols-3">{[["Previous cumulative · ₹ crore",report.earnings.previous_crore],["Selected month · ₹ crore",report.earnings.current_crore],["Cumulative · ₹ crore",report.earnings.cumulative_crore]].map(([label,value])=><div key={label} className="soft-inset rounded-lg border border-line p-3"><p className="text-xs text-muted">{label}</p><p className="mt-1 text-lg font-bold">{format(value)}</p></div>)}</div>
       {(report.issues.length>0||report.pending.length>0)&&<div className="my-4 rounded-lg border border-amber-300 p-3"><p className="text-sm font-bold">Required before completion</p><ul className="mt-2 list-disc space-y-1 pl-5 text-sm">{[...report.issues,...report.pending].map((issue,i)=><li key={i}>{issue}</li>)}</ul></div>}
       <details className="my-4 rounded-lg border border-line p-3"><summary className="cursor-pointer text-sm font-bold">Monthly inputs and completion</summary>
-        {!authenticated&&<div className="my-4 flex flex-wrap items-end gap-2"><label className="grid gap-1 text-xs font-bold">Existing MCDO operator key<input type="password" autoComplete="off" className={input} value={key} onChange={e=>setKey(e.target.value)}/></label><Button disabled={busy||!key.trim()} onClick={signIn}>Sign in to save</Button><p className="w-full text-xs text-muted">The existing operator key authorises changes. Saved reports remain available for download.</p></div>}
+        {!authenticated&&<p className="my-4 text-sm">Open the configured <strong>SBC NAV Updater</strong> on this PC, then refresh the page to use its saved office connection. Completed reports can be downloaded without reconnecting.</p>}
+        {authenticated&&<p className="my-3 text-xs text-muted">Connected through your saved office authorisation. Existing monthly source inputs are shown below for review.</p>}
         <fieldset disabled={!authenticated||busy} className="mt-4 space-y-4 disabled:opacity-60">
           <div className="grid gap-3 sm:grid-cols-2"><label className="grid gap-1 text-xs font-bold">Annual SBC target · ₹ crore<input type="number" min="0.000001" step="0.000001" className={input} value={config.annual_target_crore??""} onChange={e=>change("annual_target_crore",e.target.value||null)}/></label><label className="grid gap-1 text-xs font-bold">Target source / order reference<input className={input} value={config.target_source} onChange={e=>change("target_source",e.target.value)}/></label></div>
           <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={config.earnings_complete} onChange={e=>change("earnings_complete",e.target.checked)}/>All earnings from 1 April through this month are collected and reconciled, including any months with no earnings.</label>
@@ -151,6 +147,7 @@ export function McdoMonthly({refreshKey=""}:{refreshKey?:string}){
           <div className="flex flex-wrap gap-2"><Button onClick={save} disabled={busy||!dirty}>Save and validate</Button><Button variant="secondary" onClick={complete} disabled={busy||dirty||report.issues.length>0||report.pending.length>0||report.status==="Ready to Download"}>{report.versions.length?"Complete revised version":"Complete month"}</Button></div>
         </fieldset>
       </details>
+      {Boolean(report.notes?.length)&&<details className="my-4 text-sm"><summary className="cursor-pointer font-bold">Source reporting notes · {report.notes?.length}</summary><p className="mt-2 text-xs text-muted">Year/Month and Detailed Head control this report, matching the maintained earnings sheet. Original receipt dates and allocation codes remain unchanged.</p><ul className="mt-2 list-disc space-y-1 pl-5 text-xs">{report.notes?.map((note,i)=><li key={i}>{note}</li>)}</ul></details>}
       <details className="my-4 text-sm"><summary className="cursor-pointer font-bold">Policy totals · ₹ crore</summary><div className="mt-2 grid grid-cols-3 gap-2">{Object.entries(report.policies_crore).map(([code,value])=><p key={code}>{code}: <strong>{format(value)}</strong></p>)}</div><p className="mt-2 text-xs text-muted">Uses NFR earnings excluding GST. PUB and NFR overlap and are not added. The Excel template's percentages show excess / shortfall against target.</p></details>
       <div className="flex flex-wrap items-end gap-3 border-t border-line pt-4">
         <label className="grid gap-1 text-xs font-bold">Completed report version<select className={input} value={selectedVersion} onChange={e=>setSelectedVersion(e.target.value)} disabled={busy||!report.versions.length}>{!report.versions.length&&<option value="">No completed version</option>}{report.versions.map(v=><option key={v.id} value={v.id}>Version {v.version} · {new Date(v.created_at).toLocaleString("en-IN",{timeZone:"Asia/Kolkata"})}</option>)}</select></label>
