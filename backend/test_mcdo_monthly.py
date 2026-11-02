@@ -109,7 +109,7 @@ class MonthlyCalculationTests(unittest.TestCase):
         self.assertAlmostEqual(earning['E10'].value,28.9*7/12)
         self.assertIsNone(earning['H9'].value)
         self.assertIsNone(earning['F12'].value)
-        self.assertEqual(earning['A12'].value,'SBC submission only')
+        self.assertEqual(earning['A12'].value,'SBC only')
         self.assertIn('October 2026',earning['F5'].value)
         self.assertEqual(book['Idle Assets ']['K19'].value,30)
         book.close()

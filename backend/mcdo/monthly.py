@@ -208,7 +208,7 @@ def export_workbook(report, version):
             'proportionate_variance_percent','annual_target_crore','annual_variance_percent']
     for col, key in enumerate(keys, 3):
         earning.cell(10, col, float(e[key]) if e[key] is not None else 'N/A')
-    earning['A12'] = 'SBC submission only'
+    earning['A12'] = 'SBC only'
     policy['A3'] = f'2. Division - wise, Policy - wise NFR Earnings in FY {fy} (Cumulative upto {label})'
     policy['M5'] = f'NFR Target FY {fy}'
     policy['N5'] = f'Percentage excess / shortfall against Annual Target in FY {fy}'
@@ -216,7 +216,8 @@ def export_workbook(report, version):
         policy.cell(8, col, float(report['policies_crore'][code]))
     for col, key in ((12,'cumulative_crore'),(13,'annual_target_crore'),(14,'annual_variance_percent')):
         policy.cell(8, col, float(e[key]))
-    policy['A10'] = 'SBC submission only'
+    policy['N8'].number_format = '0.00'
+    policy['A10'] = 'SBC only'
     position = date.fromisoformat(report['configuration']['asset_position_date'])
     assets['A13'] = f'4. Status of NFR IDLE ASSETS (Position dated:{position:%d.%m.%Y})'
     for col, category in enumerate(ASSETS + ['Total'], 2):
@@ -224,6 +225,7 @@ def export_workbook(report, version):
         for row, key in ((16,'registered'),(17,'leased'),(18,'idle'),(19,'idle_percent'),(20,'newly_created')):
             value = values[key]
             assets.cell(row, col, float(value) if value is not None else 'N/A')
+            assets.cell(row, col).number_format = '0.00' if key == 'idle_percent' else '0'
     # Preserve template sheet count/layout. Provenance lives in cell notes.
     from openpyxl.comments import Comment
     earning['B10'].comment = Comment(f"SBC only; version {version}; source import {report['source']['import_id']}; fingerprint {report['fingerprint']}. Earnings: NFR earnings, excludes GST; PUB and NFR are not added. Percentages retain template excess/shortfall convention.", 'SBC NAV')
