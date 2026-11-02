@@ -4,10 +4,11 @@ import {RefreshCw,Pause,Play,CheckCircle2,Download} from "lucide-react";
 import {fetchJson} from "../lib/api";
 import {Button,Panel} from "./ui";
 import {McdoDeadlines,type Deadlines} from "./mcdo-deadlines";
+import {McdoMonthly} from "./mcdo-monthly";
 
 type Run={run_id:string;state:string;mode?:string;summary?:Record<string,number>;result?:Record<string,unknown>;warnings?:string[];overdue?:unknown[][];error?:string};
 type Status={configured:boolean;busy:boolean;phase:string;message:string;error?:string;start?:string;end?:string;run?:Run;logs:string[];installer_available?:boolean};
-type Summary={deadlines?:Deadlines;earnings:{latest_receipt_date:string|null;source:{row_count:number}|null}};
+type Summary={last_verified_check?:{through:string;verified_at:string;new_invoices:number}|null;deadlines?:Deadlines;earnings:{latest_receipt_date:string|null;source:{row_count:number}|null}};
 const LOCAL="http://127.0.0.1:48722";
 const money=(v:number|undefined)=>v===undefined?"—":v.toLocaleString("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:2});
 const date=(v:string|null|undefined)=>v?new Date(v).toLocaleDateString("en-IN",{timeZone:"Asia/Kolkata"}):"Not yet checked";
@@ -72,6 +73,7 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
     {label:"Import and verify Oracle",done:run?.state==="complete",active:status?.phase==="applying"&&run?.result?.active_stage===5,skip:false}
   ];
   return <div className="space-y-4">
+    <McdoMonthly refreshKey={status?.phase==="complete"?status.run?.run_id:undefined}/>
     <Panel title="Set up another Windows PC" subtitle="One installer. Guided checks. No Codex or separate Python installation.">
       <p className="text-sm text-muted">Run setup on Windows 10 or 11. It installs the desktop connection and shortcuts, offers missing Chrome and IREPS Signer, and verifies your digital-token sign-in before showing Ready.</p>
       <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -85,7 +87,9 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
       <p className="text-sm text-muted">Connect your digital token and choose <strong>Check for new payments</strong>. Sign in to IREPS when Chrome opens. The updater reads the dates, updates both Sheets and verifies Oracle automatically.</p>
       <div className="my-4 rounded-lg border border-line p-4">
         <p className="font-bold text-ink">Latest receipt in Oracle: {date(summary?.earnings.latest_receipt_date)}</p>
-        {status?.start&&status.end&&<p className="mt-1 text-sm text-muted">{busy?"Checking":"Last check"}: {status.start} to {status.end}. Existing invoices are skipped.</p>}
+        {summary?.last_verified_check&&<p className="mt-1 text-sm font-bold text-ink">Last successful IREPS search: through {summary.last_verified_check.through}. Sheets and Oracle verified.</p>}
+        {status?.start&&status.end&&busy&&<p className="mt-1 text-sm text-muted">Checking: {status.start} to {status.end}. Existing invoices are skipped.</p>}
+        <p className="mt-1 text-xs text-muted">Latest receipt is the newest payment date. A successful search may cover later days with no collected payments in the configured categories.</p>
       </div>
       {!reachable&&<div className="mb-4 rounded-lg border border-amber-400 p-4 text-sm" role="status">
         <p className="font-bold">{checking?"Connecting to the desktop updater…":"Connect this computer"}</p>

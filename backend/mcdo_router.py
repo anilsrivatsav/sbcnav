@@ -70,8 +70,10 @@ def mcdo(year: str | None=Query(None,pattern=r'^20\d{2}-\d{2}$')):
     with SessionLocal() as session:
         rows,source=read_ledger(session)
         counts=session.execute(select(ContractRegistryContract.status,func.count()).where(ContractRegistryContract.source_system=='e_auction').group_by(ContractRegistryContract.status)).all()
+        completed=session.scalar(select(McdoSyncRun).where(McdoSyncRun.state=='complete').order_by(McdoSyncRun.updated_at.desc()).limit(1))
+        last_verified_check={'through':completed.payload.get('end'),'verified_at':completed.updated_at.isoformat(),'new_invoices':completed.payload.get('plan',{}).get('summary',{}).get('new_invoices')} if completed else None
     data=dashboard(rows,source,year)
-    return envelope({'stage_controls':True,'earnings':data,'contracts':dict(counts),'deadlines':deadline_lists(list_registry_contracts(),today()),'sources':SOURCES,'configured':bool(os.getenv('MCDO_GOOGLE_CREDENTIALS')) and len(os.getenv('MCDO_ADMIN_TOKEN',''))>=32,'authentication':'IREPS digital-token sign-in in your browser'})
+    return envelope({'stage_controls':True,'earnings':data,'last_verified_check':last_verified_check,'contracts':dict(counts),'deadlines':deadline_lists(list_registry_contracts(),today()),'sources':SOURCES,'configured':bool(os.getenv('MCDO_GOOGLE_CREDENTIALS')) and len(os.getenv('MCDO_ADMIN_TOKEN',''))>=32,'authentication':'IREPS digital-token sign-in in your browser'})
 
 @router.post('/runs',dependencies=[Depends(administrator)])
 def begin_run():

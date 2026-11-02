@@ -865,6 +865,26 @@ class MobileChange(Base):
     changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False, index=True)
 
 
+class McdoMonthlyPeriod(Base):
+    __tablename__ = 'mcdo_monthly_periods'
+    period: Mapped[str] = mapped_column(String(7), primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    configuration: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class McdoMonthlyVersion(Base):
+    __tablename__ = 'mcdo_monthly_versions'
+    __table_args__ = (UniqueConstraint('period', 'version'),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    period: Mapped[str] = mapped_column(ForeignKey('mcdo_monthly_periods.period'), nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    workbook: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
 class McdoSyncRun(Base):
     __tablename__ = 'mcdo_sync_runs'
     run_id: Mapped[str] = mapped_column(String(36), primary_key=True)

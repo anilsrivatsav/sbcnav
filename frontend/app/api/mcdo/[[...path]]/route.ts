@@ -16,13 +16,17 @@ async function proxy(request:NextRequest,{params}:{params:Promise<{path?:string[
   }
   const session=request.cookies.get(cookieName)?.value;
   const authorization=path==="session"&&request.method==="POST"?request.headers.get("authorization"):session?`Bearer ${session}`:null;
-  if(path&&!authorization)return NextResponse.json({detail:"Sign in to SBC NAV updater."},{status:401});
-  const base=process.env.NEXT_PUBLIC_API_URL;
+  const monthlyRead=request.method==="GET"&&(path==="monthly"||/^monthly\/20\d{2}-(0[1-9]|1[0-2])(?:\/download\/[a-f0-9-]{36})?$/.test(path));
+  if(path&&!authorization&&!monthlyRead)return NextResponse.json({detail:"Sign in to SBC NAV updater."},{status:401});
+  const base=process.env.MCDO_API_URL||process.env.DESKFLOW_API_URL||process.env.NEXT_PUBLIC_API_URL;
   if(!base)return NextResponse.json({detail:"Oracle backend connection is not configured."},{status:503});
   const body=request.method==="POST"?await request.text():undefined;
   if(body&&new TextEncoder().encode(body).length>32*1024*1024)return NextResponse.json({detail:"IREPS evidence is too large."},{status:413});
   try {
     const upstream=await fetch(`${base.replace(/\/$/,"")}/api/mcdo${path?`/${path}`:""}${new URL(request.url).search}`,{method:request.method,headers:{"Content-Type":"application/json",...(authorization?{Authorization:authorization}:{})},body,cache:"no-store",signal:AbortSignal.timeout(120000)});
+    if(upstream.ok&&upstream.headers.get("content-type")?.includes("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")){
+      return new NextResponse(await upstream.arrayBuffer(),{headers:{"Content-Type":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","Content-Disposition":upstream.headers.get("content-disposition")||"attachment","Cache-Control":"no-store"}});
+    }
     const data=await upstream.json();
     if(upstream.status===404)return NextResponse.json({detail:"The Oracle updater backend has not been deployed yet."},{status:503});
     const sessionToken=data.data?.session_token;
