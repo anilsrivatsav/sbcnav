@@ -111,6 +111,7 @@ class Controller:
             return {**self.state, 'busy': bool(self.thread and self.thread.is_alive()),
                     'deskflow_busy': deskflow_busy,
                     'connected': True, 'version': '2.2.0', 'configured': (STATE / 'operator.key').exists(),
+                    'monthly_reports': True,
                     'installer_available': installer_path(STATE) is not None}
 
     def log(self, message):
@@ -463,6 +464,15 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.permitted() or self.headers.get('Content-Type') != 'application/json':
             return self.respond(403, {'error': 'Origin or content type not allowed.'})
+        if self.path == '/monthly-report':
+            try:
+                length = int(self.headers.get('Content-Length', '0'))
+                if not 0 < length <= 20000:
+                    raise ValueError('Invalid monthly report request size.')
+                data = json.loads(self.rfile.read(length))
+                return self.respond(200, monthly_report_command(data))
+            except (ValueError, KeyError, TypeError, RuntimeError) as exc:
+                return self.respond(400, {'error': str(exc)})
         if self.path == '/windows-setup':
             if self.headers.get('Origin') != ORIGIN:
                 return self.respond(403, {'error': 'The private installer is available only from the SBC NAV production page.'})
@@ -517,6 +527,18 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(202, controller.snapshot())
         except (ValueError, RuntimeError) as exc:
             self.respond(409, {'error': str(exc)})
+
+
+def monthly_report_command(data):
+    """Two fixed authenticated report operations; the private key stays on this PC."""
+    if not isinstance(data, dict) or set(data) != {'period', 'action', 'payload'}:
+        raise ValueError('Invalid monthly report command.')
+    period, action, payload = data['period'], data['action'], data['payload']
+    if not isinstance(period, str) or not re.fullmatch(r'20\d{2}-(?:0[1-9]|1[0-2])', period):
+        raise ValueError('Invalid report month.')
+    if action not in ('draft', 'complete') or not isinstance(payload, dict):
+        raise ValueError('Unknown monthly report action.')
+    return request('/monthly/' + period + '/' + action, payload)
 
 
 def deskflow_relay_loop():

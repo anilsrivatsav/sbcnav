@@ -17,6 +17,7 @@ const api="/api/mcdo/monthly";
 const input="soft-inset w-full rounded-lg border border-line p-2 text-sm text-ink";
 const format=(v:string|null|undefined)=>v==null?"—":Number(v).toLocaleString("en-IN",{maximumFractionDigits:6});
 const defaultFolder="D:\\ANIL\\Publicity files\\MCDO\\MCDO\\All Files";
+function indiaPeriod(){const parts=new Intl.DateTimeFormat("en",{timeZone:"Asia/Kolkata",year:"numeric",month:"2-digit"}).formatToParts(new Date());return `${parts.find(p=>p.type==="year")?.value}-${parts.find(p=>p.type==="month")?.value}`;}
 
 async function folderStore(value?:Directory){
   return new Promise<Directory|undefined>((resolve,reject)=>{
@@ -39,6 +40,7 @@ export function McdoMonthly({refreshKey=""}:{refreshKey?:string}){
   const [report,setReport]=useState<Report|null>(null),[config,setConfig]=useState<Configuration>(blank);
   const [busy,setBusy]=useState(false),[loading,setLoading]=useState(false),[error,setError]=useState(""),[message,setMessage]=useState("");
   const [authenticated,setAuthenticated]=useState(false),[key,setKey]=useState("");
+  const [desktopAuth,setDesktopAuth]=useState(false);
   const [folder,setFolder]=useState<Directory|null>(null),[dirty,setDirty]=useState(false);
   const [selectedVersion,setSelectedVersion]=useState("");
   const sequence=useRef(0);
@@ -49,12 +51,13 @@ export function McdoMonthly({refreshKey=""}:{refreshKey?:string}){
   },[year]);
   useEffect(()=>{
     let active=true;setError("");
-    loadOverview().then(result=>{if(active)setPeriod(old=>result.months.some(m=>m.period===old)?old:result.months.filter(m=>m.versions.length).at(-1)?.period||result.months.find(m=>m.period===new Date().toLocaleDateString("en-CA",{timeZone:"Asia/Kolkata"}).slice(0,7))?.period||result.months[0].period);}).catch(e=>{if(active)setError(e.message);});
+    loadOverview().then(result=>{if(active)setPeriod(old=>result.months.some(m=>m.period===old)?old:result.months.filter(m=>m.versions.length).at(-1)?.period||result.months.filter(m=>m.period<indiaPeriod()).at(-1)?.period||result.months[0].period);}).catch(e=>{if(active)setError(e.message);});
     return()=>{active=false;};
   },[loadOverview,refreshKey]);
   useEffect(()=>{
     let active=true;
-    fetchJson(`${window.location.origin}/api/mcdo/session`).then(()=>{if(active)setAuthenticated(true);}).catch(()=>{if(active)setAuthenticated(false);});
+    fetchJson(`${window.location.origin}/api/mcdo/session`).then(()=>{if(active)setAuthenticated(true);}).catch(()=>{});
+    fetch("http://127.0.0.1:48722/status",{cache:"no-store",signal:AbortSignal.timeout(5000)}).then(r=>r.json()).then(s=>{if(active&&s.configured&&s.monthly_reports){setDesktopAuth(true);setAuthenticated(true);}}).catch(()=>{});
     folderStore().then(saved=>{if(saved&&active)setFolder(saved);}).catch(()=>{});
     return()=>{active=false;};
   },[]);
@@ -78,16 +81,21 @@ export function McdoMonthly({refreshKey=""}:{refreshKey?:string}){
     if(!report)return;setBusy(true);setError("");setMessage("");
     try{
       const assets=Object.fromEntries(Object.entries(config.assets).map(([name,counts])=>[name,Object.fromEntries(Object.entries(counts).map(([k,v])=>{if(v===""||!Number.isInteger(Number(v)))throw new Error(`Enter whole-number counts for ${name}.`);return [k,Number(v)];}))]));
-      const result:Report=await fetchJson(`${window.location.origin}${api}/${period}/draft`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({expected_revision:report.revision,configuration:{...config,assets}})});
+      const result:Report=await reportCommand("draft",{expected_revision:report.revision,configuration:{...config,assets}});
       setReport(result);setConfig(result.configuration);setDirty(false);setMessage("Monthly inputs saved and validated.");await loadOverview();
     }catch(e){setError(e instanceof Error?e.message:"Monthly inputs could not save.");}finally{setBusy(false);}
   }
   async function complete(){
     if(!report)return;setBusy(true);setError("");
     try{
-      await fetchJson(`${window.location.origin}${api}/${period}/complete`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({fingerprint:report.fingerprint})});
+      await reportCommand("complete",{fingerprint:report.fingerprint});
       await loadReport();await loadOverview();setMessage("Month completed. Its Excel report is saved and ready to download.");
     }catch(e){setError(e instanceof Error?e.message:"Month could not complete.");}finally{setBusy(false);}
+  }
+  async function reportCommand(action:"draft"|"complete",payload:unknown){
+    if(!desktopAuth)return fetchJson(`${window.location.origin}${api}/${period}/${action}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+    const response=await fetch("http://127.0.0.1:48722/monthly-report",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({period,action,payload}),signal:AbortSignal.timeout(120000)});
+    const data=await response.json();if(!response.ok)throw new Error(data.error||"The monthly report could not save. Reload to check saved progress.");return data;
   }
   async function chooseFolder(){
     setError("");

@@ -3,9 +3,10 @@ from datetime import datetime
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from api_utils import envelope
 from database import SessionLocal
@@ -95,8 +96,12 @@ def save_draft(period: str, payload: SaveDraft):
             if payload.expected_revision != 0:
                 raise HTTPException(409, 'This month changed. Reload before saving.')
             draft = McdoMonthlyPeriod(period=period, revision=0, configuration={})
-            session.add(draft)
-            session.flush()
+            try:
+                with session.begin_nested():
+                    session.add(draft)
+                    session.flush()
+            except IntegrityError:
+                raise HTTPException(409, 'Another operator started this month. Reload before saving.') from None
         if draft.revision != payload.expected_revision:
             raise HTTPException(409, 'Another operator changed this month. Reload before saving.')
         draft.configuration = payload.configuration.model_dump(mode='json')

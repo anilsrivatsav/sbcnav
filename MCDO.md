@@ -1,5 +1,69 @@
 # MCDO source updater
 
+## Monthly SBC MCDO Excel (2 November 2026)
+
+The top of `/mcdo` and `/?view=mcdo` now provides financial-year/month selection,
+monthly completion and versioned Excel downloads. Apply migration
+`0035_mcdo_monthly` on Oracle before deploying the frontend. The three-sheet
+blank template is derived from the supplied October workbook, with all source
+business figures removed. Only SBC cells are populated; other divisions and
+zone totals remain empty and the submission is labelled SBC-only.
+
+Mapping:
+
+- `PublicityEarning.nfr_earnings` is the receipt amount used for both earnings
+  sheets. It excludes GST. `pub_earnings` overlaps and is never added to NFR.
+- Source financial year/month/date determine April–March cutoffs. Previous
+  cumulative plus current month equals cumulative. Conversion is INR / 10,000,000;
+  aggregation uses Decimal, without rolling forward rounded prior reports.
+- `detailed_head` supplies Z-611 through Z-618 and Z-248. Where present, the
+  eight-digit `allocation_code` must agree. Missing/conflicting classifications,
+  missing amounts, duplicate invoices and inconsistent dates block completion.
+- Annual target is an explicit monthly input with an order/source reference;
+  no target is inferred from contract value. Proportionate target uses elapsed
+  financial-year months / 12. Percentages retain the template's actual
+  `(earnings - target) / target * 100` excess/shortfall convention.
+- Asset position is a dated, reviewed monthly input from IREPS **Asset
+  Utilization Report** and **Asset Utilization Count and Value Report**.
+  The latter's broad Advertising and Parking totals must not be copied into
+  RDN/OOH/Mobile Assets or App Based Cab: use their applicable subcategory data.
+  Contract Master is not a complete registered-asset inventory. Historical asset
+  counts are never reconstructed from today's running contracts.
+- Registered minus leased gives idle. Total idle percentage uses total idle /
+  total registered. Empty counts remain missing; explicit zero denominators
+  display N/A. Newly created counts require their own monthly source evidence.
+
+Save and validate the annual target, earnings coverage/reconciliation reference,
+all nine asset categories and dated asset report reference. The operator then
+completes the month. A month ending or containing receipts never makes it
+complete automatically. Saved exports and their source import identifiers,
+monthly inputs and fingerprints are immutable in PostgreSQL. Corrections create
+another version; repeated completion with the same fingerprint is idempotent.
+Later-month receipts alone do not invalidate an earlier completed month.
+
+On a paired Windows PC, fixed `/monthly-report` companion commands reuse the
+existing private office connection without exposing the operator key to browser
+JavaScript. Only draft and completion operations for a valid month are accepted.
+Other computers can use the existing MCDO operator session.
+
+Choose `D:\ANIL\Publicity files\MCDO\MCDO\All Files` once with **Choose MCDO
+folder** in Chrome/Edge. The browser remembers the directory handle and requests
+its normal file access permission when necessary. Existing files receive a new
+copy name. Unsupported browsers use their normal download/Save As dialog; cloud
+servers cannot write directly to a PC's D: drive.
+
+Read APIs: `GET /api/mcdo/monthly?year=2026-27`, `GET /api/mcdo/monthly/2026-10`,
+and `GET /api/mcdo/monthly/{period}/download/{version_id}`. Operator-only POSTs:
+`/{period}/draft` with expected revision and configuration, and `/{period}/complete`
+with the validated fingerprint. Unchanged completed versions remain downloadable
+even after later corrections. Source workbooks are never overwritten.
+
+Validation: `python -m unittest test_mcdo_monthly test_mcdo test_mcdo_deadlines
+test_publicity_earnings -q`, companion `test_server.py`, and frontend production
+build. Deployment helper: `deploy/oracle/deploy-mcdo-monthly.sh`; it retains the
+previous image, takes a database dump and restores the service image if health
+verification fails. It leaves additive monthly tables intact on rollback.
+
 ## Windows onboarding (22 October 2026)
 
 The MCDO page has a Windows setup download. On a configured office PC with its private installer saved, **Download ready-to-use office setup (.exe)** downloads one preconfigured EXE through the loopback companion. Copy that EXE to the new PC and run it; no separate connection file, operator-key entry, Codex or system Python is needed. Only the exact production origin can request that private attachment. Keep the office EXE private; it carries the same office authorisation as the configured PC.

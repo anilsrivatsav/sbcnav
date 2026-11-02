@@ -63,6 +63,18 @@ class ControllerTests(unittest.TestCase):
             handler.headers = {'Host': host, 'Origin': origin}
             self.assertFalse(handler.permitted())
 
+    def test_monthly_report_uses_only_fixed_authenticated_actions(self):
+        payload={'expected_revision':0,'configuration':{}}
+        with patch.object(server,'request',return_value={'revision':1}) as api:
+            result=server.monthly_report_command({'period':'2026-10','action':'draft','payload':payload})
+        self.assertEqual(result,{'revision':1})
+        api.assert_called_once_with('/monthly/2026-10/draft',payload)
+        for data in ({'period':'../runs','action':'draft','payload':{}},
+                     {'period':'2026-10','action':'apply','payload':{}},
+                     {'period':'2026-13','action':'complete','payload':{}},
+                     {'period':'2026-10','action':'draft','payload':{},'url':'https://example.com'}):
+            with self.assertRaises(ValueError):server.monthly_report_command(data)
+
     def test_sheet_serial_due_dates_are_normalized_for_existing_invoices(self):
         from incremental import invoice_needed
         from datetime import date
