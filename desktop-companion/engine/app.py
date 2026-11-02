@@ -52,7 +52,7 @@ def browser(pw, config, log):
     if session_file.exists():
         port = json.loads(session_file.read_text())['port']
         try:
-            urllib.request.urlopen(f'http://127.0.0.1:{port}/json/version',timeout=2).close()
+            urllib.request.urlopen(f'http://127.0.0.1:{port}/json/version',timeout=10).close()
         except Exception:
             pass
         else:
@@ -60,8 +60,11 @@ def browser(pw, config, log):
             try:
                 return pw.chromium.connect_over_cdp(f'http://127.0.0.1:{port}',timeout=15000)
             except Exception:
-                log('The updater browser is not responding. Restarting its dedicated window; sign in again if requested.')
-                restart_owned_chrome(profile)
+                log('Reconnecting to the existing updater Chrome window; its signed-in session is retained.')
+                try:
+                    return pw.chromium.connect_over_cdp(f'http://127.0.0.1:{port}',timeout=60000)
+                except Exception as exc:
+                    raise RuntimeError('The open updater Chrome connection did not respond. The existing window and session were retained; retry collection.') from exc
     chrome = chrome_path()
     if not chrome:
         raise RuntimeError('Google Chrome is required. Install Chrome, then run the updater again.')

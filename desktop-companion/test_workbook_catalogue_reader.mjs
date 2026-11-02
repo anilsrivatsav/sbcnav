@@ -14,7 +14,7 @@ Object.assign(sandbox,{
     {lot:'second-asset',start:'19/10/2026',status:'Withdrawn',rate_unit:'Annual'},
   ],
   acceptedBid:async()=>{bids++;return {bid_rate:100};},
-  api:async()=>({cancelled:false}),run:async()=>false,
+  api:async()=>({cancelled:false}),run:async(tab,fn)=>fn.toString().includes('Records Found')?1:false,
   chrome:{tabs:{goBack:async()=>{}}},
 });
 const metadata=await sandbox.execute(1,{id:'metadata',action:'closed',metadata_only:true,lots:['different-active-lot']});

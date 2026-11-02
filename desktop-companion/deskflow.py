@@ -11,6 +11,8 @@ from rp.rules import Result
 from rp.workbooks import WorkbookSelection, family_group, SPECS
 from rp.review import WorkbookPreview, digest
 from rp.verifier import verify
+from rp.history_refresh import refresh_start, retry_connection
+from rp.workbook_sync import read_rows, preserve_excel_value
 import re, base64
 from decimal import Decimal
 
@@ -18,7 +20,7 @@ def public_text(value):
     if isinstance(value,str):
         return re.sub(r'\bRP\b','value',re.sub(r'reserve[- ]price','proposed value',value,flags=re.I),flags=re.I).replace('RPAssistant','Deskflow')
     if isinstance(value,(list,tuple)):return [public_text(v) for v in value]
-    if isinstance(value,dict):return {k:public_text(v) for k,v in value.items()}
+    if isinstance(value,dict):return {k:v if k in ('file','workbook','path','backup','source','bid_source') else public_text(v) for k,v in value.items()}
     return value
 
 def parse_day(value):
@@ -105,6 +107,8 @@ class Deskflow:
         snapshot=self.store.evidence('__workspace__','scheduled_snapshot')
         if not snapshot:
             return {'collected_at':None,'categories':[],'lots':[],'progress':self.progress()}
+        try:workbook_rows=self.workbook_rows()
+        except (OSError,ValueError):workbook_rows={}
         rows=[]
         for key,lot in self.store.current_lots():
             record=self.detail(key);contract=record['contract'];result=record['result']
@@ -130,12 +134,15 @@ class Deskflow:
                                 'lot':auction.get('previous_lot') or auction.get('lot',''),'category':auction.get('category',''),
                                 'description':auction.get('description',''),'accepted_rate':auction.get('bid_rate','') if auction.get('outcome')=='Sold' else '',
                                 'rate_unit':auction.get('rate_unit',''),'source':auction.get('source','')})
+            workbook=workbook_rows.get((lot['lot'],lot.get('catalogue','')))
+            if workbook and workbook.get('ambiguous'):workbook=None
             rows.append({'key':key,'asset':lot.get('description') or lot.get('asset') or lot.get('lot',''),
                          'lot':lot.get('lot',''),'category':lot.get('category',''),'subcategory':lot.get('subcategory',''),
                          'date':lot.get('start',''),'station':lot.get('station',''),'train':lot.get('train',''),
                          'catalogue':lot.get('catalogue',''),'details':lot.get('description',''),
-                         'rate_unit':lot.get('rate_unit',''),'value':result.get('rp') if result.get('ready') else None,
-                         'justification':public_text(short_justification(result)),
+                         'rate_unit':lot.get('rate_unit',''),'value':workbook['value'] if workbook else result.get('rp') if result.get('ready') else None,
+                         'justification':public_text(workbook['notes'] or short_justification(result)) if workbook else public_text(short_justification(result)),
+                         'workbook_source':workbook,
                          'calculation_notes':public_text(result.get('justification','')),
                          'rule':result.get('rule',''),'history':history,'verification':record['verification']})
         rows.sort(key=lambda item:(item['date'],item['catalogue'],item['lot']),reverse=True)
@@ -147,6 +154,14 @@ class Deskflow:
         return {**self.state,'busy':bool(self.thread and self.thread.is_alive()),
                 'updater_busy':self.updater.snapshot()['busy']}
 
+    def workbook_rows(self):
+        paths=WorkbookSelection(self.userdir/'workbooks.json').paths('D:/ANIL/UK')
+        signature=tuple((group,str(path),path.stat().st_mtime_ns,path.stat().st_size) for group,path in paths.items())
+        cached=self.__dict__.get('_workbook_rows_cache')
+        if not cached or cached[0]!=signature:
+            cached=(signature,read_rows(paths));self._workbook_rows_cache=cached
+        return cached[1]
+
     def update_workbooks(self):
         try:
             while self.updater.snapshot()['busy']:
@@ -154,19 +169,26 @@ class Deskflow:
                 if self.cancelled.wait(1):raise ValueError('Update stopped.')
             end=date.today().isoformat()
             for action in ('collect','history','contracts'):
-                self.work(action,'2023-01-01',end)
+                start='2023-01-01';history_base=None
+                if action=='history':
+                    previous=self.store.evidence('__workspace__','history_snapshot')
+                    recent=refresh_start(previous[-1] if previous else None,[lot['lot'] for _,lot in self.store.current_lots()],start,end)
+                    if recent:start=recent;history_base=previous[-1]
+                self.work(action,start,end,history_base)
                 if self.state.get('error'):return
-            self.write_workbooks()
+            return self.write_workbooks(ready_only=False)
         except Exception as exc:
             self.state.update(phase='error',message='Workbook update stopped. Backups and saved evidence are retained.',error=str(exc)[:1400])
 
-    def write_workbooks(self,ready_only=True):
+    def write_workbooks(self,ready_only=False,dry_run=False):
         from rp.excel_io import _sheet_path,_strings,_text,Q
         from lxml import etree as E
         import zipfile
         self.state.update(phase='writing',message='Calculating supported values and saving the local workbooks…',error=None)
         selection=WorkbookSelection(self.userdir/'workbooks.json')
         targets={group:selection.target('D:/ANIL/UK',group) for group in SPECS}
+        existing_rows=read_rows(targets)
+        current_digests={group:digest(path) for group,path in targets.items()}
         identities={}
         for group,path in targets.items():
             lotcol,catcol={'commercial':('L','N'),'parcel':('Q','R'),'catering':('N','P')}[group]
@@ -176,7 +198,7 @@ class Deskflow:
                     cs={re.match('[A-Z]+',c.get('r'))[0]:c for c in row}
                     identity=(_text(cs.get(lotcol),ss),_text(cs.get(catcol),ss))
                     if identity[0]:identities.setdefault(identity,set()).add(group)
-        batches={g:[] for g in SPECS};keys_by_group={g:[] for g in SPECS};ready=0;pending=[];revisions={}
+        batches={g:[] for g in SPECS};keys_by_group={g:[] for g in SPECS};ready_keys=set();ready=0;pending=[];revisions={}
         for key,lot in self.store.current_lots():
             record=self.detail(key);revisions[key]=record['revision'];inputs=dict(record['inputs'])
             family=inputs.get('family') or ('Parcel' if lot.get('category','').startswith('Parcel') else 'Catering / MPS' if any(v in lot.get('category','') for v in ('Catering','Multipurpose')) else 'Food truck' if 'food truck' in lot.get('description','').lower() else 'Parking / Pay & Use')
@@ -185,8 +207,14 @@ class Deskflow:
             if len(matches)>1:raise ValueError('The same lot and catalogue appear in multiple workbooks; resolve the duplicate before updating.')
             group=next(iter(matches)) if matches else family_group(family)
             result=Result(**record['result'])
+            existing=existing_rows.get((lot['lot'],lot.get('catalogue','')))
+            if existing and existing.get('ambiguous'):raise ValueError('Multiple workbook rows match this current lot and catalogue: '+lot['lot'])
+            saved=self.store.evidence(key,'workbook_write')
+            saved_digest=saved[-1].get('digest') if saved and saved[-1].get('ready') else None
+            if preserve_excel_value(existing,result,saved_digest,current_digests[group]):
+                result=Result(False,missing='Existing Excel value and working retained. Review the website proposal before replacing a manually saved workbook value.')
             if result.ready:
-                ready+=1;result.justification=public_text(short_justification(asdict(result)))
+                ready+=1;ready_keys.add(key);result.justification=public_text(short_justification(asdict(result)))
                 continuation=inputs.get('continuation') or {}
                 if continuation.get('mode')=='parcel_previous':
                     dates=' & '.join(datetime.fromisoformat(day).strftime('%d.%m.%Y') for day in continuation['failed_dates'])
@@ -205,10 +233,15 @@ class Deskflow:
                 if items:staged.append(WorkbookPreview(targets[group],group,items,allow_existing=True,preserve_pending=True))
             for key,revision in revisions.items():
                 if self.detail(key)['revision']!=revision:raise ValueError('Evidence changed during calculation; retry the workbook update.')
+            if dry_run:
+                return {'preview':[{'workbook':str(preview.path),'sheet':preview.sheet,'changes':preview.changes} for preview in staged],
+                        'calculated':ready,'pending':pending,'current_lots':len(revisions),
+                        'new_lots':sum((lot['lot'],lot.get('catalogue','')) not in existing_rows for _,lot in self.store.current_lots())}
             for preview in staged:
                 preview.check_lock()
                 if digest(preview.path)!=preview.original_hash:raise ValueError('A workbook changed during calculation; retry the update.')
             for preview in staged:
+                if not preview.changes:continue
                 backup=preview.commit();saved.append({'workbook':str(preview.path),'backup':backup,'changes':len(preview.changes)})
                 self._workbook_digests.pop(preview.path,None)
                 with self.store.connect() as c:self.store.log(c,'excel_saved',saved[-1])
@@ -216,7 +249,7 @@ class Deskflow:
                 saved_digest=digest(preview.path)
                 for key in keys_by_group[group]:
                     self.store.save_evidence(key,'workbook_write',{'revision':revisions[key],
-                        'ready':self.detail(key)['result'].get('ready',False),'workbook':str(preview.path),'digest':saved_digest})
+                        'ready':key in ready_keys,'workbook':str(preview.path),'digest':saved_digest})
             report={'saved':saved,'calculated':ready,'pending':pending,'at':datetime.now().isoformat()}
             self.store.save_evidence('__workspace__','workbook_update',report)
             message=f'{len(saved)} local workbooks saved with backups. {ready} values calculated.'
@@ -280,13 +313,20 @@ class Deskflow:
         with self.updater.lock, self.lock:
             if self.updater.snapshot()['busy'] or (self.thread and self.thread.is_alive()):raise ValueError('A collection is already running. Wait for it to finish.')
             start=parse_day(data.get('from_date') or '2023-01-01');end=parse_day(data.get('to_date') or date.today().isoformat())
+            history_base=None
+            if action=='history' and not data.get('from_date') and not data.get('to_date'):
+                previous=self.store.evidence('__workspace__','history_snapshot')
+                codes=[lot['lot'] for _,lot in self.store.current_lots()]
+                recent=refresh_start(previous[-1] if previous else None,codes,start,end)
+                if recent:
+                    start=recent;history_base=previous[-1]
             if start>end:raise ValueError('History start must not follow its end.')
             self.cancelled.clear()
             self.state.update(phase='login',message='Sign in with your digital token in the updater Chrome window.',error=None)
-            self.thread=threading.Thread(target=self.work,args=(action,start,end),daemon=True);self.thread.start()
+            self.thread=threading.Thread(target=self.work,args=(action,start,end,history_base),daemon=True);self.thread.start()
         return self.snapshot()
 
-    def work(self,action,start,end):
+    def work(self,action,start,end,history_base=None,attempt=0):
         page=None
         try:
             with self.playwright() as pw:
@@ -324,7 +364,9 @@ class Deskflow:
                         rows.append({'raw':raw,'fields':fields})
                     self.store.save_evidence('__workspace__','web_contract_candidates',{'rows':rows,'from_date':start,'to_date':end,'warnings':reader.warnings})
                     self.state.update(phase='complete',message=f'{len(rows)} contract candidates collected. Verify the exact asset before using a candidate.',error=None)
-                    page.close();return
+                    try:page.close()
+                    except Exception:pass
+                    return
                 endpoint=json.loads((self.engine.STATE/'browser.json').read_text())['port']
                 from rp.browser_runtime import browser_reader_runtime
                 node, playwright_module = browser_reader_runtime()
@@ -332,21 +374,35 @@ class Deskflow:
                 if action!='collect':job.update(from_date=start,to_date=end)
                 if action=='workbook-history':job['metadata_only']=True
                 if action=='history':
-                    job['lots']=list({lot['lot'] for _,lot in self.store.current_lots()})
+                    job['lots']=sorted({lot['lot'] for _,lot in self.store.current_lots()})
                     if not job['lots']:raise ValueError('Collect pending lots first.')
+                checkpoint_path=None
+                if action=='history':
+                    identity={k:v for k,v in job.items() if k!='id'}
+                    checkpoint_path=self.userdir/'history-checkpoints'/(hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()+'.json')
+                    try:
+                        if datetime.now().timestamp()-checkpoint_path.stat().st_mtime<86400:
+                            job['resume']=json.loads(checkpoint_path.read_text(encoding='utf-8'))
+                    except (OSError,ValueError):pass
                 marker='deskflow-'+uuid.uuid4().hex
                 page.evaluate('(value) => {window.name=value}',marker)
                 payload={'playwright_module':str(playwright_module),'endpoint':f'http://127.0.0.1:{endpoint}','marker':marker,'job':job}
-                rows=None;failure=''
+                rows=None;failure='';collection_report=None
                 if self.cancelled.is_set():raise ValueError('Collection cancelled before reading further catalogues.')
                 with tempfile.TemporaryFile(mode='w+',encoding='utf-8') as diagnostics:
                     self.process=subprocess.Popen([str(node),str(Path(__file__).parent/'rp/collect.mjs')],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=diagnostics,text=True,encoding='utf-8',creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
-                    timer=threading.Timer(1800,self.process.kill);timer.start()
+                    timer=threading.Timer(7200 if action=='history' else 1800,self.process.kill);timer.start()
                     try:
                         self.process.stdin.write(json.dumps(payload));self.process.stdin.close()
                         for line in self.process.stdout:
                             event=json.loads(line)
-                            if event.get('type')=='progress':self.state.update(message=event['message'])
+                            if event.get('type')=='progress':
+                                self.state.update(message=event['message'])
+                                if event.get('report'):collection_report=event['report']
+                                if checkpoint_path and event.get('checkpoint'):
+                                    checkpoint_path.parent.mkdir(parents=True,exist_ok=True)
+                                    temporary=checkpoint_path.with_suffix('.tmp')
+                                    temporary.write_text(json.dumps(event['checkpoint']),encoding='utf-8');temporary.replace(checkpoint_path)
                             elif event.get('type')=='result':rows=event['rows']
                             elif event.get('type')=='error':failure=event['message']
                         code=self.process.wait()
@@ -386,12 +442,23 @@ class Deskflow:
                                     inputs=previous[-1]
                                     same=reviewed_continuation_matches(lot,self.store.evidence(key,'auction'),inputs)
                                     self.store.save_evidence(key,'inputs',{**inputs,'identity_verified':same})
-                    self.store.save_evidence('__workspace__','history_snapshot',{'from_date':start,'to_date':end,'complete':True,'count':len(rows),'collected_at':datetime.now().isoformat()})
+                    self.store.save_evidence('__workspace__','history_snapshot',{'from_date':history_base['from_date'] if history_base else start,'to_date':end,'complete':True,'count':len(rows),'collected_at':datetime.now().isoformat(),'reader_version':2,'coverage':collection_report,'lot_codes':job['lots'],'scanned_from':start,'baseline_coverage':(history_base.get('baseline_coverage') or history_base['coverage']) if history_base else collection_report})
                 else:
                     self.store.save_evidence('__workspace__','web_contract_candidates',{'rows':[{'raw':r,'fields':candidate_fields(r)} for r in rows]})
-                self.state.update(phase='complete',message=f'{len(rows)} records collected. Review the exact asset, dates and sources before calculating.',error=None)
-                page.close();page=None
+                checked=len(collection_report['visited']) if collection_report else None
+                scope=f' from {checked} catalogues' if checked is not None else ''
+                missing=sum(bool(row.get('bid_details_unavailable')) for row in rows)
+                warning=f' {missing} sold outcome(s) need accepted rate and awardee verified separately.' if missing else ''
+                if history_base:warning+=f' Older verified history retained; refreshed since {start}.'
+                self.state.update(phase='complete',message=f'{len(rows)} records collected{scope}. Review the exact asset, dates and sources before calculating.'+warning,error=None)
+                if checkpoint_path:checkpoint_path.unlink(missing_ok=True)
+                try:page.close()
+                except Exception:pass
+                page=None
         except Exception as exc:
+            if action=='history' and retry_connection(exc,attempt,self.cancelled.is_set()):
+                self.state.update(phase='reconnecting',message='Browser connection interrupted. Reconnecting to resume the saved history checkpoint…',error=None)
+                if not self.cancelled.wait(2):return self.work(action,start,end,history_base,attempt+1)
             self.state.update(phase='error',error=str(exc).split('Call log:')[0][:1400],message='Collection stopped. Previously saved evidence is retained.')
 
     def excel(self,action,data):

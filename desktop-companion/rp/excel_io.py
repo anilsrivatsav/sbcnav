@@ -103,7 +103,7 @@ def append_existing(path, group, records, allow_existing=False, preserve_pending
             lot=record['lot'];calc=record['result'];marker=record_marker(record)
             if marker in owned:row=owned[marker];rn=int(row.get('r'));modified_rows.add(rn);reviewed_existing.add(rn)
             else:last+=1;rn=last;row=E.SubElement(sd,Q('row'),r=str(rn))
-            row.set('ht',str(max(90,(len(calc.justification or calc.missing)//70+1)*15)));row.set('customHeight','1')
+            row.set('ht',str(max(float(row.get('ht') or 0),90,(len(calc.justification or calc.missing)//70+1)*15)));row.set('customHeight','1')
             formula=calc.formula.replace('H{r}',basecol+str(rn)).replace('I{r}',factorcol+str(rn))if calc.ready else None
             d=lot.get('start','')[:10]
             try:day=(date.fromisoformat(d)-date(1899,12,30)).days
