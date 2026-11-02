@@ -9,20 +9,22 @@ from .history_library import day
 from .direct_evidence import in_scope
 from .identifiers import references
 
-VERSION=3
+VERSION=4
 def code(value):return re.sub(r'[^A-Z0-9]','',str(value or '').upper())
 def identity(lot,description,category=''):
     text=str(description or '').upper();label=str(lot or '').upper()
     areas=sorted({float(n.replace(',','')) for n in re.findall(r'(\d[\d,]*(?:\.\d+)?)\s*(?:SQ\.?\s*M(?:T(?:R)?)?S?\.?|SQUARE\s*MET(?:ER|RE)S?|M[²2])\b',text)})
-    named=set(re.findall(r'\b(?:FSLR|RSLR|VP)\b',text+' '+label))
-    if re.search(r'SLR[- ]F\d',label):named.add('FSLR')
-    if re.search(r'SLR[- ]R\d',label):named.add('RSLR')
-    if re.search(r'\bVP\d*\b',label):named.add('VP')
+    described=set(re.findall(r'\b(?:FSLR|RSLR|VP)\b',text))
+    encoded=set(re.findall(r'\b(?:FSLR|RSLR|VP)\b',label))
+    if re.search(r'SLR[- ]F\d',label):encoded.add('FSLR')
+    if re.search(r'SLR[- ]R\d',label):encoded.add('RSLR')
+    if re.search(r'\bVP\d*\b',label):encoded.add('VP')
+    named=described or encoded
     train=re.search(r'(?<!\d)[1-9]\d{4}(?!\d)',label+' '+text)
     station=references({'lot':lot}).get('station','')
     parking=bool(re.search(r'\b(?:PARKING|PRK)\b',text+' '+label+' '+str(category).upper()))
     return {'areas':areas,'parcel_types':sorted(named),'train':train[0] if train else '','station':station,'parking':parking,
-            'scope_conflict':len(named)>1,'description':description or ''}
+            'encoded_parcel_types':sorted(encoded),'scope_conflict':len(named)>1 or bool(described and encoded and described!=encoded),'description':description or ''}
 
 def workbook_record(row):
     cells=row['cells'];book=row['book'];sheet=row['sheet']

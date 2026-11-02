@@ -12,7 +12,8 @@ class AssetEvidenceTest(unittest.TestCase):
         self.assertNotEqual(identity('P','Parking 250 sqm')['areas'],identity('P','Parking 350 sqm')['areas'])
     def test_parcel_position_conflict_remains_visible(self):
         v=identity('17294-SLR-F1-SMVB-NS-26-1','3.9 tons in RSLR coach')
-        self.assertTrue(v['scope_conflict']);self.assertEqual(v['parcel_types'],['FSLR','RSLR'])
+        self.assertTrue(v['scope_conflict']);self.assertEqual(v['parcel_types'],['RSLR'])
+        self.assertEqual(v['encoded_parcel_types'],['FSLR'])
         self.assertEqual(v['train'],'17294')
     def test_rear_is_never_classified_front_from_generic_slr(self):
         self.assertEqual(identity('12345-SLR-R1','RSLR compartment')['parcel_types'],['RSLR'])
