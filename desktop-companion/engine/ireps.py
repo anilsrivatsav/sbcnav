@@ -72,7 +72,7 @@ class Ireps:
         # Pagination links have href="#" plus form submission. The hash change
         # can satisfy a navigation wait while the OLD result page still exists.
         # Wait for a different, fully loaded document before reading any rows.
-        self.page.wait_for_function("(stamp) => performance.timeOrigin !== stamp && document.readyState === 'complete' && /\\d+\\s*Records Found/.test(document.body?.innerText || '')",arg=previous_document)
+        self.page.wait_for_function("(stamp) => performance.timeOrigin !== stamp && document.readyState === 'complete' && /(?:\\d+\\s*Records Found|No (?:results|records) Found)/i.test(document.body?.innerText || '')",arg=previous_document)
 
     def page_rows(self, mode):
         # Read rendered HTML only. No undocumented endpoints or transaction actions.

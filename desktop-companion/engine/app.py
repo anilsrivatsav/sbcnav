@@ -52,7 +52,7 @@ def browser(pw, config, log):
     if session_file.exists():
         port = json.loads(session_file.read_text())['port']
         try:
-            urllib.request.urlopen(f'http://127.0.0.1:{port}/json/version',timeout=2).close()
+            urllib.request.urlopen(f'http://127.0.0.1:{port}/json/version',timeout=10).close()
         except Exception:
             pass
         else:
@@ -60,8 +60,12 @@ def browser(pw, config, log):
             try:
                 return pw.chromium.connect_over_cdp(f'http://127.0.0.1:{port}',timeout=15000)
             except Exception:
-                log('The updater browser is not responding. Restarting its dedicated window; sign in again if requested.')
-                restart_owned_chrome(profile)
+                log('Waking the existing updater browser tabs and reconnecting; the signed-in session is retained.')
+                wake_browser_tabs(f'http://127.0.0.1:{port}')
+                try:
+                    return pw.chromium.connect_over_cdp(f'http://127.0.0.1:{port}',timeout=60000)
+                except Exception as exc:
+                    raise RuntimeError('The open updater Chrome connection did not respond. The existing window and session were retained; retry collection.') from exc
     chrome = chrome_path()
     if not chrome:
         raise RuntimeError('Google Chrome is required. Install Chrome, then run the updater again.')
@@ -85,6 +89,19 @@ def browser(pw, config, log):
         except Exception as exc:
             raise RuntimeError('The new updater Chrome window did not respond. Close its tabs and try again. No spreadsheet data was changed.') from exc
     raise RuntimeError('Chrome connection failed. Close only the app Chrome window and try again.')
+
+def wake_browser_tabs(endpoint):
+    """Reactivate the dedicated app's normal pages before CDP waits for renderers."""
+    from urllib.parse import quote
+    try:
+        with urllib.request.urlopen(endpoint+'/json/list',timeout=10) as response:targets=json.load(response)
+        allowed=lambda target:target.get('type')=='page' and any(str(target.get('url','')).startswith(prefix) for prefix in (
+            'https://www.ireps.gov.in/','https://ireps.gov.in/','https://myaccount.google.com/'))
+        targets=sorted((target for target in targets if allowed(target)),key=lambda target:'ireps.gov.in/' in target.get('url',''))
+        for target in targets:
+            try:urllib.request.urlopen(endpoint+'/json/activate/'+quote(str(target['id']),safe=''),timeout=5).close()
+            except (OSError,ValueError,KeyError):pass
+    except (OSError,ValueError):pass
 
 def restart_owned_chrome(profile):
     """Recover only Chrome processes rooted in this application's profile."""
