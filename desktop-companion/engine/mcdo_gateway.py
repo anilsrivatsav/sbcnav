@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import re
 import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -31,8 +32,20 @@ class GatewayClient:
             headers['Authorization'] = 'Bearer ' + token
         req = urllib.request.Request(GATEWAY + path,
             data=None if body is None else json.dumps(body).encode('utf-8'), headers=headers)
-        with self.opener.open(req, timeout=120) as response:
-            result = json.load(response)
+        safe_to_retry = body is None or (path == '/session' and token is not None)
+        attempts = 3 if safe_to_retry else 1
+        for attempt in range(attempts):
+            try:
+                with self.opener.open(req, timeout=120) as response:
+                    result = json.load(response)
+                break
+            except urllib.error.HTTPError as exc:
+                if exc.code not in (502, 503, 504) or attempt + 1 == attempts:
+                    raise
+            except (urllib.error.URLError, TimeoutError, ConnectionError):
+                if attempt + 1 == attempts:
+                    raise
+            time.sleep(attempt + 1)
         if not isinstance(result, dict) or 'data' not in result:
             raise RuntimeError('MCDO returned an unexpected response. Saved progress is retained.')
         return result['data']

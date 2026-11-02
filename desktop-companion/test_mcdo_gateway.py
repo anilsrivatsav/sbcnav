@@ -43,6 +43,21 @@ class GatewayTests(unittest.TestCase):
             self.client.request('/runs/fixture/apply', {})
         self.assertEqual(self.client.opener.open.call_count, 1)
 
+    def test_transient_gateway_read_is_retried_without_replaying_a_write(self):
+        self.client.opener = Mock()
+        transient = urllib.error.HTTPError('https://fixed', 502, 'Temporary', {}, BytesIO(b'{}'))
+        self.client.opener.open.side_effect = [transient, BytesIO(b'{"data":{"state":"complete"}}')]
+        with patch.object(mcdo_gateway.time, 'sleep'):
+            self.assertEqual(self.client.request('/runs/fixture')['state'], 'complete')
+        self.assertEqual(self.client.opener.open.call_count, 2)
+
+    def test_gateway_failure_does_not_replay_a_write(self):
+        self.client.opener = Mock()
+        self.client.opener.open.side_effect = urllib.error.HTTPError('https://fixed', 502, 'Temporary', {}, BytesIO(b'{"detail":"Unconfirmed"}'))
+        with self.assertRaisesRegex(RuntimeError, 'Unconfirmed'):
+            self.client.request('/runs/fixture/evidence', {'complete':True})
+        self.assertEqual(self.client.opener.open.call_count, 1)
+
     def test_rejected_session_is_refreshed_once(self):
         unauthorized = urllib.error.HTTPError('https://fixed', 401, 'Expired', {}, BytesIO(b'{}'))
         with patch.object(self.client, '_call', side_effect=[unauthorized, {'state':'complete'}]) as call, patch.object(self.client, '_login') as login:
