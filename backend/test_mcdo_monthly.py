@@ -190,7 +190,7 @@ class MonthlyApiTests(unittest.TestCase):
         self.assertEqual(state['status'],'Ready to Download')
         self.assertEqual(state['origin'],'supplied_reference')
         self.rows[0]['nfr_earnings']='999999'
-        self.assertEqual(self.client.get('/api/mcdo/monthly/2026-10').json()['data']['earnings']['previous_crore'],'1.0')
+        self.assertEqual(float(self.client.get('/api/mcdo/monthly/2026-10').json()['data']['earnings']['previous_crore']),1)
         downloaded=self.client.get('/api/mcdo/monthly/2026-10/download/'+version['id'])
         self.assertEqual(downloaded.content,content)
 
