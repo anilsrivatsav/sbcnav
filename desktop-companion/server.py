@@ -201,7 +201,7 @@ class Controller:
             self.save(run=run, start=run['connector']['start'], end=run['connector']['end'])
             cfg = run['connector']
             with sync_playwright() as pw:
-                browser = app.browser(pw, {}, self.log)
+                browser = app.browser(pw, {'ireps_only': True}, self.log)
                 reader = EvidenceReader(browser.contexts[0], self.log, self.checkpoint)
                 try:
                     self.save(phase='login', message='Sign in to IREPS in the updater Chrome window using your digital token. This page continues automatically.')

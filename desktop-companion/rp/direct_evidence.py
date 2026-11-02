@@ -158,13 +158,13 @@ class DirectCollector:
                 return
 
     def job(self,reader,job,scan=None):
-        from rp.browser_runtime import browser_reader_runtime
+        from rp.browser_runtime import browser_reader_runtime,ireps_browser_endpoint
         desk=self.desk
         endpoint=json.loads((desk.engine.STATE/'browser.json').read_text())['port']
         node,package=browser_reader_runtime()
         marker='direct-ireps-'+uuid.uuid4().hex
         mark_reader(reader.page,marker,self.check,desk.cancelled.wait)
-        payload={'playwright_module':str(package),'endpoint':f'http://127.0.0.1:{endpoint}','marker':marker,'job':{'id':uuid.uuid4().hex,**job}}
+        payload={'playwright_module':str(package),'endpoint':ireps_browser_endpoint(endpoint),'marker':marker,'job':{'id':uuid.uuid4().hex,**job}}
         report={};rows=None;failure=''
         with tempfile.TemporaryFile(mode='w+',encoding='utf8') as diagnostics:
             desk.process=subprocess.Popen([str(node),str(Path(__file__).with_name('collect.mjs'))],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=diagnostics,text=True,encoding='utf8',creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
@@ -206,7 +206,7 @@ class DirectCollector:
         force=sorted({r.get('source_catalogue_id') or r['catalogue'] for r in missing})
         self.message(f'Reading direct IREPS history for {len(categories)} workbook categories; {len(missing)} sold lots need bid-viewer details.')
         with desk.playwright() as pw,reader_lifetime() as owned:
-            browser=desk.engine.browser(pw,{},self.message)
+            browser=desk.engine.browser(pw,{'ireps_only':True},self.message)
             def fresh_reader():
                 if owned:
                     try:owned[-1].close()

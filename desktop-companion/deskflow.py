@@ -468,7 +468,7 @@ class Deskflow:
         page=None;library_scan=None;collection_report={}
         try:
             with self.playwright() as pw, reader_lifetime() as owned_pages:
-                browser=self.engine.browser(pw,{},lambda message:self.state.update(message=message))
+                browser=self.engine.browser(pw,{'ireps_only':True},lambda message:self.state.update(message=message))
                 reader=self.reader(browser.contexts[0],lambda message:self.state.update(message=message),self.cancelled.is_set)
                 page=reader.page;owned_pages.append(page);page.bring_to_front();reader.login()
                 self.state.update(phase='collecting',message='Reading IREPS catalogues. Keep the updater Chrome window open.')
@@ -510,7 +510,7 @@ class Deskflow:
                     except Exception:pass
                     return
                 endpoint=json.loads((self.engine.STATE/'browser.json').read_text())['port']
-                from rp.browser_runtime import browser_reader_runtime
+                from rp.browser_runtime import browser_reader_runtime,ireps_browser_endpoint
                 node, playwright_module = browser_reader_runtime()
                 job={'id':uuid.uuid4().hex,'action':{'collect':'scheduled','history':'closed','contracts':'contracts','workbook-history':'closed'}[action]}
                 if action!='collect':job.update(from_date=start,to_date=end)
@@ -533,7 +533,7 @@ class Deskflow:
                     except (OSError,ValueError):pass
                 marker='deskflow-'+uuid.uuid4().hex
                 page.evaluate('(value) => {window.name=value}',marker)
-                payload={'playwright_module':str(playwright_module),'endpoint':f'http://127.0.0.1:{endpoint}','marker':marker,'job':job}
+                payload={'playwright_module':str(playwright_module),'endpoint':ireps_browser_endpoint(endpoint),'marker':marker,'job':job}
                 rows=None;failure='';collection_report={}
                 if self.cancelled.is_set():raise ValueError('Collection cancelled before reading further catalogues.')
                 with tempfile.TemporaryFile(mode='w+',encoding='utf-8') as diagnostics:
