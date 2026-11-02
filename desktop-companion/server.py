@@ -40,18 +40,10 @@ STATE.mkdir(parents=True, exist_ok=True)
 
 
 def request(path, body=None):
-    token = (STATE / 'operator.key').read_text(encoding='utf-8').strip()
-    req = urllib.request.Request(API + path, data=None if body is None else json.dumps(body).encode(),
-        headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'})
-    try:
-        with urllib.request.urlopen(req, timeout=120) as response:
-            return json.load(response)['data']
-    except urllib.error.HTTPError as exc:
-        try:
-            message = json.load(exc).get('detail', 'Oracle request failed.')
-        except (ValueError, OSError):
-            message = 'Oracle request failed.'
-        raise RuntimeError(str(message)) from None
+    if not hasattr(request, '_gateway'):
+        from mcdo_gateway import GatewayClient
+        request._gateway = GatewayClient(STATE)
+    return request._gateway.request(path, body)
 
 
 class EvidenceReader(Ireps):
