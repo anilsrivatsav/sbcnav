@@ -139,7 +139,13 @@ def contract_terms(text, schedule, contract, status):
     start = day(grab(r'Contract Start Date\s+([\d/]+)'))
     end = day(grab(r'Contract End Date\s+([\d/]+)'))
     years = int(grab(r'Contract Duration\s+(\d+) Years'))
-    if not schedule or any(len(s) < 10 or s[3] != 'Quarterly' for s in schedule):
+    if not schedule or any(len(s) < 10 for s in schedule):
+        raise ValueError(f"Only verified quarterly schedules are currently supported: {contract}")
+    # IREPS includes one-time fines in the same table as licence installments.
+    # Keep them in the source evidence, but never turn a fine into a licence due.
+    schedule = [s for s in schedule
+                if not (key(s[2]) == 'FINE' and key(s[3]) == 'ONE-TIMEPAYMENT')]
+    if not schedule or any(key(s[2]) != 'LICENSEFEE' or s[3] != 'Quarterly' for s in schedule):
         raise ValueError(f"Only verified quarterly schedules are currently supported: {contract}")
     dates = [day(s[4]) for s in schedule]
     if dates != sorted(set(dates)):
