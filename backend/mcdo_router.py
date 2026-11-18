@@ -6,7 +6,7 @@ from collections import Counter
 from datetime import date, datetime, timezone
 from uuid import uuid4
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Query, Body
-from sqlalchemy import select, text, func
+from sqlalchemy import select, text
 from database import SessionLocal, engine
 from models import McdoSyncRun, ContractRegistryContract
 from api_utils import envelope
@@ -21,6 +21,12 @@ from publicity_earnings import parse_workbook, read_ledger, dashboard, apply_imp
 from contract_registry import import_eauction_workbook, list_registry_contracts
 
 router = APIRouter(prefix='/api/mcdo', tags=['MCDO'])
+
+@router.get('/workflow')
+def workflow_readiness():
+    with SessionLocal() as session:
+        session.execute(select(ContractRegistryContract.ireps_checked_at).limit(1)).first()
+    return envelope({'full_contract_reconciliation': True, 'monthly_workbook': True})
 
 @router.post('/session',dependencies=[Depends(administrator)])
 def start_session():
@@ -63,17 +69,26 @@ def bridge_config(row):
     before=row.payload['before']
     invoices=[str(actual(r[19])) for r in before['earnings']['grid'] if len(r)>19 and str(actual(r[19])).startswith('ES')]
     due={key(actual(r[2])):actual(r[17]) for r in before['master']['grid'][1:] if len(r)>17 and actual(r[2]) and actual(r[17])}
-    return {'run_id':row.run_id,'start':row.payload['start'],'end':row.payload['end'],'categories':CATEGORIES,'existing_invoices':invoices,'known_due':due}
+    return {'run_id':row.run_id,'start':row.payload['start'],'end':row.payload['end'],'categories':CATEGORIES,'existing_invoices':invoices,'known_due':due,'full_contract_reconciliation':True}
 
 @router.get('')
 def mcdo(year: str | None=Query(None,pattern=r'^20\d{2}-\d{2}$')):
     with SessionLocal() as session:
         rows,source=read_ledger(session)
-        counts=session.execute(select(ContractRegistryContract.status,func.count()).where(ContractRegistryContract.source_system=='e_auction').group_by(ContractRegistryContract.status)).all()
-        completed=session.scalar(select(McdoSyncRun).where(McdoSyncRun.state=='complete').order_by(McdoSyncRun.updated_at.desc()).limit(1))
-        last_verified_check={'through':completed.payload.get('end'),'verified_at':completed.updated_at.isoformat(),'new_invoices':completed.payload.get('plan',{}).get('summary',{}).get('new_invoices')} if completed else None
+        payload = McdoSyncRun.payload
+        latest_id = (select(McdoSyncRun.run_id).where(McdoSyncRun.state == 'complete')
+                     .order_by(McdoSyncRun.updated_at.desc()).limit(1).scalar_subquery())
+        completed = session.execute(select(McdoSyncRun.updated_at, payload['end'].as_string(),
+                payload['plan']['summary']['new_invoices'], McdoSyncRun.result)
+            .where(McdoSyncRun.run_id == latest_id)).first()
+        last_verified_check = {'through': completed[1], 'verified_at': completed[0].isoformat(),
+                               'new_invoices': completed[2]} if completed else None
     data=dashboard(rows,source,year)
-    return envelope({'stage_controls':True,'earnings':data,'last_verified_check':last_verified_check,'contracts':dict(counts),'deadlines':deadline_lists(list_registry_contracts(),today()),'sources':SOURCES,'configured':bool(os.getenv('MCDO_GOOGLE_CREDENTIALS')) and len(os.getenv('MCDO_ADMIN_TOKEN',''))>=32,'authentication':'IREPS digital-token sign-in in your browser'})
+    contracts = list_registry_contracts()
+    counts = Counter(row['status'] for row in contracts if row['source']['system'] == 'e_auction')
+    return envelope({'stage_controls':True,'earnings':data,'last_verified_check':last_verified_check,
+                     'report_update': (completed[3] or {}).get('monthly_report') if completed else None,
+                     'contracts':dict(counts),'deadlines':deadline_lists(contracts,today()),'sources':SOURCES,'configured':bool(os.getenv('MCDO_GOOGLE_CREDENTIALS')) and len(os.getenv('MCDO_ADMIN_TOKEN',''))>=32,'authentication':'IREPS digital-token sign-in in your browser'})
 
 @router.post('/runs',dependencies=[Depends(administrator)])
 def begin_run():
@@ -90,8 +105,24 @@ def begin_run():
 @router.get('/runs',dependencies=[Depends(administrator)])
 def runs():
     with SessionLocal() as session:
-        rows=session.execute(select(McdoSyncRun).order_by(McdoSyncRun.created_at.desc()).limit(20)).scalars().all()
-        return envelope([public_run(row) for row in rows])
+        # History needs status metadata, never the full saved spreadsheet grids.
+        p=McdoSyncRun.payload
+        fields=[getattr(McdoSyncRun,name) for name in
+                ('run_id','state','created_at','updated_at','result','error')]
+        fields += [p['mode'].label('mode'), p['plan']['summary'].label('summary'),
+                   p['warnings'].label('warnings'), p['overdue'].label('overdue'),
+                   p['pause_requested'].label('pause_requested'),
+                   p['plan'].as_string().is_not(None).label('evidence_verified')]
+        rows=session.execute(select(*fields).order_by(McdoSyncRun.created_at.desc()).limit(20)).mappings()
+        result=[]
+        for row in rows:
+            item=dict(row)
+            for name,default in (('mode','ireps'),('summary',{}),('warnings',[]),
+                                 ('overdue',[]),('pause_requested',False)):
+                if item[name] is None:item[name]=default
+            item['pause_requested']=bool(item['pause_requested'])
+            result.append(item)
+        return envelope(result)
 
 @router.get('/runs/{run_id}',dependencies=[Depends(administrator)])
 def get_run(run_id:str):
@@ -159,9 +190,18 @@ async def submit_evidence(run_id:str,request:Request):
         row=find_run(session,run_id,True)
         if row.state!='awaiting_ireps':raise HTTPException(409,'This run is no longer awaiting IREPS evidence.')
         if evidence.get('run_id')!=run_id:raise HTTPException(422,'IREPS evidence belongs to a different update run.')
-        try:plan=evidence_plan(row.payload,evidence)
+        lifecycle_evidence = evidence.get('contract_reconciliation')
+        try:
+            if lifecycle_evidence is not None:
+                from contract_lifecycle import validate_evidence
+                validate_evidence(lifecycle_evidence)
+                if lifecycle_evidence.get('asof') != row.payload['end']:
+                    raise ValueError('Contract verification date differs from the earnings update date.')
+            plan=evidence_plan(row.payload,evidence)
         except (ValueError,KeyError,TypeError,RuntimeError) as exc:raise HTTPException(422,str(exc)) from exc
         row.payload={**row.payload,'plan':plan,'warnings':evidence.get('warnings',[]),'overdue':seven_day_failures(plan['status'],row.payload['end'])}
+        if lifecycle_evidence is not None:
+            row.payload = {**row.payload, 'contract_reconciliation': lifecycle_evidence}
         row.state='preview_ready'
         return envelope(public_run(row))
 
@@ -185,7 +225,10 @@ def import_sources(snapshots):
         registry={r.contract_number:r for r in session.execute(select(ContractRegistryContract).where(ContractRegistryContract.source_system=='e_auction')).scalars()}
         for source in contracts:
             live=registry.get(source['contract_number'])
-            if not live or any(getattr(live,k)!=source[k] for k in ('status','policy_code','category','period_start','period_end')):
+            fields = ('policy_code', 'category')
+            if live and not live.ireps_checked_at:
+                fields += ('status','period_start','period_end')
+            if not live or any(getattr(live,k)!=source[k] for k in fields):
                 raise RuntimeError('Oracle contract verification failed; resume the saved run.')
             for field in ('annual_license_fee','quarterly_license_fee','total_contract_value','additional_license_fee'):
                 a,b=getattr(live,field),source[field]
@@ -244,6 +287,13 @@ def apply_worker(run_id,only_database=False):
                     if pending(payload['plan'][name],snapshots[name]['grid']):raise RuntimeError('A sheet changed before DB import; review the saved run.')
             if stop_at_checkpoint(run_id,5,result):return
             result['database']=import_sources(snapshots)
+            with SessionLocal.begin() as session:
+                from mcdo_monthly_router import refresh_closed_month
+                if payload.get('contract_reconciliation'):
+                    from contract_lifecycle import reconcile
+                    result['contract_reconciliation'] = reconcile(session, payload['contract_reconciliation'])
+                result['monthly_report'] = refresh_closed_month(session, today())
+            _invalidate_cache()
             result.pop('active_stage',None)
             checkpoint(run_id,'complete',result)
         except Exception as exc:

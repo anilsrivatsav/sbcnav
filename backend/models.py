@@ -577,6 +577,14 @@ class ContractRegistryContract(Base, AuditMixin):
     additional_license_fee: Mapped[float | None] = mapped_column(Numeric(14, 2))
     payment_frequency: Mapped[str | None] = mapped_column(String(32))
     remarks: Mapped[str | None] = mapped_column(Text)
+    canonical_contract_id: Mapped[int | None] = mapped_column(ForeignKey('contract_registry_contracts.contract_id', ondelete='RESTRICT'), index=True)
+    source_present: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    ireps_status: Mapped[str | None] = mapped_column(String(128))
+    ireps_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lifecycle_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status_effective_date: Mapped[date | None] = mapped_column(Date)
+    reconciliation_state: Mapped[str] = mapped_column(String(32), default='unverified', nullable=False)
+    reconciliation_issues: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
 
 
 class ContractRegistryAsset(Base):
@@ -619,6 +627,12 @@ class ContractRegistryPaymentSchedule(Base):
     due_date: Mapped[datetime | None] = mapped_column(Date, index=True)
     expected_amount: Mapped[float | None] = mapped_column(Numeric(14, 2))
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
+    charge_type: Mapped[str | None] = mapped_column(String(64))
+    frequency: Mapped[str | None] = mapped_column(String(64))
+    period_start: Mapped[date | None] = mapped_column(Date)
+    period_end: Mapped[date | None] = mapped_column(Date)
+    source_reference: Mapped[str | None] = mapped_column(Text)
+    is_current: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
 
 class ContractRegistryPayment(Base, AuditMixin):
@@ -635,6 +649,46 @@ class ContractRegistryPayment(Base, AuditMixin):
     payment_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
     source_reference: Mapped[str | None] = mapped_column(Text)
     remarks: Mapped[str | None] = mapped_column(Text)
+    receipt_key: Mapped[str | None] = mapped_column(String(128), unique=True, index=True)
+    invoice_number: Mapped[str | None] = mapped_column(String(128), index=True)
+    due_date: Mapped[date | None] = mapped_column(Date)
+    gst_amount: Mapped[float | None] = mapped_column(Numeric(14, 2))
+    penalty_amount: Mapped[float | None] = mapped_column(Numeric(14, 2))
+    gross_amount: Mapped[float | None] = mapped_column(Numeric(14, 2))
+    verification_status: Mapped[str] = mapped_column(String(32), default='unverified', nullable=False)
+
+
+class ContractRegistryEvidence(Base):
+    __tablename__ = 'contract_registry_evidence'
+    evidence_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    contract_id: Mapped[int] = mapped_column(ForeignKey('contract_registry_contracts.contract_id', ondelete='RESTRICT'), index=True)
+    source: Mapped[str] = mapped_column(String(128), nullable=False)
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    content: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+
+class ContractRegistryEvent(Base):
+    __tablename__ = 'contract_registry_events'
+    event_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    contract_id: Mapped[int] = mapped_column(ForeignKey('contract_registry_contracts.contract_id', ondelete='RESTRICT'), index=True)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    effective_date: Mapped[date | None] = mapped_column(Date)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text)
+    source_reference: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_id: Mapped[str | None] = mapped_column(ForeignKey('contract_registry_evidence.evidence_id', ondelete='RESTRICT'))
+
+
+class ContractRegistryIssue(Base):
+    __tablename__ = 'contract_registry_issues'
+    issue_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    contract_id: Mapped[int | None] = mapped_column(ForeignKey('contract_registry_contracts.contract_id', ondelete='RESTRICT'), index=True)
+    code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    detail: Mapped[dict] = mapped_column(JSON, nullable=False)
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class DataChangeLog(Base):

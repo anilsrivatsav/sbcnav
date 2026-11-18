@@ -5,7 +5,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import func, or_
+from sqlalchemy import or_
 
 from database import SessionLocal
 from models import (
@@ -58,18 +58,8 @@ def _normalized(value: str) -> str:
 
 
 def _status(value: Any) -> str:
-    text = (_text(value) or "unknown").lower()
-    if "cancel" in text:
-        return "cancelled"
-    if "terminat" in text:
-        return "terminated"
-    if "complete" in text or "closed" in text:
-        return "completed"
-    if "run" in text or "active" in text:
-        return "running"
-    if "award" in text:
-        return "awarded"
-    return "unknown"
+    from contract_lifecycle import normalized_status
+    return normalized_status(value)
 
 
 def _family(policy: str | None, category: str | None, asset: str | None) -> str:
@@ -153,7 +143,7 @@ def parse_eauction_workbook(path_or_bytes: str | bytes) -> list[dict[str, Any]]:
         if quarterly_fee is None and annual_fee is not None:
             quarterly_fee = annual_fee / 4
         schedules = []
-        for col in range(columns["schedule_start"], min(len(row), columns["schedule_end"]) + 1):
+        for col in range(columns["schedule_start"], len(row) + 1):
             due = _date(value(col))
             if due:
                 installment = col - columns["schedule_start"] + 1
@@ -201,26 +191,40 @@ def import_eauction_workbook(path_or_bytes: str | bytes, source_file: str | None
             if not contract:
                 contract = ContractRegistryContract(**payload); session.add(contract); session.flush(); created += 1
             else:
-                for key, value in payload.items(): setattr(contract, key, value)
+                for key, value in payload.items():
+                    # Sheets cannot reverse a verified closure or overwrite official dates.
+                    if contract.ireps_checked_at and key in {'status', 'period_start', 'period_end', 'contract_date', 'commencement_date'}:
+                        continue
+                    setattr(contract, key, value)
                 updated += 1
             asset_value = item["asset"]
             if asset_value:
-                session.query(ContractRegistryAsset).filter_by(contract_id=contract.contract_id).delete(synchronize_session=False)
                 atype = _asset_type(asset_value, family)
                 station_code = asset_value.strip().upper() if asset_value.strip().upper() in station_codes else None
-                session.add(ContractRegistryAsset(contract_id=contract.contract_id, asset_type=atype, station_code=station_code, train_number=asset_value if atype == "train" else None, asset_name=asset_value, raw_asset_value=asset_value, match_status="matched" if station_code else "unmatched")); assets += 1
-            session.query(ContractRegistryPaymentSchedule).filter_by(contract_id=contract.contract_id).delete(synchronize_session=False)
+                if not session.query(ContractRegistryAsset).filter_by(contract_id=contract.contract_id, asset_type=atype, raw_asset_value=asset_value).first():
+                    session.add(ContractRegistryAsset(contract_id=contract.contract_id, asset_type=atype, station_code=station_code, train_number=asset_value if atype == "train" else None, asset_name=asset_value, raw_asset_value=asset_value, match_status="matched" if station_code else "unmatched")); assets += 1
             for schedule in item["schedules"]:
-                session.add(ContractRegistryPaymentSchedule(contract_id=contract.contract_id, **schedule)); schedules += 1
-            if not session.query(ContractRegistryStatusHistory).filter_by(contract_id=contract.contract_id, status=item["status"]).first():
-                session.add(ContractRegistryStatusHistory(contract_id=contract.contract_id, status=item["status"], effective_from=item["period_start"], source_reference=f"{item['source_sheet']}:{item['source_row_number']}")); statuses += 1
+                existing_schedule = session.query(ContractRegistryPaymentSchedule).filter_by(contract_id=contract.contract_id, installment_number=schedule['installment_number']).first()
+                if not existing_schedule:
+                    session.add(ContractRegistryPaymentSchedule(contract_id=contract.contract_id, **schedule)); schedules += 1
+                elif not str(existing_schedule.source_reference or '').startswith('ireps:'):
+                    for key, value in schedule.items(): setattr(existing_schedule, key, value)
+            latest = session.query(ContractRegistryStatusHistory).filter_by(contract_id=contract.contract_id).order_by(ContractRegistryStatusHistory.status_history_id.desc()).first()
+            if not contract.ireps_checked_at and (not latest or latest.status != item['status']):
+                session.add(ContractRegistryStatusHistory(contract_id=contract.contract_id, status=item["status"], effective_from=None, source_reference=f"{item['source_sheet']}:{item['source_row_number']}", reason='Spreadsheet observation; effective date not verified')); statuses += 1
         stale = session.query(ContractRegistryContract).filter(
             ContractRegistryContract.source_system == "e_auction",
             ContractRegistryContract.contract_number.notin_(numbers),
         ).all()
         for contract in stale:
-            session.delete(contract)
-            deleted += 1
+            # Absence from a sheet does not terminate a contract or erase its history.
+            if not contract.ireps_checked_at:
+                contract.source_present = False
+                contract.reconciliation_state = 'review_required'
+                contract.reconciliation_issues = ['absent_from_spreadsheet']
+        session.flush()
+        from contract_lifecycle import canonicalize
+        canonicalize(session)
         session.commit()
         return {"records": len(records), "created": created, "updated": updated, "deleted": deleted, "assets": assets, "schedules": schedules, "statuses": statuses}
     except Exception:
@@ -237,10 +241,10 @@ def backfill_legacy_contracts() -> dict[str, int]:
     try:
         rows = []
         for row in session.query(CommercialContract).all():
-            status = "cancelled" if row.termination_status and "cancel" in row.termination_status.lower() else "running"
+            status = _status(row.termination_status)
             rows.append({"source_system": "legacy_commercial", "source_number": f"commercial-{row.contract_key}", "name": row.contract_name, "contractor": row.licensee_name, "family": row.asset_scope or "other", "policy": row.policy, "category": row.sub_category, "status": status, "start": _date(row.contract_period_from), "end": _date(row.contract_upto), "annual": row.annual_license_fee, "quarterly": row.quarterly_license_fee, "total": None, "asset": row.raw_station_value})
         for row in session.query(Unit).filter(Unit.licensee_name.isnot(None)).all():
-            rows.append({"source_system": "legacy_catering", "source_number": f"unit-{row.unit_no}", "name": row.type_of_unit or row.unit_no, "contractor": row.licensee_name, "family": "catering", "policy": row.allotment_type, "category": row.type_of_unit, "status": "running" if row.contract_to else "unknown", "start": _date(row.contract_from), "end": _date(row.contract_to), "annual": _money(row.license_fee), "quarterly": None, "total": None, "asset": row.station_code})
+            rows.append({"source_system": "legacy_catering", "source_number": f"unit-{row.unit_no}", "name": row.type_of_unit or row.unit_no, "contractor": row.licensee_name, "family": "catering", "policy": row.allotment_type, "category": row.type_of_unit, "status": _status(row.unit_status), "start": _date(row.contract_from), "end": _date(row.contract_to), "annual": _money(row.license_fee), "quarterly": None, "total": None, "asset": row.station_code})
         for item in rows:
             normalized = _normalized(item["contractor"] or "unknown contractor")
             contractor = session.query(ContractRegistryContractor).filter_by(normalized_name=normalized).one_or_none()
@@ -252,10 +256,13 @@ def backfill_legacy_contracts() -> dict[str, int]:
                 contract = ContractRegistryContract(**payload); session.add(contract); session.flush(); created += 1
             else:
                 for key, value in payload.items(): setattr(contract, key, value)
-            session.query(ContractRegistryAsset).filter_by(contract_id=contract.contract_id).delete(synchronize_session=False)
             if item["asset"]:
                 raw = str(item["asset"]); station_code = raw.strip().upper() if raw.strip().upper() in {row[0].upper() for row in session.query(Station.station_code).all()} else None
-                session.add(ContractRegistryAsset(contract_id=contract.contract_id, asset_type="station" if station_code else "other", station_code=station_code, asset_name=raw, raw_asset_value=raw, match_status="matched" if station_code else "unmatched"))
+                if not session.query(ContractRegistryAsset).filter_by(contract_id=contract.contract_id, raw_asset_value=raw).first():
+                    session.add(ContractRegistryAsset(contract_id=contract.contract_id, asset_type="station" if station_code else "other", station_code=station_code, asset_name=raw, raw_asset_value=raw, match_status="matched" if station_code else "unmatched"))
+        session.flush()
+        from contract_lifecycle import canonicalize
+        canonicalize(session)
         session.commit()
         return {"legacy_records": len(rows), "legacy_created": created}
     except Exception:
@@ -265,16 +272,27 @@ def backfill_legacy_contracts() -> dict[str, int]:
 
 
 def _contract_dict(row: ContractRegistryContract, contractor: ContractRegistryContractor | None, assets: list[ContractRegistryAsset], schedules: list[ContractRegistryPaymentSchedule], payments: list[ContractRegistryPayment] | None = None) -> dict[str, Any]:
+    from contract_lifecycle import visible_status
+    schedules = [item for item in schedules if item.is_current]
     payment_rows = payments or []
-    payment_items = [{"payment_id": item.payment_id, "schedule_id": item.schedule_id, "payment_date": item.payment_date, "amount_due": item.amount_due, "amount_paid": item.amount_paid, "interest_amount": item.interest_amount, "delay_days": item.delay_days, "payment_reference": item.payment_reference, "payment_status": item.payment_status, "source_reference": item.source_reference, "remarks": item.remarks} for item in payment_rows]
-    return {"contract_id": row.contract_id, "contract_number": row.contract_number, "contract_name": row.contract_name, "status": row.status, "contract_family": row.contract_family, "award_method": row.award_method, "policy_code": row.policy_code, "category": row.category, "period": {"loa_date": row.loa_date, "start": row.period_start, "end": row.period_end, "duration_value": row.duration_value, "duration_unit": row.duration_unit}, "financials": {"annual_license_fee": row.annual_license_fee, "quarterly_license_fee": row.quarterly_license_fee, "total_contract_value": row.total_contract_value, "additional_license_fee": row.additional_license_fee}, "contractor": {"contractor_id": contractor.contractor_id, "legal_name": contractor.legal_name} if contractor else None, "assets": [{"asset_type": item.asset_type, "station_code": item.station_code, "train_number": item.train_number, "asset_name": item.asset_name, "raw_asset_value": item.raw_asset_value, "match_status": item.match_status} for item in assets], "payment_schedule": [{"schedule_id": item.schedule_id, "installment_number": item.installment_number, "period_label": item.period_label, "due_date": item.due_date, "expected_amount": item.expected_amount, "status": item.status} for item in schedules], "payments": payment_items, "payment_summary": {"scheduled": len(schedules), "scheduled_amount": sum(float(item.expected_amount or 0) for item in schedules), "recorded": len(payment_items), "amount_due": sum(float(item.amount_due or 0) for item in payment_rows), "amount_paid": sum(float(item.amount_paid or 0) for item in payment_rows), "pending": sum(1 for item in payment_rows if str(item.payment_status or '').lower() in {'pending', 'overdue'})}, "source": {"system": row.source_system, "file": row.source_file, "sheet": row.source_sheet, "row": row.source_row_number}}
+    payment_items = [{"payment_id": item.payment_id, "invoice_number": item.invoice_number,
+        "gross_amount": item.gross_amount, "gst_amount": item.gst_amount,
+        "penalty_amount": item.penalty_amount, "verification_status": item.verification_status,
+        "schedule_id": item.schedule_id, "payment_date": item.payment_date, "amount_due": item.amount_due, "amount_paid": item.amount_paid, "interest_amount": item.interest_amount, "delay_days": item.delay_days, "payment_reference": item.payment_reference, "payment_status": item.payment_status,  "remarks": item.remarks} for item in payment_rows]
+    return {"contract_id": row.contract_id, "contract_number": row.contract_number, "contract_name": row.contract_name, "status": visible_status(row), "lifecycle": {
+        "ireps_status": row.ireps_status,
+        "checked_at": row.ireps_checked_at,
+        "effective_date": row.status_effective_date,
+        "verification": row.reconciliation_state,
+        "issues": row.reconciliation_issues,
+    }, "contract_family": row.contract_family, "award_method": row.award_method, "policy_code": row.policy_code, "category": row.category, "period": {"loa_date": row.loa_date, "start": row.period_start, "end": row.period_end, "duration_value": row.duration_value, "duration_unit": row.duration_unit}, "financials": {"annual_license_fee": row.annual_license_fee, "quarterly_license_fee": row.quarterly_license_fee, "total_contract_value": row.total_contract_value, "additional_license_fee": row.additional_license_fee}, "contractor": {"contractor_id": contractor.contractor_id, "legal_name": contractor.legal_name} if contractor else None, "assets": [{"asset_type": item.asset_type, "station_code": item.station_code, "train_number": item.train_number, "asset_name": item.asset_name, "raw_asset_value": item.raw_asset_value, "match_status": item.match_status} for item in assets], "payment_schedule": [{"schedule_id": item.schedule_id, "installment_number": item.installment_number, "period_label": item.period_label, "due_date": item.due_date, "expected_amount": item.expected_amount, "status": item.status} for item in schedules], "payments": payment_items, "payment_summary": {"scheduled": len(schedules), "scheduled_amount": sum(float(item.expected_amount or 0) for item in schedules), "recorded": len(payment_items), "amount_due": sum(float(item.amount_due or 0) for item in payment_rows), "amount_paid": sum(float(item.amount_paid or 0) for item in payment_rows), "pending": sum(1 for item in payment_rows if str(item.payment_status or '').lower() in {'pending', 'overdue'})}, "source": {"system": row.source_system, "file": row.source_file, "sheet": row.source_sheet, "row": row.source_row_number}}
 
 
 def list_registry_contracts(status: str | None = None, search: str | None = None, asset_type: str | None = None) -> list[dict[str, Any]]:
     session = SessionLocal()
     try:
         query = session.query(ContractRegistryContract, ContractRegistryContractor).join(ContractRegistryContractor, ContractRegistryContractor.contractor_id == ContractRegistryContract.contractor_id, isouter=True)
-        if status and status != "all": query = query.filter(ContractRegistryContract.status == status)
+        query = query.filter(ContractRegistryContract.canonical_contract_id.is_(None))
         if search:
             like = f"%{search}%"
             query = query.filter(or_(ContractRegistryContract.contract_number.ilike(like), ContractRegistryContract.contract_name.ilike(like), ContractRegistryContract.policy_code.ilike(like), ContractRegistryContractor.legal_name.ilike(like)))
@@ -292,6 +310,9 @@ def list_registry_contracts(status: str | None = None, search: str | None = None
                 payments_by_contract.setdefault(item.contract_id, []).append(item)
         rows = []
         for contract, contractor in contract_rows:
+            from contract_lifecycle import visible_status
+            if status and status != 'all' and visible_status(contract) != status:
+                continue
             assets = assets_by_contract.get(contract.contract_id, [])
             if asset_type and asset_type != "all" and not any(item.asset_type == asset_type for item in assets):
                 continue
@@ -305,6 +326,9 @@ def get_registry_contract(contract_id: int) -> dict[str, Any] | None:
     try:
         row = session.get(ContractRegistryContract, contract_id)
         if not row: return None
+        if row.canonical_contract_id:
+            row = session.get(ContractRegistryContract, row.canonical_contract_id)
+            contract_id = row.contract_id
         contractor = session.get(ContractRegistryContractor, row.contractor_id) if row.contractor_id else None
         assets = session.query(ContractRegistryAsset).filter_by(contract_id=contract_id).all()
         schedules = session.query(ContractRegistryPaymentSchedule).filter_by(contract_id=contract_id).order_by(ContractRegistryPaymentSchedule.installment_number).all()
@@ -316,6 +340,9 @@ def get_registry_contract(contract_id: int) -> dict[str, Any] | None:
 def registry_summary() -> dict[str, Any]:
     session = SessionLocal()
     try:
-        counts = {status: session.query(ContractRegistryContract).filter(ContractRegistryContract.status == status).count() for status in ("awarded", "running", "completed", "cancelled", "terminated", "unknown")}
-        return {"counts": counts, "total": sum(counts.values()), "total_contract_value": float(session.query(func.coalesce(func.sum(ContractRegistryContract.total_contract_value), 0)).scalar() or 0)}
+        from collections import Counter
+        from contract_lifecycle import visible_status
+        rows = session.query(ContractRegistryContract).filter(ContractRegistryContract.canonical_contract_id.is_(None)).all()
+        counts = dict(Counter(visible_status(row) for row in rows))
+        return {"counts": counts, "total": len(rows), "total_contract_value": sum(float(row.total_contract_value or 0) for row in rows), "review_required": sum(row.reconciliation_state != 'verified' for row in rows)}
     finally: session.close()

@@ -8,7 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from fastapi import HTTPException
 import mcdo_router as api
-from models import McdoSyncRun
+from models import McdoSyncRun, McdoMonthlyPeriod, McdoMonthlyVersion, PublicityEarningsCurrent, PublicityEarningsImport
 from mcdo.core import cell, entered
 from mcdo.sheets_api import computed_workbook
 from openpyxl import load_workbook
@@ -29,7 +29,8 @@ class FakeSheets:
 class McdoTests(unittest.TestCase):
     def setUp(self):
         self.engine=create_engine('sqlite:///:memory:')
-        McdoSyncRun.__table__.create(self.engine)
+        for model in (McdoSyncRun, McdoMonthlyPeriod, McdoMonthlyVersion, PublicityEarningsImport, PublicityEarningsCurrent):
+            model.__table__.create(self.engine)
         self.sessions=sessionmaker(self.engine,expire_on_commit=False)
         self.patches=[patch.object(api,'engine',self.engine),patch.object(api,'SessionLocal',self.sessions)]
         for p in self.patches:p.start()

@@ -127,6 +127,37 @@ class SuppliedReference(BaseModel):
     workbook_base64: str = Field(min_length=1,max_length=1400000)
 
 
+def save_completed_report(session, report, saved):
+    existing = next((row for row in saved if row.fingerprint == report['fingerprint']), None)
+    if existing:
+        return version_info(existing)
+    version = saved[0].version + 1 if saved else 1
+    row = McdoMonthlyVersion(id=str(uuid4()), period=report['period'], version=version,
+                            fingerprint=report['fingerprint'], snapshot=report,
+                            workbook=export_workbook(report, version), created_at=utcnow())
+    session.add(row)
+    session.flush()
+    return version_info(row)
+
+
+def refresh_closed_month(session, checked_on):
+    """Use the verified ledger and the saved, dated monthly inputs."""
+    from datetime import timedelta
+
+    period = (checked_on.replace(day=1) - timedelta(days=1)).strftime('%Y-%m')
+    draft = session.scalar(select(McdoMonthlyPeriod).where(McdoMonthlyPeriod.period == period).with_for_update())
+    saved = versions(session, period)
+    if (draft and saved and saved[0].snapshot.get('origin') == 'supplied_reference'
+            and draft.configuration == saved[0].snapshot['configuration']):
+        return {'period': period, 'status': 'Ready to Download', 'workbook': version_info(saved[0])}
+    rows, source = read_ledger(session)
+    report = calculate(period, rows, source, draft.configuration if draft else {}, checked_on)
+    if report['pending'] or report['issues']:
+        return {key: report[key] for key in ('period', 'status', 'pending', 'issues')}
+    return {'period': period, 'status': 'Ready to Download',
+            'workbook': save_completed_report(session, report, saved)}
+
+
 @router.post('/{period}/reference', dependencies=[Depends(administrator)])
 def import_reference(period: str, payload: SuppliedReference):
     import base64
@@ -165,15 +196,7 @@ def complete_month(period: str, payload: CompleteMonth):
         saved = versions(session, period)
         if report['issues'] or report['pending']:
             raise HTTPException(422, '; '.join(report['issues'] + report['pending']))
-        if saved and saved[0].fingerprint == report['fingerprint']:
-            return envelope(version_info(saved[0]))
-        version = saved[0].version+1 if saved else 1
-        row = McdoMonthlyVersion(id=str(uuid4()), period=period, version=version,
-                                fingerprint=report['fingerprint'], snapshot=report,
-                                workbook=export_workbook(report, version), created_at=utcnow())
-        session.add(row)
-        session.flush()
-        return envelope(version_info(row))
+        return envelope(save_completed_report(session, report, saved))
 
 
 @router.get('/{period}/download/{version_id}')

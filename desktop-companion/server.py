@@ -165,7 +165,13 @@ class Controller:
             run = request('/runs/' + run['run_id'])
         self.save(run=run)
         if run['state'] == 'complete':
-            self.save(phase='complete', message='Complete. Both Sheets and Oracle are verified.', error=None)
+            report = (run.get('result') or {}).get('monthly_report') or {}
+            message = 'Both Sheets and Oracle are verified.'
+            if report.get('status') == 'Ready to Download':
+                message += f" MCDO workbook for {report['period']} is ready to download."
+            elif report:
+                message += f" MCDO workbook for {report['period']} needs attention. See Monthly MCDO for details."
+            self.save(phase='complete', message=message, error=None)
         elif run['state'] == 'paused':
             self.save(phase='paused', message='Paused at a verified checkpoint. Choose Resume.')
         else:
@@ -234,6 +240,11 @@ class Controller:
                     evidence = dict(run_id=run['run_id'], start=cfg['start'], end=cfg['end'], completed_categories=categories,
                         contracts=list(statuses.values()), payments=list(reader.observed.values()), failures=failures,
                         terms=terms, pdfs=pdfs, warnings=reader.warnings)
+                    if cfg.get('full_contract_reconciliation'):
+                        from contract_collector import collect_inventory
+                        contract_path = STATE / ('contracts-' + run['run_id'] + '.json')
+                        evidence['contract_reconciliation'] = collect_inventory(
+                            reader, self, cfg['end'], lambda data: write_state(contract_path, data))
                     (STATE / (run['run_id'] + '.json')).write_text(json.dumps(evidence), encoding='utf-8')
                 finally:
                     reader.page.close()

@@ -142,6 +142,19 @@ class MonthlyApiTests(unittest.TestCase):
     def complete(self,fingerprint):
         return self.client.post('/api/mcdo/monthly/2026-10/complete',json={'fingerprint':fingerprint})
 
+    def test_combined_update_preserves_pending_inputs_and_reuses_workbook(self):
+        with self.sessions.begin() as session:
+            report = api.refresh_closed_month(session, NOW)
+            self.assertEqual(report['status'], 'Data Pending')
+            self.assertTrue(any('asset' in item.lower() for item in report['pending']))
+        self.assertEqual(self.draft().status_code, 200)
+        with self.sessions.begin() as session:
+            ready = api.refresh_closed_month(session, NOW)
+        with self.sessions.begin() as session:
+            repeated = api.refresh_closed_month(session, NOW)
+        self.assertEqual(ready['status'], 'Ready to Download')
+        self.assertEqual(ready['workbook']['id'], repeated['workbook']['id'])
+
     def test_completion_is_idempotent_and_download_is_frozen(self):
         report=self.draft().json()['data']
         v1=self.complete(report['fingerprint']).json()['data']
