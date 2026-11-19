@@ -23,6 +23,7 @@ def scan_category(reader, navigation, category, mode, controller, **filters):
 
 def collect_inventory(reader, controller, asof, checkpoint):
     evidence = {'asof': asof, 'contracts': [], 'details': {}, 'payments': [], 'errors': [],
+                'contract_conflicts': {},
                 'warnings': [], 'completed_categories': [], 'completed_payment_categories': []}
 
     reader.navigate('Contracts')
@@ -37,8 +38,14 @@ def collect_inventory(reader, controller, asof, checkpoint):
             item = dict(contract=c[0], contract_date=c[1], firm=c[2], category=c[3],
                         asset=c[4], start=c[5], end=c[6], status=c[7])
             key = re.sub(r'\s+', '', c[0]).upper()
+            if key in evidence['contract_conflicts']:
+                if item not in evidence['contract_conflicts'][key]:
+                    evidence['contract_conflicts'][key].append(item)
+                continue
             if key in seen and seen[key] != item:
-                raise RuntimeError('Conflicting official contract inventory records: ' + c[0])
+                evidence['contract_conflicts'][key] = [seen.pop(key), item]
+                controller.log('Conflicting IREPS rows held for review: ' + c[0])
+                continue
             seen[key] = item
         evidence['contracts'] = list(seen.values())
         evidence['completed_categories'].append(category)
@@ -99,7 +106,10 @@ def collect_inventory(reader, controller, asof, checkpoint):
         evidence['payments'] = list(invoices.values())
         evidence['completed_payment_categories'].append(category)
         checkpoint(evidence)
-    evidence['warnings'] = reader.warnings
+    evidence['warnings'] = [*reader.warnings, *(
+        f'Conflicting IREPS inventory rows held for review: {key}'
+        for key in sorted(evidence['contract_conflicts'])
+    )]
     evidence['collection_complete'] = True
     checkpoint(evidence)
     return evidence
