@@ -2922,7 +2922,7 @@ export default function Page() {
                 onChange={(value) => {
                   setContractFamily(value);
                   if (value === "catering") {
-                    setPublicityStatus("all");
+                    setPublicityStatus("running");
                     setPublicityPolicy("all");
                     setPublicityStation("all");
                   } else {
@@ -2933,7 +2933,7 @@ export default function Page() {
                     // Clear it when switching families so a prior catering
                     // query cannot silently reduce the Publicity count.
                     setSearch((prev) => ({ ...prev, contracts: "" }));
-                    setPublicityStatus("all");
+                    setPublicityStatus("running");
                     setPublicityPolicy("all");
                     setPublicityStation("all");
                   }
@@ -2945,13 +2945,16 @@ export default function Page() {
                     <label className="grid gap-1 text-xs font-black text-muted"><span className="text-[11px] uppercase tracking-[0.14em]">Status</span><select value={publicityStatus} onChange={(event) => setPublicityStatus(event.target.value)} className="soft-inset h-10 rounded-lg border border-line px-3 text-sm font-bold text-ink outline-none focus:border-accent">{["all", "running", ...Array.from(new Set(publicityContracts.map((row) => normalizeText(row.status)))).filter((status) => status && status !== "running").sort()].map((status) => <option key={status} value={status}>{status === "all" ? `All contracts (${publicityContracts.length})` : `${pretty(status).replaceAll("_", " ")} (${publicityContracts.filter((row) => normalizeText(row.status) === status).length})`}</option>)}</select></label>
                     <label className="grid gap-1 text-xs font-black text-muted"><span className="text-[11px] uppercase tracking-[0.14em]">Policy</span><select value={publicityPolicy} onChange={(event) => setPublicityPolicy(event.target.value)} className="soft-inset h-10 rounded-lg border border-line px-3 text-sm font-bold text-ink outline-none focus:border-accent"><option value="all">All policies</option>{publicityPolicyOptions.map((policy) => <option key={policy} value={policy}>{policy}</option>)}</select></label>
                     <label className="grid gap-1 text-xs font-black text-muted"><span className="text-[11px] uppercase tracking-[0.14em]">Station / asset</span><select value={publicityStation} onChange={(event) => setPublicityStation(event.target.value)} className="soft-inset h-10 rounded-lg border border-line px-3 text-sm font-bold text-ink outline-none focus:border-accent">{publicityStations.map((option) => <option key={option} value={option}>{option === "all" ? "All stations" : option}</option>)}</select></label>
-                    <Button size="sm" variant="secondary" onClick={() => { setSearch((prev) => ({ ...prev, contracts: "" })); setPublicityStatus("all"); setPublicityPolicy("all"); setPublicityStation("all"); setPublicityExpiry("all"); }}><RefreshCw size={14} /> Reset filters</Button>
+                    <Button size="sm" variant="secondary" onClick={() => { setSearch((prev) => ({ ...prev, contracts: "" })); setPublicityStatus("running"); setPublicityPolicy("all"); setPublicityStation("all"); setPublicityExpiry("all"); }}><RefreshCw size={14} /> Reset filters</Button>
                   </div>
                   <div className="soft-surface rounded-xl border border-line p-3">
                     <div className="mb-2 text-[11px] font-black uppercase tracking-[0.14em] text-muted">Expiry filter</div>
                     <div className="flex flex-wrap gap-2">{expiryOptions.map((option) => <button key={option.value} type="button" className={expiryChipClass(publicityExpiry === option.value, option.value)} onClick={() => setPublicityExpiry(option.value)}>{option.label} <span className="ml-1 opacity-75">({filterPublicityRows(publicityContracts, { status: publicityStatus, policy: publicityPolicy, station: publicityStation, query: search.contracts, expiry: option.value }).length})</span></button>)}</div>
                   </div>
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-xs font-bold text-muted"><span className="font-black text-ink">{filteredPublicityContracts.length} matching contracts</span><span>·</span><span>{publicityContracts.filter((row) => normalizeText(row.status) === "running").length} running</span><span>·</span><span>PostgreSQL registry</span></div>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-xs font-bold text-muted"><span className="font-black text-ink">{filteredPublicityContracts.length} matching contracts</span><span>·</span><span>{filterPublicityRows(publicityContracts, { status: "running", policy: publicityPolicy, station: publicityStation, query: search.contracts, expiry: publicityExpiry }).length} verified running in this selection</span></div>
+                  {publicityStatus === "running" && !filteredPublicityContracts.length && publicityContracts.some((row) => row.status === "verification_required") ? (
+                    <p className="rounded-lg border border-line p-3 text-sm text-muted">Some contracts are waiting for IREPS verification. Choose All contracts or Verification required to see them.</p>
+                  ) : null}
                   <Panel title="Publicity contracts" subtitle="Select a row to open the contract workspace and payment schedule." action={<Button size="sm" variant="secondary" onClick={() => setView("settings")}><SettingsIcon size={14} /> Manage in Settings</Button>}>
                     <DataTable
                       key={`publicity-${publicityStatus}-${publicityPolicy}-${publicityStation}`}
