@@ -2,6 +2,8 @@
 import re
 from playwright.sync_api import TimeoutError as BrowserTimeout
 
+CONTRACT_START = '01/01/2020'
+
 CATEGORIES = ['Advertising', 'Misc-Static-Services', 'Misc-Mobile-Services',
               'ATM/DBU/Banking e-Lobby', 'PMBJK', 'Parking', 'Hybrid NFR',
               'Catering', 'MPS', 'Pay and Use', 'Parcel']
@@ -25,11 +27,10 @@ def collect_inventory(reader, controller, asof, checkpoint):
 
     reader.navigate('Contracts')
     seen = {}
-    search_categories = {}
     for category in CATEGORIES:
         controller.log('Contract inventory: ' + category)
         for row in scan_category(reader, 'Contracts', category, 'contracts', controller,
-                                 start='01/01/2000', end=asof):
+                                 start=CONTRACT_START, end=asof):
             c = row['cells']
             if len(c) != 9 or not c[0].strip():
                 continue
@@ -39,7 +40,6 @@ def collect_inventory(reader, controller, asof, checkpoint):
             if key in seen and seen[key] != item:
                 raise RuntimeError('Conflicting official contract inventory records: ' + c[0])
             seen[key] = item
-            search_categories[key] = category
         evidence['contracts'] = list(seen.values())
         evidence['completed_categories'].append(category)
         checkpoint(evidence)
@@ -49,12 +49,12 @@ def collect_inventory(reader, controller, asof, checkpoint):
         controller.log(f'Official contract details {index}/{len(ordered)}: {record["contract"]}')
         try:
             reader.navigate('Contracts')
-            reader.search(search_categories[key], start='01/01/2000', end=asof, contract=record['contract'])
+            reader.search('---All---', start=CONTRACT_START, end=asof, contract=record['contract'])
             rows = reader.all_rows('contracts', filtered=True)
             if len(rows) != 1 or re.sub(r'\s+', '', rows[0]['cells'][0]).upper() != key:
                 raise RuntimeError('Exact contract lookup did not return one matching contract.')
             with reader.page.expect_navigation(wait_until='domcontentloaded'):
-                reader.page.get_by_role('link', name='Contract', exact=True).click()
+                reader.click_read_control(reader.page.get_by_role('link', name='Contract', exact=True), 'Contract')
             fields = reader.page.locator('table tr').evaluate_all(
                 '''(rows)=>rows.map(r=>[...r.cells].map(c=>c.innerText.trim()))
                     .filter(r=>r.length===2 && r[0].length<=70 &&
@@ -63,7 +63,7 @@ def collect_inventory(reader, controller, asof, checkpoint):
             button = reader.page.get_by_role('button', name='Payment Schedule', exact=True)
             if button.count() == 1:
                 with reader.page.expect_popup() as popup:
-                    button.click()
+                    reader.click_read_control(button, 'Payment Schedule')
                 schedule_page = popup.value
                 try:
                     schedule_page.locator('body').wait_for()

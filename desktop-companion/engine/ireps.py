@@ -1,5 +1,6 @@
 """Read-only IREPS browser workflow, using a separate Chrome window."""
 import re, time
+from playwright.sync_api import TimeoutError
 from urllib.parse import urljoin, urlparse
 from core import relevant, key, day, contract_terms
 from incremental import invoice_needed
@@ -37,13 +38,29 @@ class Ireps:
 
     def navigate(self, mode):
         self.check()
+        self.page.bring_to_front()
         self.page.goto(HOME)
-        self.page.get_by_role('link', name=mode, exact=True).click()
+        self.log('Opening IREPS ' + mode + ' menu.')
+        self.click_navigation_link(mode)
         link = 'Payments Received' if mode == 'Payments' else 'View Contracts'
+        self.log('Opening IREPS ' + link + ' page.')
         with self.page.expect_navigation(wait_until='load'):
-            self.page.get_by_role('link', name=link, exact=True).click()
+            self.click_navigation_link(link)
         self.page.locator('#menuLink').wait_for(state='visible')
         self.page.wait_for_function("document.querySelector('#menuLink')?.options.length > 0")
+
+    def click_navigation_link(self, label):
+        link = self.page.get_by_role('link', name=label, exact=True)
+        self.click_read_control(link, label)
+
+    def click_read_control(self, link, label):
+        try:
+            link.click(timeout=15000)
+        except TimeoutError:
+            self.check()
+            if link.count() != 1 or not link.is_visible():
+                raise RuntimeError('IREPS read control unavailable: ' + label) from None
+            link.evaluate('(element) => element.click()')
 
     def search(self, category, kind=None, start=None, end=None, contract=''):
         self.check()
@@ -61,7 +78,7 @@ class Ireps:
                 self.page.locator('#'+field).evaluate("(el, value) => {el.value = value; el.dispatchEvent(new Event('change', {bubbles:true}));}", value)
         stamp = self.page.evaluate('performance.timeOrigin')
         with self.page.expect_navigation(wait_until='load'):
-            self.page.get_by_role('button', name='Search', exact=True).click()
+            self.click_read_control(self.page.get_by_role('button', name='Search', exact=True), 'Search')
         self.wait_results(stamp)
         if start is not None:
             selected = [self.page.locator('#'+field).input_value() for field in ('ddmmyyDateformat1','ddmmyyDateformat2')]
@@ -134,7 +151,7 @@ class Ireps:
             page_num = next_page
             stamp = self.page.evaluate('performance.timeOrigin')
             with self.page.expect_navigation(wait_until='load'):
-                link.click()
+                self.click_read_control(link, f'results page {page_num}')
             self.wait_results(stamp)
         if len(output) != total:
             if filtered:raise FilteredResultError(f'Exact-contract row count mismatch: {len(output)} / {total}.')

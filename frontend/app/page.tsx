@@ -707,7 +707,7 @@ export default function Page() {
   const [amenityTab, setAmenityTab] = useState("summary");
   const [contractTab, setContractTab] = useState("active");
   const [contractFamily, setContractFamily] = useState("catering");
-  const [publicityStatus, setPublicityStatus] = useState("all");
+  const [publicityStatus, setPublicityStatus] = useState("running");
   const [publicityPolicy, setPublicityPolicy] = useState("all");
   const [publicityStation, setPublicityStation] = useState("all");
   const [cateringStation, setCateringStation] = useState("all");

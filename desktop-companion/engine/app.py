@@ -57,6 +57,15 @@ def browser(pw, config, log):
         from inspect import signature
         if 'no_defaults' in signature(pw.chromium.connect_over_cdp).parameters:
             attach_options['no_defaults']=True
+    def attach(port, timeout):
+        try:
+            return pw.chromium.connect_over_cdp(endpoint(port),timeout=timeout,**attach_options)
+        except Exception:
+            if not config.get('ireps_only'):
+                raise
+            log('Reconnecting directly to the dedicated updater profile.')
+            wake_browser_tabs(f'http://127.0.0.1:{port}')
+            return pw.chromium.connect_over_cdp(f'http://127.0.0.1:{port}',timeout=30000,**attach_options)
     session_file = STATE/'browser.json'
     profile = STATE/'Chrome profile'
     if session_file.exists():
@@ -68,12 +77,12 @@ def browser(pw, config, log):
         else:
             log('Connecting to the app Chrome window…')
             try:
-                return pw.chromium.connect_over_cdp(endpoint(port),timeout=15000,**attach_options)
+                return attach(port,15000)
             except Exception:
                 log('Waking the existing updater browser tabs and reconnecting; the signed-in session is retained.')
                 wake_browser_tabs(f'http://127.0.0.1:{port}')
                 try:
-                    return pw.chromium.connect_over_cdp(endpoint(port),timeout=60000,**attach_options)
+                    return attach(port,30000)
                 except Exception as exc:
                     raise RuntimeError('The open updater Chrome connection did not respond. The existing window and session were retained; retry collection.') from exc
     chrome = chrome_path()
@@ -95,7 +104,7 @@ def browser(pw, config, log):
             time.sleep(1)
             continue
         try:
-            return pw.chromium.connect_over_cdp(endpoint(port),timeout=30000,**attach_options)
+            return attach(port,15000)
         except Exception as exc:
             raise RuntimeError('The new updater Chrome window did not respond. Close its tabs and try again. No spreadsheet data was changed.') from exc
     raise RuntimeError('Chrome connection failed. Close only the app Chrome window and try again.')
