@@ -320,14 +320,15 @@ def apply_schedule(session, contract, detail, evidence_id):
         schedule.period_start, schedule.period_end = day(cells[8]), day(cells[9])
         # Displayed '-' is unknown, not zero and not annual/4 guessed into every row.
         schedule.expected_amount = money(cells[6])
-        schedule.status = str(cells[10]) or 'unknown'
+        # Embedded adjustment notes belong to the retained evidence snapshot.
+        schedule.status = (str(cells[10]).partition('\n')[0].strip() or 'unknown')[:32]
         schedule.source_reference = 'ireps:' + evidence_id
     for number, schedule in existing.items():
         if number not in seen:
             schedule.is_current = False
 
 
-def link_receipts(session, invoices, contracts, now):
+def link_receipts(session, invoices, contracts, now, *, official_schedules_only=False):
     counts = Counter()
     ledger = {}
     imports = [r.import_id for r in session.scalars(select(PublicityEarningsCurrent)).all() if r.import_id]
@@ -384,8 +385,11 @@ def link_receipts(session, invoices, contracts, now):
             payment.source_reference = f'publicity_earnings:{row.import_id}:{row.source_row}'
         else:
             payment.source_reference = 'IREPS payment inventory:' + inv
-        matches = session.scalars(select(Schedule).where(Schedule.contract_id == contract.contract_id,
-                    Schedule.due_date == payment.due_date, Schedule.is_current.is_(True))).all() if payment.due_date else []
+        schedule_query = select(Schedule).where(Schedule.contract_id == contract.contract_id,
+                    Schedule.due_date == payment.due_date, Schedule.is_current.is_(True))
+        if official_schedules_only:
+            schedule_query = schedule_query.where(Schedule.source_reference.startswith('ireps:'))
+        matches = session.scalars(schedule_query).all() if payment.due_date else []
         if len(matches) == 1:
             payment.schedule_id = matches[0].schedule_id
         else:
