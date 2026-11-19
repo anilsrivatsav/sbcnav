@@ -1595,7 +1595,9 @@ export default function Page() {
     { key: "period", label: "Period", value: (row) => `${pretty(row.period?.start)} to ${pretty(row.period?.end)}` },
     { key: "status", label: "Status", value: (row) => pretty(row.status), render: (row) => <Badge tone={/running|active/i.test(pretty(row.status)) ? "accent" : "neutral"}>{pretty(row.status)}</Badge> },
     { key: "value", label: "Value", value: (row) => row.financials?.total_contract_value || row.financials?.annual_license_fee || 0, render: (row) => money(row.financials?.total_contract_value || row.financials?.annual_license_fee) },
-    { key: "payments", label: "Payments", value: (row) => row.payment_summary?.recorded || row.payment_summary?.scheduled || 0, render: (row) => <span className="text-xs font-bold text-muted">{row.payment_summary?.recorded || 0} paid · {row.payment_summary?.scheduled || 0} scheduled</span> },
+    { key: "payments", label: "Payments", value: (row) => row.payment_summary?.recorded || row.payment_summary?.scheduled || 0, render: (row) => <span className="text-xs font-bold text-muted">{row.payment_summary?.quarters_scheduled
+      ? `${row.payment_summary.quarters_paid ?? 0} quarters paid · ${row.payment_summary.quarters_scheduled} scheduled`
+      : `${row.payment_summary?.recorded || 0} receipts linked · quarterly schedule unverified`}</span> },
   ];
   const reportWorkColumns = [
     { key: "sl_no", label: "Sl.no" },

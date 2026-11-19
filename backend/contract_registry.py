@@ -271,6 +271,25 @@ def backfill_legacy_contracts() -> dict[str, int]:
         session.close()
 
 
+def quarterly_payment_counts(schedules, payments):
+    quarters = {s.schedule_id: s for s in schedules
+                if s.is_current and (s.frequency or '').casefold() == 'quarterly'
+                and _normalized(s.charge_type or '') in {'license fee', 'licence fee'}}
+    paid = set()
+    for receipt in payments:
+        schedule = quarters.get(receipt.schedule_id)
+        if not schedule or receipt.payment_status != 'collected' or (receipt.gross_amount or 0) <= 0:
+            continue
+        if receipt.verification_status not in {'official_receipt', 'ledger_matched'}:
+            continue
+        if str(schedule.status or '').lower().startswith(('waived', 'partial')):
+            continue
+        if schedule.expected_amount and receipt.amount_paid is not None and receipt.amount_paid < schedule.expected_amount:
+            continue
+        paid.add(schedule.schedule_id)
+    return {'quarters_scheduled': len(quarters), 'quarters_paid': len(paid)}
+
+
 def _contract_dict(row: ContractRegistryContract, contractor: ContractRegistryContractor | None, assets: list[ContractRegistryAsset], schedules: list[ContractRegistryPaymentSchedule], payments: list[ContractRegistryPayment] | None = None) -> dict[str, Any]:
     from contract_lifecycle import visible_status
     schedules = [item for item in schedules if item.is_current]
@@ -285,7 +304,7 @@ def _contract_dict(row: ContractRegistryContract, contractor: ContractRegistryCo
         "effective_date": row.status_effective_date,
         "verification": row.reconciliation_state,
         "issues": row.reconciliation_issues,
-    }, "contract_family": row.contract_family, "award_method": row.award_method, "policy_code": row.policy_code, "category": row.category, "period": {"loa_date": row.loa_date, "start": row.period_start, "end": row.period_end, "duration_value": row.duration_value, "duration_unit": row.duration_unit}, "financials": {"annual_license_fee": row.annual_license_fee, "quarterly_license_fee": row.quarterly_license_fee, "total_contract_value": row.total_contract_value, "additional_license_fee": row.additional_license_fee}, "contractor": {"contractor_id": contractor.contractor_id, "legal_name": contractor.legal_name} if contractor else None, "assets": [{"asset_type": item.asset_type, "station_code": item.station_code, "train_number": item.train_number, "asset_name": item.asset_name, "raw_asset_value": item.raw_asset_value, "match_status": item.match_status} for item in assets], "payment_schedule": [{"schedule_id": item.schedule_id, "installment_number": item.installment_number, "period_label": item.period_label, "due_date": item.due_date, "expected_amount": item.expected_amount, "status": item.status} for item in schedules], "payments": payment_items, "payment_summary": {"scheduled": len(schedules), "scheduled_amount": sum(float(item.expected_amount or 0) for item in schedules), "recorded": len(payment_items), "amount_due": sum(float(item.amount_due or 0) for item in payment_rows), "amount_paid": sum(float(item.amount_paid or 0) for item in payment_rows), "pending": sum(1 for item in payment_rows if str(item.payment_status or '').lower() in {'pending', 'overdue'})}, "source": {"system": row.source_system, "file": row.source_file, "sheet": row.source_sheet, "row": row.source_row_number}}
+    }, "contract_family": row.contract_family, "award_method": row.award_method, "policy_code": row.policy_code, "category": row.category, "period": {"loa_date": row.loa_date, "start": row.period_start, "end": row.period_end, "duration_value": row.duration_value, "duration_unit": row.duration_unit}, "financials": {"annual_license_fee": row.annual_license_fee, "quarterly_license_fee": row.quarterly_license_fee, "total_contract_value": row.total_contract_value, "additional_license_fee": row.additional_license_fee}, "contractor": {"contractor_id": contractor.contractor_id, "legal_name": contractor.legal_name} if contractor else None, "assets": [{"asset_type": item.asset_type, "station_code": item.station_code, "train_number": item.train_number, "asset_name": item.asset_name, "raw_asset_value": item.raw_asset_value, "match_status": item.match_status} for item in assets], "payment_schedule": [{"schedule_id": item.schedule_id, "installment_number": item.installment_number, "period_label": item.period_label, "due_date": item.due_date, "expected_amount": item.expected_amount, "status": item.status} for item in schedules], "payments": payment_items, "payment_summary": {**quarterly_payment_counts(schedules, payment_rows), "scheduled": len(schedules), "scheduled_amount": sum(float(item.expected_amount or 0) for item in schedules), "recorded": len(payment_items), "amount_due": sum(float(item.amount_due or 0) for item in payment_rows), "amount_paid": sum(float(item.amount_paid or 0) for item in payment_rows), "pending": sum(1 for item in payment_rows if str(item.payment_status or '').lower() in {'pending', 'overdue'})}, "source": {"system": row.source_system, "file": row.source_file, "sheet": row.source_sheet, "row": row.source_row_number}}
 
 
 def list_registry_contracts(status: str | None = None, search: str | None = None, asset_type: str | None = None) -> list[dict[str, Any]]:
