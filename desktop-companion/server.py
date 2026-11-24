@@ -111,7 +111,7 @@ class Controller:
             return {**self.state, 'busy': bool(self.thread and self.thread.is_alive()),
                     'deskflow_busy': deskflow_busy,
                     'connected': True, 'version': '2.2.0', 'configured': (STATE / 'operator.key').exists(),
-                    'monthly_reports': True,
+                    'monthly_reports': True, 'inventory_retry': True,
                     'installer_available': installer_path(STATE) is not None}
 
     def log(self, message):
@@ -149,7 +149,7 @@ class Controller:
                 return
             if active:
                 raise RuntimeError('An update is already running.')
-            if action not in ('start', 'resume', 'sync'):
+            if action not in ('start', 'resume', 'sync', 'inventory'):
                 raise RuntimeError('Unknown updater action.')
             if not (STATE / 'operator.key').exists():
                 raise RuntimeError('This computer needs administrator setup.')
@@ -200,7 +200,8 @@ class Controller:
                 self.monitor(request('/sync-sheets', {}))
                 return
             # Never silently replace an unfinished server write.
-            for old in request('/runs'):
+            recent_runs = request('/runs')
+            for old in recent_runs:
                 if old['state'] == 'applying':
                     self.save(run=old)
                     self.monitor(old)
@@ -208,6 +209,7 @@ class Controller:
             run = request('/runs', {})
             self.save(run=run, start=run['connector']['start'], end=run['connector']['end'])
             cfg = run['connector']
+            checked = self.recent_receipt_evidence(recent_runs, cfg) if action == 'inventory' else None
             with sync_playwright() as pw:
                 browser = app.browser(pw, {'ireps_only': True}, self.log)
                 reader = EvidenceReader(browser.contexts[0], self.log, self.checkpoint)
@@ -216,32 +218,12 @@ class Controller:
                     reader.page.bring_to_front()
                     reader.login()
                     self.save(phase='collecting')
-                    categories = cfg['categories']
-                    statuses = reader.contracts(categories, '01/01/2020', cfg['end'])
-                    failures = reader.failures(categories)
-                    records = reader.payments(categories, cfg['start'], cfg['end'],
-                        existing=set(cfg['existing_invoices']), known_due=collector_due_dates(cfg['known_due']))
-                    pdfs = {}
-                    folder = STATE / ('Invoices-' + run['run_id'])
-                    folder.mkdir(exist_ok=True)
-                    for record in records:
-                        self.checkpoint()
-                        self.log('Verifying invoice ' + record['invoice'])
-                        pdfs[record['invoice']] = base64.b64encode(reader.download(record, folder / (record['invoice'] + '.pdf'))).decode()
-                    wanted = {key(r['contract']) for r in records}
-                    for contract, due in cfg['known_due'].items():
-                        if day(due) in reader.confirmed_paid_due.get(key(contract), set()):
-                            wanted.add(key(contract))
-                    terms = {}
-                    for contract in sorted(wanted):
-                        self.checkpoint()
-                        if contract not in statuses:
-                            raise RuntimeError('Paid contract is absent from the official contract list: ' + contract)
-                        self.log('Checking official unpaid schedule: ' + statuses[contract]['contract'])
-                        terms[contract] = reader.terms({**statuses[contract], 'asof': cfg['end']}, raw=True)
-                    evidence = dict(run_id=run['run_id'], start=cfg['start'], end=cfg['end'], completed_categories=categories,
-                        contracts=list(statuses.values()), payments=list(reader.observed.values()), failures=failures,
-                        terms=terms, pdfs=pdfs, warnings=reader.warnings)
+                    if checked:
+                        self.log('Using receipts already verified today. Starting a fresh contract inventory.')
+                        evidence = {**checked, 'run_id':run['run_id'], 'start':cfg['start']}
+                        evidence.pop('contract_reconciliation', None)
+                    else:
+                        evidence = self.collect_receipts(reader, run['run_id'], cfg)
                     evidence_path = STATE / (run['run_id'] + '.json')
                     if cfg.get('full_contract_reconciliation'):
                         evidence['warnings'] = [*reader.warnings,
@@ -275,6 +257,49 @@ class Controller:
             # Do not expose Playwright request diagnostics, which may include cookies.
             message = str(exc).split('\nCall log:', 1)[0][:1500]
             self.save(phase='error', error=message, message='Update stopped. Verified work and complete evidence are saved.')
+
+    def recent_receipt_evidence(self, runs, cfg):
+        existing = set(cfg['existing_invoices'])
+        for run in runs:
+            if run.get('state') != 'complete' or not (run.get('result') or {}).get('earnings_verified'):
+                continue
+            try:
+                evidence = read_state(STATE / (run['run_id'] + '.json'))
+                if (evidence.get('end') == cfg['end'] and day(evidence['start']) <= day(cfg['start'])
+                        and set(evidence['completed_categories']) == set(cfg['categories'])
+                        and set(evidence.get('pdfs', {})).issubset(existing)):
+                    return evidence
+            except (OSError, ValueError, KeyError):
+                continue
+        return None
+
+    def collect_receipts(self, reader, run_id, cfg):
+        categories = cfg['categories']
+        statuses = reader.contracts(categories, '01/01/2020', cfg['end'])
+        failures = reader.failures(categories)
+        records = reader.payments(categories, cfg['start'], cfg['end'],
+            existing=set(cfg['existing_invoices']), known_due=collector_due_dates(cfg['known_due']))
+        pdfs = {}
+        folder = STATE / ('Invoices-' + run_id)
+        folder.mkdir(exist_ok=True)
+        for record in records:
+            self.checkpoint()
+            self.log('Verifying invoice ' + record['invoice'])
+            pdfs[record['invoice']] = base64.b64encode(reader.download(record, folder / (record['invoice'] + '.pdf'))).decode()
+        wanted = {key(r['contract']) for r in records}
+        for contract, due in cfg['known_due'].items():
+            if day(due) in reader.confirmed_paid_due.get(key(contract), set()):
+                wanted.add(key(contract))
+        terms = {}
+        for contract in sorted(wanted):
+            self.checkpoint()
+            if contract not in statuses:
+                raise RuntimeError('Paid contract is absent from the official contract list: ' + contract)
+            self.log('Checking official unpaid schedule: ' + statuses[contract]['contract'])
+            terms[contract] = reader.terms({**statuses[contract], 'asof': cfg['end']}, raw=True)
+        return dict(run_id=run_id, start=cfg['start'], end=cfg['end'], completed_categories=categories,
+                    contracts=list(statuses.values()), payments=list(reader.observed.values()), failures=failures,
+                    terms=terms, pdfs=pdfs, warnings=reader.warnings)
 
 
 controller = Controller()
@@ -584,7 +609,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self.respond(200, deskflow.command(self.path.rsplit('/',1)[-1], data))
             except (ValueError, KeyError, TypeError, RuntimeError) as exc:
                 return self.respond(400, {'error': str(exc)})
-        if self.path not in ('/start', '/resume', '/pause', '/sync'):
+        if self.path not in ('/start', '/resume', '/pause', '/sync', '/inventory'):
             return self.respond(404, {'error': 'Not found.'})
         try:
             length = int(self.headers.get('Content-Length', '0'))

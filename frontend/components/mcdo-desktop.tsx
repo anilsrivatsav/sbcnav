@@ -7,7 +7,7 @@ import {McdoDeadlines,type Deadlines} from "./mcdo-deadlines";
 import {McdoMonthly} from "./mcdo-monthly";
 
 type Run={run_id:string;state:string;mode?:string;summary?:Record<string,number>;result?:Record<string,unknown>;warnings?:string[];overdue?:unknown[][];error?:string};
-type Status={configured:boolean;busy:boolean;phase:string;message:string;error?:string;start?:string;end?:string;run?:Run;logs:string[];installer_available?:boolean};
+type Status={configured:boolean;busy:boolean;phase:string;message:string;error?:string;start?:string;end?:string;run?:Run;logs:string[];installer_available?:boolean;inventory_retry?:boolean};
 type Summary={last_verified_check?:{through:string;verified_at:string;new_invoices:number}|null;report_update?:{period:string;status:string;workbook?:{id:string;filename:string};pending?:string[];issues?:string[]}|null;deadlines?:Deadlines;earnings:{latest_receipt_date:string|null;source:{row_count:number}|null}};
 const LOCAL="http://127.0.0.1:48722";
 const money=(v:number|undefined)=>v===undefined?"—":v.toLocaleString("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:2});
@@ -40,7 +40,7 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
     void poll();void refreshReport();const timer=setInterval(poll,3000);
     return()=>{mounted=false;clearInterval(timer);};
   },[check,refreshReport]);
-  async function command(action:"start"|"resume"|"pause"|"sync"){
+  async function command(action:"start"|"resume"|"pause"|"sync"|"inventory"){
     setSending(true);setError("");
     try{
       const response=await fetch(`${LOCAL}/${action}`,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}",signal:AbortSignal.timeout(15000)});
@@ -111,7 +111,14 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
         {run.warnings?.map((w,i)=><p key={i} className="mt-2 text-xs text-amber-700">{w}</p>)}
         {Boolean(run.overdue?.length)&&<div className="mt-4 overflow-auto"><table className="w-full text-left text-xs"><caption className="mb-2 text-left font-bold">Payments unpaid beyond the seven-day grace period</caption><thead><tr>{["Contract","Contractor","Amount due","Due date","Grace ends","Days past grace"].map(h=><th key={h} className="p-2">{h}</th>)}</tr></thead><tbody>{run.overdue?.map((r,i)=><tr key={i}>{r.map((v,j)=><td key={j} className="border-t border-line p-2">{String(v)}</td>)}</tr>)}</tbody></table></div>}
       </>}
-      <details className="mt-4 rounded-lg border border-line p-3"><summary className="cursor-pointer text-sm font-bold">Activity and other options</summary><p className="mt-3 text-sm text-muted">If you have edited Sheets yourself, import those changes into Oracle without checking IREPS.</p><div className="mt-3 flex flex-wrap gap-3"><Button variant="secondary" disabled={!ready||busy} onClick={()=>command("sync")}>Import existing Sheets into Oracle</Button><Button variant="secondary" onClick={()=>refreshReport()}>Refresh report</Button></div><pre className="mt-4 max-h-64 overflow-auto whitespace-pre-wrap text-xs text-muted">{status?.logs.join("\n")||"No activity in this connection yet."}</pre></details>
+      <details className="mt-4 rounded-lg border border-line p-3"><summary className="cursor-pointer text-sm font-bold">Activity and other options</summary>
+        <div className="mt-3 flex flex-wrap gap-3">
+          {status?.inventory_retry&&<Button variant="secondary" disabled={!ready||busy} onClick={()=>command("inventory")}>Retry contract inventory</Button>}
+          <Button variant="secondary" disabled={!ready||busy} onClick={()=>command("sync")}>Import existing Sheets into Oracle</Button>
+          <Button variant="secondary" onClick={()=>refreshReport()}>Refresh report</Button>
+        </div>
+        <pre className="mt-4 max-h-64 overflow-auto whitespace-pre-wrap text-xs text-muted">{status?.logs.join("\n")||"No activity in this connection yet."}</pre>
+      </details>
       {reportError&&<p role="alert" className="mt-3 text-sm text-red-700">{reportError}</p>}
     </Panel>
     <McdoDeadlines data={summary?.deadlines}/>

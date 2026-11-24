@@ -55,6 +55,17 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.controller.snapshot()['phase'], 'error')
         self.assertEqual(api.call_count, 2)
 
+    def test_inventory_reuses_only_verified_same_day_receipts_already_in_earnings(self):
+        completed = {'run_id':'prior','state':'complete','result':{'earnings_verified':True}}
+        evidence = {'start':'19/11/2026','end':'24/11/2026',
+                    'completed_categories':['Advertising'],'pdfs':{'ES26TEST':'verified PDF'}}
+        server.write_state(server.STATE / 'prior.json', evidence)
+        config = {'start':'23/11/2026','end':'24/11/2026','categories':['Advertising'],
+                  'existing_invoices':['ES26TEST']}
+        self.assertEqual(self.controller.recent_receipt_evidence([completed],config), evidence)
+        self.assertIsNone(self.controller.recent_receipt_evidence([completed],{**config,'existing_invoices':[]}))
+        self.assertIsNone(self.controller.recent_receipt_evidence([completed],{**config,'end':'25/11/2026'}))
+
     def test_full_inventory_failure_keeps_and_applies_completed_receipts(self):
         run = {'run_id': 'today', 'state': 'awaiting_ireps', 'connector': {
             'start': '16/11/2026', 'end': '24/11/2026', 'categories': ['Advertising'],
