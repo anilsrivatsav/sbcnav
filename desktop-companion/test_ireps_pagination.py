@@ -41,3 +41,14 @@ class DatePartitionTests(TestCase):
             with self.assertRaisesRegex(IncompleteResultsError, 'outside the selected date window'):
                 reader.read_category_rows('Payments', 'Catering', 'paid',
                                           start='21/11/2026', end='24/11/2026')
+
+    def test_undated_unsigned_contract_is_kept_once_across_windows(self):
+        reader, _, search, rows = self.reader(date_column=1)
+        unscheduled = {'cells':['SBC-AWARD-26','','','','','','','Pending for Sign (Bidder)','']}
+        def included_rows(mode, filtered=False):
+            return rows(mode, filtered) + [unscheduled]
+        with patch.object(reader, 'search', search), patch.object(reader, 'all_rows', included_rows):
+            found = reader.read_category_rows('Contracts', 'Catering', 'contracts',
+                                               start='21/11/2026', end='24/11/2026')
+        self.assertEqual(len(found), 3)
+        self.assertEqual(found.count(unscheduled), 1)

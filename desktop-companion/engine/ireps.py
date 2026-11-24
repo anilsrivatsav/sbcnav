@@ -191,15 +191,25 @@ class Ireps:
         middle = first + (last - first) // 2
         self.log(f'Reading smaller IREPS date windows for {category}: {first:%d/%m/%Y} to {last:%d/%m/%Y}.')
         rows = []
+        undated_contracts = set()
         for start, end in ((first, middle), (middle + timedelta(days=1), last)):
             self.check()
             self.navigate(navigation)
             window = self.read_category_rows(
                 navigation, category, mode,
                 **{**filters, 'start': start.strftime('%d/%m/%Y'), 'end': end.strftime('%d/%m/%Y')})
-            if any(not start <= day(row['cells'][date_column]) <= end for row in window):
-                raise IncompleteResultsError(f'IREPS returned {category} records outside the selected date window.')
-            rows.extend(window)
+            for row in window:
+                value = row['cells'][date_column]
+                if mode == 'contracts' and value in ('', '-'):
+                    # Unsigned rows can have no contract date, and can appear
+                    # in more than one source window. Keep each observed row once.
+                    signature = tuple(row['cells'])
+                    if signature in undated_contracts:
+                        continue
+                    undated_contracts.add(signature)
+                elif not start <= day(value) <= end:
+                    raise IncompleteResultsError(f'IREPS returned {category} records outside the selected date window.')
+                rows.append(row)
         return rows
 
     def payments(self, categories, start, end, queries=None, existing=None, known_due=None):
