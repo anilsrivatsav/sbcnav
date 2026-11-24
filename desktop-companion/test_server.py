@@ -33,6 +33,12 @@ class ControllerTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'already running'):
             self.controller.command('start')
 
+    def test_evidence_reader_forwards_dense_search_limit(self):
+        reader = server.EvidenceReader.__new__(server.EvidenceReader)
+        with patch.object(server.Ireps, 'all_rows', return_value=[]) as fetch:
+            self.assertEqual(reader.all_rows('contracts', max_rows=50), [])
+        fetch.assert_called_once_with('contracts', filtered=False, max_rows=50)
+
     def test_resume_after_lost_apply_response_reads_server_first(self):
         self.controller.save(run={'run_id': 'saved'})
         complete = {'run_id': 'saved', 'state': 'complete'}

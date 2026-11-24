@@ -52,8 +52,8 @@ class EvidenceReader(Ireps):
         super().__init__(*args)
         self.observed = {}
 
-    def all_rows(self, mode, filtered=False):
-        rows = super().all_rows(mode, filtered)
+    def all_rows(self, mode, filtered=False, max_rows=None):
+        rows = super().all_rows(mode, filtered=filtered, max_rows=max_rows)
         if mode == 'paid':
             from urllib.parse import urljoin
             from core import relevant
