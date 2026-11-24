@@ -100,7 +100,7 @@ def overview():
     with SessionLocal() as session:
         row = session.get(DeskflowRelay, 1)
         data = row.overview if row else {}
-        connected = bool(row and row.last_seen_at and (datetime.now(timezone.utc) - row.last_seen_at.replace(tzinfo=row.last_seen_at.tzinfo or timezone.utc)).total_seconds() < 30)
+        connected = _desktop_connected(row)
         links = session.scalars(select(AuctionScheduleLink)).all()
         by_lot = {}
         def updated(link):
@@ -110,6 +110,7 @@ def overview():
             if link.lot_key and (link.lot_key not in by_lot or updated(link) > updated(by_lot[link.lot_key])):
                 by_lot[link.lot_key] = link
         result = {'collected_at': None, 'categories': [], 'lots': [], 'progress': {'busy': False, 'phase': 'waiting', 'message': 'Waiting for the Windows desktop companion.'}} | data
+        result.pop('schedule_pdf_requests', None)
         result['lots'] = [_with_schedule_verification(lot, by_lot.get(lot.get('key'))) for lot in result['lots']]
         return {**result, 'desktop_connected': connected}
 
@@ -117,6 +118,18 @@ def overview():
 @router.get('/eauction', dependencies=[Depends(_browser)])
 def eauction_rows():
     return {'data': live_schedule()}
+
+
+@router.get('/schedule-pdf', dependencies=[Depends(_browser)])
+def schedule_pdf_status(request_id: str = Query(pattern=r'^[a-f0-9-]{36}$')):
+    with SessionLocal() as session:
+        row = session.get(DeskflowRelay, 1)
+        result = (row.overview or {}).get('schedule_pdf_requests', {}).get(request_id) if row else None
+        if result:
+            return {**result, 'desktop_connected': _desktop_connected(row)}
+        if row and row.command_id == request_id:
+            return {'phase': 'queued', 'desktop_connected': _desktop_connected(row)}
+        raise HTTPException(404, 'This schedule request is no longer available. Start a fresh IREPS check.')
 
 
 @router.post('/eauction', dependencies=[Depends(_browser)])
@@ -180,19 +193,30 @@ def workbook_history(book: str = '', q: str = Query('', max_length=120), page: i
     }
 
 
+def _desktop_connected(row):
+    return bool(row and row.last_seen_at and (
+        datetime.now(timezone.utc) - row.last_seen_at.replace(tzinfo=row.last_seen_at.tzinfo or timezone.utc)
+    ).total_seconds() < 30)
+
+
 @router.post('/{action}', dependencies=[Depends(_browser)])
 def command(action: str, payload: dict = Body(...)):
-    if action not in ('collect', 'history', 'software-update', 'sync-workbooks') or payload != {}:
+    if action not in ('collect', 'history', 'software-update', 'sync-workbooks', 'schedule-pdf') or payload != {}:
         raise HTTPException(400, 'Invalid Deskflow command.')
     with SessionLocal.begin() as session:
         row = _row(session)
-        if not row.last_seen_at or (datetime.now(timezone.utc) - row.last_seen_at.replace(tzinfo=row.last_seen_at.tzinfo or timezone.utc)).total_seconds() >= 30:
+        if not _desktop_connected(row):
             raise HTTPException(503, 'Open the SBCNAV desktop companion on the Windows PC to run this command.')
         if row.command_id:
             raise HTTPException(409, 'A desktop command is already pending.')
+        if action == 'schedule-pdf':
+            if 'schedule_pdf_requests' not in (row.overview or {}):
+                raise HTTPException(409, 'Update the Windows companion from Deskflow to enable IREPS schedule PDFs.')
+            if (row.overview.get('progress') or {}).get('busy'):
+                raise HTTPException(409, 'The Windows companion is working. Try again when its current task finishes.')
         row.command_id = str(uuid4())
         row.command = {'action': action}
-        return {'queued': True}
+        return {'queued': True, 'request_id': row.command_id} if action == 'schedule-pdf' else {'queued': True}
 
 
 @router.post('/agent/sync', dependencies=[Depends(administrator)])

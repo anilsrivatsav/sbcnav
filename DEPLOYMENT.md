@@ -23,6 +23,8 @@ The scheduler reads all monthly tabs, creates the auction month's tab if needed,
 
 ## Verification
 
+The **Update & download IREPS PDF** button under Auction Schedule uses the same authenticated Deskflow relay. Deploy the API and frontend together, then use **Update desktop app** in Deskflow so the Windows companion can accept the new request. With the companion running, unlock Auction Schedule, click the button, and sign in to the Bengaluru Division Commercial IREPS account if prompted. Verify that the downloaded PDF shows the current IST check time and all upcoming catalogues, with no rows carried forward from earlier reports.
+
 After both services deploy, unlock `/eauction` and check that existing monthly rows load. Add a holiday and confirm another browser sees it. Add a test auction only when an actual schedule is required; verify the same Sync ID appears once in the monthly Sheet tab. Cancel or withdraw only a row that should genuinely change status. Open Deskflow, collect IREPS lots on the Windows companion, and verify its selected lot links to the scheduled auction. Running contracts use LAR as RP, completed contracts use LAR plus 10%, and foreclosed contracts use LAR; other statuses retain the existing fixation rules.
 
 Do not commit `.env` files, database passwords, service account keys, or source workbooks to GitHub.

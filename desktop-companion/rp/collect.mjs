@@ -81,7 +81,7 @@ sandbox.acceptedBid=async(tab,lot)=>{
   }finally{if(!before.has(popup))await popup.close();}
 };
 try{const rows=await sandbox.execute(tab,input.job);
- if(input.job.all_scheduled){
+ if(input.job.all_scheduled&&!input.job.scheduled_only){
   const scheduledReport={...lastReport};
   const folder_options=(await page.locator('#status option').allTextContents()).map(label=>label.trim());
   const additional_closed_folders=[];

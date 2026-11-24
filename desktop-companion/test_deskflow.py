@@ -1,9 +1,32 @@
 import tempfile, unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import Mock
 from rp.standard_conditions import annual_fee
 from rp.store import Store
-from deskflow import Deskflow
+from deskflow import Deskflow, IST, upcoming_schedule
+
+
+class AuctionScheduleTests(unittest.TestCase):
+    def test_only_upcoming_lots_and_distinct_source_catalogues(self):
+        first = {
+            'catalogue': 'SBC-PRK-1020-26', 'lot': 'PARKING-SBC-HSRA-MX-170-26-2',
+            'source_catalogue_id': 'ireps:111990', 'start': '27-11-26 13:00:00',
+            'category': 'Parking - Mixed', 'description': 'Mixed parking at HSRA', 'status': 'RP Pending',
+        }
+        second = {**first, 'source_catalogue_id': 'ireps:112447', 'start': '04-12-26 13:00:00',
+                  'lot': 'PARKING-SBC-MLO-MX-142-26-2', 'status': 'Published'}
+        today = {**first, 'source_catalogue_id': 'ireps:111999', 'start': '24-11-26 15:00:00'}
+        checked = datetime(2026, 11, 24, 11, 30, tzinfo=IST)
+        rows = upcoming_schedule([
+            second, first, first, today,
+            {**first, 'start': '24-11-26 11:00:00'},
+            {**first, 'catalogue': 'MYS-PnU-100-26'},
+            {**second, 'lot': 'withdrawn', 'status': 'Withdrawn by Railway'},
+        ], checked)
+        self.assertEqual([row['source_id'] for row in rows], ['ireps:111999', 'ireps:111990', 'ireps:112447'])
+        self.assertEqual(rows[1]['start'], '2026-11-27T13:00:00+05:30')
+        self.assertEqual(rows[1]['catalogue'], rows[2]['catalogue'])
 
 class ConditionsTests(unittest.TestCase):
     def test_third_year_does_not_escalate(self):

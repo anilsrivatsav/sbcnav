@@ -1,7 +1,7 @@
 """Persistent RP review workspace served by the existing desktop connection."""
 import json, os, subprocess, threading, uuid, hashlib, tempfile
 from pathlib import Path
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from dataclasses import asdict
 from rp.store import Store
 from rp.rules import calculate, number, FAMILIES, UNITS, CONTRACT_STATES, reviewed_continuation_matches
@@ -17,6 +17,38 @@ from rp.history_library import HistoryLibrary, POLICY_VERSION, fingerprint
 import re, base64
 from decimal import Decimal
 from contextlib import contextmanager
+
+
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def upcoming_schedule(rows, checked_at):
+    """Keep live SBC lots and their exact catalogue identities and start times."""
+    lots = {}
+    catalogues = {}
+    for row in rows:
+        catalogue = row['catalogue']
+        if not re.match(r'^SBC(?:[-_ ]|$)', catalogue, re.I):
+            continue
+        if re.match(r'^(?:withdrawn|cancelled|canceled|deleted)\b', row.get('status', '').strip(), re.I):
+            continue
+        day, _, clock = row['start'].strip().partition(' ')
+        day = parse_day(day)
+        clock = datetime.strptime(clock.strip(), '%H:%M:%S' if clock.count(':') == 2 else '%H:%M').time()
+        start = datetime.combine(date.fromisoformat(day), clock, IST)
+        if start <= checked_at:
+            continue
+        source_id = row['source_catalogue_id']
+        identity = (catalogue, start)
+        if catalogues.setdefault(source_id, identity) != identity:
+            raise ValueError(f'IREPS returned conflicting dates or names for {catalogue}. Run the check again.')
+        key = source_id, row['lot']
+        lot = {field: row[field] for field in ('catalogue', 'lot', 'category', 'description')}
+        lot.update(source_id=source_id, start=start.isoformat())
+        if key in lots and lots[key] != lot:
+            raise ValueError(f'IREPS returned conflicting entries for {catalogue}, lot {row["lot"]}. Run the check again.')
+        lots[key] = lot
+    return sorted(lots.values(), key=lambda lot: (lot['start'], lot['catalogue'], lot['source_id']))
 
 
 @contextmanager
@@ -93,6 +125,7 @@ class Deskflow:
         self.lock=threading.RLock();self.thread=None
         self.cancelled=threading.Event();self.process=None
         self.previews={}
+        self.schedule_pdf_requests={}
         self._workbook_digests={}
         self.userdir=self.store.path.parent
         self.state={'phase':'ready','message':'Ready to update local workbooks.','error':None}
@@ -218,6 +251,19 @@ class Deskflow:
         # The page receives only progress, never the collected commercial records.
         return {**self.state,'busy':bool(self.thread and self.thread.is_alive()),
                 'updater_busy':self.updater.snapshot()['busy']}
+
+    def set_schedule_pdf(self, request_id, **result):
+        with self.lock:
+            self.schedule_pdf_requests[request_id] = result
+            while len(self.schedule_pdf_requests) > 8:
+                del self.schedule_pdf_requests[next(iter(self.schedule_pdf_requests))]
+
+    def schedule_pdf_status(self):
+        with self.lock:
+            return {
+                request_id: {**result, 'message': self.state['message']} if result['phase'] == 'checking' else result
+                for request_id, result in self.schedule_pdf_requests.items()
+            }
 
     def workbook_rows(self):
         paths=WorkbookSelection(self.userdir/'workbooks.json').paths('D:/ANIL/UK')
@@ -366,6 +412,20 @@ class Deskflow:
             return self.detail(key)
 
     def command(self,action,data):
+        if action == 'schedule-pdf':
+            request_id = data['request_id']
+            with self.updater.lock, self.lock:
+                if self.updater.snapshot()['busy'] or (self.thread and self.thread.is_alive()):
+                    raise ValueError('The Windows companion is working. Try again when its current task finishes.')
+                self.cancelled.clear()
+                self.state.update(phase='login', message='Connecting to IREPS to check upcoming SBC auctions.', error=None)
+                self.set_schedule_pdf(request_id, phase='checking')
+                start = datetime.now(IST).date().isoformat()
+                self.thread = threading.Thread(
+                    target=self.work, args=(action, start, '2099-12-31'), kwargs={'request_id': request_id}, daemon=True
+                )
+                self.thread.start()
+            return self.progress()
         if action=='repair-browser-lists':
             if data!={}:raise ValueError('Expected an empty repair request.')
             with self.updater.lock,self.lock:
@@ -464,13 +524,19 @@ class Deskflow:
             self.thread=threading.Thread(target=self.work,args=(action,start,end,history_base),daemon=True);self.thread.start()
         return self.snapshot()
 
-    def work(self,action,start,end,history_base=None,attempt=0):
+    def work(self,action,start,end,history_base=None,attempt=0,request_id=None):
         page=None;library_scan=None;collection_report={}
         try:
             with self.playwright() as pw, reader_lifetime() as owned_pages:
                 browser=self.engine.browser(pw,{'ireps_only':True},lambda message:self.state.update(message=message))
                 reader=self.reader(browser.contexts[0],lambda message:self.state.update(message=message),self.cancelled.is_set)
                 page=reader.page;owned_pages.append(page);page.bring_to_front();reader.login()
+                if action=='schedule-pdf' and not re.search(
+                    r'(?:Bangalore|Bengaluru)\s+Division\s*[-–]\s*Commercial',
+                    page.locator('body').inner_text()[:2500],
+                    re.I,
+                ):
+                    raise ValueError('Sign in to IREPS under Bengaluru Division - Commercial, then try again.')
                 self.state.update(phase='collecting',message='Reading IREPS catalogues. Keep the updater Chrome window open.')
                 if action=='contracts':
                     reader.navigate('Contracts')
@@ -512,8 +578,10 @@ class Deskflow:
                 endpoint=json.loads((self.engine.STATE/'browser.json').read_text())['port']
                 from rp.browser_runtime import browser_reader_runtime,ireps_browser_endpoint
                 node, playwright_module = browser_reader_runtime()
-                job={'id':uuid.uuid4().hex,'action':{'collect':'scheduled','history':'closed','contracts':'contracts','workbook-history':'closed'}[action]}
+                job={'id':uuid.uuid4().hex,'action':{'collect':'scheduled','schedule-pdf':'scheduled','history':'closed','contracts':'contracts','workbook-history':'closed'}[action]}
                 if action!='collect':job.update(from_date=start,to_date=end)
+                if action=='schedule-pdf':
+                    job.update(all_scheduled=True, stable_ids=True, scheduled_only=True)
                 if action=='workbook-history':job['metadata_only']=True
                 if action=='history':
                     plan=self.library().history_plan(end)
@@ -538,7 +606,7 @@ class Deskflow:
                 if self.cancelled.is_set():raise ValueError('Collection cancelled before reading further catalogues.')
                 with tempfile.TemporaryFile(mode='w+',encoding='utf-8') as diagnostics:
                     self.process=subprocess.Popen([str(node),str(Path(__file__).parent/'rp/collect.mjs')],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=diagnostics,text=True,encoding='utf-8',creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
-                    timer=threading.Timer(7200 if action=='history' else 1800,self.process.kill);timer.start()
+                    timer=threading.Timer(7200 if action=='history' else 720 if action=='schedule-pdf' else 1800,self.process.kill);timer.start()
                     try:
                         self.process.stdin.write(json.dumps(payload));self.process.stdin.close()
                         for line in self.process.stdout:
@@ -565,6 +633,12 @@ class Deskflow:
                         self.process=None
                 if self.cancelled.is_set():raise ValueError('Collection stopped. Completed history catalogues are saved; resume to continue.' if library_scan else 'Collection cancelled. No partial results were imported.')
                 if code or rows is None:raise ValueError(failure or 'Collection stopped or timed out. Retry the scan; saved evidence is retained.')
+                if action=='schedule-pdf':
+                    checked_at = datetime.now(IST)
+                    schedule = upcoming_schedule(rows, checked_at)
+                    self.set_schedule_pdf(request_id, phase='ready', checked_at=checked_at.isoformat(timespec='seconds'), lots=schedule)
+                    self.state.update(phase='complete', message=f'IREPS schedule checked. {len(schedule)} upcoming SBC lots found.', error=None)
+                    return
                 if action=='collect':
                     for row in rows:row['start']=parse_day(row['start'])
                     ids=[self.store.save_lot(row) for row in rows]
@@ -617,6 +691,8 @@ class Deskflow:
                 self.state.update(phase='reconnecting',message='Browser connection interrupted. Reconnecting to resume the saved history checkpoint…',error=None)
                 if not self.cancelled.wait(2):return self.work(action,start,end,history_base,attempt+1)
             self.state.update(phase='error',error=str(exc).split('Call log:')[0][:1400],message='Collection stopped. Previously saved evidence is retained.')
+            if action=='schedule-pdf':
+                self.set_schedule_pdf(request_id, phase='error', message=self.state['error'])
 
     def excel(self,action,data):
         with self.lock:

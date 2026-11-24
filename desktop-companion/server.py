@@ -605,6 +605,7 @@ def deskflow_relay_loop():
             except (OSError, ValueError):
                 ack = None
             overview = public_text(deskflow.overview())
+            overview['schedule_pdf_requests'] = deskflow.schedule_pdf_status()
             from rp.asset_library import snapshot as asset_snapshot
             overview['analysis_library'] = asset_snapshot(deskflow.store)
             overview['archive_sync'] = public_text(archive_sync.snapshot())
@@ -631,13 +632,21 @@ def deskflow_relay_loop():
                         archive_sync.start(force=True,update_local=True)
                     elif command.get('action') == 'save-reviewed':
                         archive_sync.start(force=True,reviewed_only=True)
+                    elif command.get('action') == 'schedule-pdf':
+                        with controller.lock, deskflow.lock:
+                            if software_update_running():
+                                raise RuntimeError('The desktop companion is updating. Wait for it to finish.')
+                            deskflow.command('schedule-pdf', {'request_id': command_id})
                     elif command.get('action') in ('collect', 'history','link-asset','save-review','review-proposal','cancel'):
                         with controller.lock, deskflow.lock:
                             if software_update_running():
                                 raise RuntimeError('The desktop companion is updating. Wait for it to finish.')
                             deskflow.command(command['action'], command.get('payload',{}))
                 except (ValueError, RuntimeError) as exc:
-                    deskflow.state.update(phase='error', error=str(exc), message='Deskflow command could not start.')
+                    if command.get('action') == 'schedule-pdf':
+                        deskflow.set_schedule_pdf(command_id, phase='error', message=str(exc))
+                    else:
+                        deskflow.state.update(phase='error', error=str(exc), message='Deskflow command could not start.')
         except Exception:
             pass  # Retain local collection and retry when the API is available.
         time.sleep(8)

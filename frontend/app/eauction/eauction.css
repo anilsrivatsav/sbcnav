@@ -6,6 +6,11 @@
 .eauction-sheet button{cursor:pointer}
 .eauction-sheet.sheet{max-width:1500px;min-height:100vh;margin:auto;background:#fff;box-shadow:0 0 28px #1f3a5c0c}
 .eauction-sheet .sheet-header{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:20px 32px 18px;border-bottom:1px solid #e6e9ee}
+.eauction-sheet .schedule-downloads{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
+.eauction-sheet .schedule-downloads .button{gap:6px}
+.eauction-sheet .schedule-pdf-status{margin:0;padding:8px 32px;color:#245c35;background:#edf7ee;font-size:12px}
+.eauction-sheet .schedule-pdf-error{color:#991b1b;background:#fef2f2}
+@media(max-width:600px){.eauction-sheet .sheet-header{flex-wrap:wrap}.eauction-sheet .schedule-downloads{justify-content:flex-start}.eauction-sheet .schedule-pdf-status{padding-inline:16px}}
 .eauction-sheet .title{display:flex;align-items:center;gap:15px}
 .eauction-sheet .file-icon{display:grid;place-items:center;width:42px;height:42px;border-radius:8px;background:#188038;color:white;font-size:27px;font-weight:700}
 .eauction-sheet h1{font-size:20px;line-height:1.3;font-weight:600;margin:0}

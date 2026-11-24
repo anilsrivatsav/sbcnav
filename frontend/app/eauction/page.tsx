@@ -2,12 +2,19 @@
 
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Ban, CircleX, CloudUpload, RotateCcw } from 'lucide-react';
+import { ArrowLeft, Ban, CircleX, CloudUpload, Download, RotateCcw } from 'lucide-react';
 import { Booking, Holiday, Proposal, auctionDateError, identifierError, categories, findDate, labelDate, labelTime, normalizeDate, normalizeTime, readCSV, csv, nextIdentifiers, idCategory } from '../../lib/eauction-scheduler';
 import './eauction.css';
+import { deskflowError, deskflowResponse } from '../../lib/deskflow-errors';
+import type { IrepsScheduleLot } from '../../lib/ireps-schedule-pdf';
 
 type Stored = { holidays: Holiday[]; bookings: Booking[] };
 type CollectedLot = {key:string;lot:string;asset:string;category:string;subcategory?:string};
+type SchedulePdfStatus = {desktop_connected: boolean} & (
+  | {phase:'queued'}
+  | {phase:'checking'|'error';message:string}
+  | {phase:'ready';checked_at:string;lots:IrepsScheduleLot[]}
+);
 const initial: Stored = { holidays: [], bookings: [] };
 const storageKey = 'eauction-planner-next-v1';
 const tokenKey = 'sbcnav-deskflow-token';
@@ -27,6 +34,8 @@ export default function AuctionSchedulePage() {
   const [holidayDate,setHolidayDate]=useState('');
   const [holidayName,setHolidayName]=useState('');
   const [message,setMessage]=useState('');
+  const [pdfStatus,setPdfStatus]=useState({busy:false,error:false,message:''});
+  const pdfRequest=useRef<AbortController|null>(null);
   const [liveRows,setLiveRows]=useState<Booking[]|null>(null);
   const [token,setToken]=useState('');
   const [password,setPassword]=useState('');
@@ -65,6 +74,7 @@ export default function AuctionSchedulePage() {
     if(overviewResponse.ok){const overview=await overviewResponse.json();setLots(Array.isArray(overview.lots)?overview.lots:[]);}
   }
   useEffect(()=>{if(token)void refresh(token).catch(error=>setMessage(error.message));},[token]);
+  useEffect(()=>()=>pdfRequest.current?.abort(),[]);
   useEffect(()=>{if(loaded)localStorage.setItem(storageKey,JSON.stringify(data));},[data,loaded]);
   useEffect(()=>{if(!currentDate||!category){setProposal(null);return;}try{setProposal(findDate({noticeDate:currentDate,category,time,subject:'',holidays:data.holidays,bookings}));}catch(error){setProposal(null);setMessage(error instanceof Error?error.message:'Could not calculate a date.');}},[currentDate,category,time,data.holidays,bookings]);
 
@@ -119,8 +129,55 @@ export default function AuctionSchedulePage() {
   function exportBookings(){download('eauction-schedule.csv',csv([['Date','Time','Category','EA Schedule ID','Catalogue ID','Status'],...bookings.map(item=>[item.date,item.time,item.category,item.scheduleId||'',item.catalogueId||'',item.status])]));}
   function exportHolidays(){download('eauction-holidays.csv',csv([['Date','Holiday'],...sortedHolidays.map(item=>[item.date,item.name])]));}
 
+  async function refreshSchedulePdf() {
+    if (!token || pdfRequest.current) return;
+    const controller = new AbortController();
+    pdfRequest.current = controller;
+    const headers = {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json'};
+    const request = async (suffix: string, method = 'GET') => {
+      const response = await fetch('/api/deskflow/schedule-pdf' + suffix, {
+        headers, method, body: method === 'POST' ? '{}' : undefined, cache: 'no-store',
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(25000)]),
+      });
+      if (response.status === 401) {
+        sessionStorage.removeItem(tokenKey);
+        setToken('');
+        setMessage('Session expired. Unlock Auction Schedule again.');
+      }
+      return response;
+    };
+    setPdfStatus({busy:true,error:false,message:'Requesting a fresh IREPS schedule…'});
+    try {
+      const started = await deskflowResponse<{request_id:string}>(await request('', 'POST'), 'The IREPS check could not start.');
+      const query = '?request_id=' + encodeURIComponent(started.request_id);
+      const deadline = Date.now() + 35 * 60_000;
+      while (Date.now() < deadline && !controller.signal.aborted) {
+        const response = await request(query);
+        const status = await deskflowResponse<SchedulePdfStatus>(response, 'The IREPS check could not be verified.');
+        if (status.phase === 'error') throw Error(status.message);
+        if (status.phase === 'ready') {
+          const {makeIrepsSchedulePdf} = await import('../../lib/ireps-schedule-pdf');
+          if (controller.signal.aborted) return;
+          makeIrepsSchedulePdf(status.lots, status.checked_at).save(`SBC-Auction-Schedule-${status.checked_at.slice(0,10)}.pdf`);
+          setPdfStatus({busy:false,error:false,message:'Latest IREPS schedule downloaded.'});
+          return;
+        }
+        const statusMessage = !status.desktop_connected ? 'The Windows companion disconnected. Waiting for it to reconnect…'
+          : status.phase === 'queued' ? 'Waiting for the Windows companion…' : status.message;
+        setPdfStatus({busy:true,error:false,message:statusMessage});
+        await new Promise<void>(resolve => window.setTimeout(resolve, 3000));
+      }
+      if (!controller.signal.aborted) throw Error('The IREPS check timed out. Check the Windows companion and try again.');
+    } catch (error) {
+      if (!controller.signal.aborted) setPdfStatus({busy:false,error:true,message:deskflowError(error, 'Unable to download the IREPS schedule.')});
+    } finally {
+      pdfRequest.current = null;
+    }
+  }
+
   return <main className="eauction-sheet sheet">
-    <header className="sheet-header"><div className="title"><Link href="/" className="back-link" aria-label="Back to SBCNAV" title="Back to SBCNAV"><ArrowLeft size={18}/></Link><span className="file-icon">▦</span><div><h1>Auction Schedule</h1><p>Automated eAuction date planner</p></div></div><button className="button outline" onClick={exportBookings}>Download schedule CSV</button></header>
+    <header className="sheet-header"><div className="title"><Link href="/" className="back-link" aria-label="Back to SBCNAV" title="Back to SBCNAV"><ArrowLeft size={18}/></Link><span className="file-icon">▦</span><div><h1>Auction Schedule</h1><p>Automated eAuction date planner</p></div></div><div className="schedule-downloads">{token&&<button className="button primary" disabled={pdfStatus.busy} onClick={()=>void refreshSchedulePdf()}><Download size={14}/>{pdfStatus.busy?'Checking IREPS…':'Update & download IREPS PDF'}</button>}<button className="button outline" onClick={exportBookings}>Download schedule CSV</button></div></header>
+    {token&&pdfStatus.message&&<p className={`schedule-pdf-status${pdfStatus.error?' schedule-pdf-error':''}`} role={pdfStatus.error?'alert':'status'}>{pdfStatus.message}</p>}
     {!token?<form className="work-area" onSubmit={unlock}><div className="section-title"><h2>Unlock Auction Schedule</h2><span>Use the same password as Deskflow.</span></div><div className="entry-form"><label className="category-field">Password<input type="password" autoFocus required value={password} onChange={event=>setPassword(event.target.value)}/></label><button className="button primary" type="submit">Unlock</button></div>{message&&<p className="message" role="alert">{message}</p>}</form>:<section className="work-area">
       <div className="section-title"><h2>New row</h2><span>Choose a category. Date and time fill automatically.</span></div>
       <div className="entry-form">
