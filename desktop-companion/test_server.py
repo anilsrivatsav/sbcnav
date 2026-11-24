@@ -72,6 +72,23 @@ class ControllerTests(unittest.TestCase):
         self.assertIsNone(self.controller.recent_receipt_evidence([completed],{**config,'existing_invoices':[]}))
         self.assertIsNone(self.controller.recent_receipt_evidence([completed],{**config,'end':'25/11/2026'}))
 
+    def test_inventory_resumes_at_unchecked_category(self):
+        from contract_collector import collect_inventory
+        asof = '24/11/2026'
+        record = {'contract':'SBC-EXAMPLE','contract_date':'01/11/2026'}
+        previous = {'asof':asof,'contracts':[record],'details':{'SBC-EXAMPLE':{}},
+                    'payments':[],'errors':[],'contract_conflicts':{},'warnings':['Source warning'],
+                    'completed_categories':['Advertising'],'completed_payment_categories':['Advertising']}
+        reader = unittest.mock.Mock(warnings=[])
+        reader.read_category_rows.return_value = []
+        with patch('contract_collector.CATEGORIES',['Advertising','Catering']):
+            complete = collect_inventory(reader,self.controller,asof,unittest.mock.Mock(),previous=previous)
+        self.assertEqual(complete['contracts'],[record])
+        self.assertEqual(complete['warnings'],['Source warning'])
+        self.assertTrue(complete['collection_complete'])
+        self.assertEqual([call.args[:2] for call in reader.read_category_rows.call_args_list],
+                         [('Contracts','Catering'),('Payments','Catering')])
+
     def test_full_inventory_failure_keeps_and_applies_completed_receipts(self):
         run = {'run_id': 'today', 'state': 'awaiting_ireps', 'connector': {
             'start': '16/11/2026', 'end': '24/11/2026', 'categories': ['Advertising'],

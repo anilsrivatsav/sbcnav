@@ -234,6 +234,15 @@ class Controller:
                         contract_path = STATE / ('contracts-' + run['run_id'] + '.json')
                         try:
                             options = {'master_contracts': set(cfg['master_contracts'])} if 'master_contracts' in cfg else {}
+                            if action == 'inventory' and saved and saved['run_id'] != run['run_id']:
+                                try:
+                                    previous = read_state(STATE / ('contracts-' + saved['run_id'] + '.json'))
+                                except (OSError, ValueError):
+                                    previous = None
+                                if previous and previous.get('asof') == cfg['end'] and not previous.get('collection_complete'):
+                                    options['previous'] = previous
+                                    write_state(contract_path, previous)
+                                    self.log(f"Resuming today's contract checkpoint with {len(previous['completed_categories'])} categories already checked.")
                             evidence['contract_reconciliation'] = collect_inventory(
                                 reader, self, cfg['end'], lambda data: write_state(contract_path, data), **options)
                         except (BrowserTimeout, IncompleteResultsError):

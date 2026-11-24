@@ -9,14 +9,23 @@ CATEGORIES = ['Advertising', 'Misc-Static-Services', 'Misc-Mobile-Services',
               'Catering', 'MPS', 'Pay and Use', 'Parcel']
 
 
-def collect_inventory(reader, controller, asof, checkpoint, *, master_contracts=None):
-    evidence = {'asof': asof, 'contracts': [], 'details': {}, 'payments': [], 'errors': [],
-                'contract_conflicts': {},
-                'warnings': [], 'completed_categories': [], 'completed_payment_categories': []}
+def collect_inventory(reader, controller, asof, checkpoint, *, master_contracts=None, previous=None):
+    evidence = previous if previous and previous.get('asof') == asof else {
+        'asof': asof, 'contracts': [], 'details': {}, 'payments': [], 'errors': [],
+        'contract_conflicts': {}, 'warnings': [], 'completed_categories': [], 'completed_payment_categories': []}
+    if evidence.get('collection_complete'):
+        return evidence
+    prior_warnings = evidence['warnings'][:]
+
+    def save_progress():
+        evidence['warnings'] = list(dict.fromkeys([*prior_warnings, *reader.warnings]))
+        checkpoint(evidence)
 
     reader.navigate('Contracts')
-    seen = {}
+    seen = {re.sub(r'\s+', '', item['contract']).upper(): item for item in evidence['contracts']}
     for category in CATEGORIES:
+        if category in evidence['completed_categories']:
+            continue
         controller.log('Contract inventory: ' + category)
         for row in reader.read_category_rows('Contracts', category, 'contracts',
                                              start=CONTRACT_START, end=asof):
@@ -37,7 +46,7 @@ def collect_inventory(reader, controller, asof, checkpoint, *, master_contracts=
             seen[key] = item
         evidence['contracts'] = list(seen.values())
         evidence['completed_categories'].append(category)
-        checkpoint(evidence)
+        save_progress()
     def needs_master_agreement(item):
         key, record = item
         if master_contracts is None or key in master_contracts or record['status'].upper() != 'LIVE':
@@ -60,6 +69,8 @@ def collect_inventory(reader, controller, asof, checkpoint, *, master_contracts=
 
     ordered = sorted(seen.items(), key=detail_order)
     for index, (key, record) in enumerate(ordered, 1):
+        if key in evidence['details']:
+            continue
         controller.checkpoint()
         controller.log(f'Official contract details {index}/{len(ordered)}: {record["contract"]}')
         try:
@@ -95,13 +106,18 @@ def collect_inventory(reader, controller, asof, checkpoint, *, master_contracts=
                 evidence['details'][key]['agreement'] = reader.page.locator('body').inner_text()
         except Exception as exc:
             reader.check()  # Abort on a lost session or a closed window.
-            evidence['errors'].append({'contract': record['contract'], 'stage': 'details',
-                                       'error_type': type(exc).__name__})
+            item = {'contract': record['contract'], 'stage': 'details', 'error_type': type(exc).__name__}
+            if item not in evidence['errors']:
+                evidence['errors'].append(item)
             controller.log('Detail verification needs review: ' + record['contract'])
-        checkpoint(evidence)
+        else:
+            evidence['errors'] = [item for item in evidence['errors'] if item['contract'] != record['contract']]
+        save_progress()
     reader.navigate('Payments')
-    invoices = {}
+    invoices = {item['invoice']: item for item in evidence['payments']}
     for category in CATEGORIES:
+        if category in evidence['completed_payment_categories']:
+            continue
         controller.log('Full contract receipt inventory: ' + category)
         for row in reader.read_category_rows('Payments', category, 'paid',
                                              kind='Previous Payments Made', start='01/01/1900', end='31/12/2099'):
@@ -115,11 +131,11 @@ def collect_inventory(reader, controller, asof, checkpoint, *, master_contracts=
             invoices[item['invoice']] = item
         evidence['payments'] = list(invoices.values())
         evidence['completed_payment_categories'].append(category)
-        checkpoint(evidence)
-    evidence['warnings'] = [*reader.warnings, *(
+        save_progress()
+    evidence['warnings'] = list(dict.fromkeys([*prior_warnings, *reader.warnings, *(
         f'Conflicting IREPS inventory rows held for review: {key}'
         for key in sorted(evidence['contract_conflicts'])
-    )]
+    )]))
     evidence['collection_complete'] = True
     checkpoint(evidence)
     return evidence
