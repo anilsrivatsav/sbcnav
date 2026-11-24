@@ -11,7 +11,7 @@ from database import SessionLocal, engine
 from models import McdoSyncRun, ContractRegistryContract
 from api_utils import envelope
 from mcdo.core import actual, entered, key, day, master_contract_key, relevant, invoice, contract_terms, latest_recorded_date
-from mcdo.planner import main_plan
+from mcdo.planner import main_plan, pending_master_schedule
 from mcdo.checkpoint import compatible, pending, seven_day_failures
 from mcdo.sheets_api import Sheets, SOURCES, computed_workbook
 from mcdo.auth import administrator, issue_session
@@ -69,7 +69,8 @@ def bridge_config(row):
     before=row.payload['before']
     invoices=[str(actual(r[19])) for r in before['earnings']['grid'] if len(r)>19 and str(actual(r[19])).startswith('ES')]
     due={key(actual(r[2])):actual(r[17]) for r in before['master']['grid'][1:] if len(r)>17 and actual(r[2]) and actual(r[17])}
-    master_contracts = sorted({k for r in before['master']['grid'][1:] if (k := master_contract_key(r))})
+    master_contracts = sorted({k for r in before['master']['grid'][1:]
+                               if (k := master_contract_key(r)) and not pending_master_schedule(r)})
     return {'run_id':row.run_id,'start':row.payload['start'],'end':row.payload['end'],'categories':CATEGORIES,'existing_invoices':invoices,'known_due':due,'master_contracts':master_contracts,'full_contract_reconciliation':True}
 
 @router.get('')
@@ -178,6 +179,8 @@ def evidence_plan(payload, evidence):
     # from a complete inventory can create these additional Master rows.
     inventory = evidence.get('contract_reconciliation') or {}
     existing_contracts = {k for r in payload['before']['master']['grid'][1:] if (k := master_contract_key(r))}
+    pending_schedules = {k for r in payload['before']['master']['grid'][1:]
+                         if (k := master_contract_key(r)) and pending_master_schedule(r)}
     lookup = {key(item['contract']):item for item in inventory.get('contracts',[])}
     statuses.update({k:record for k,record in lookup.items() if k in existing_contracts})
     paid_by_contract = {}
@@ -190,7 +193,7 @@ def evidence_plan(payload, evidence):
             continue
     for k, detail in inventory.get('details',{}).items():
         record = lookup.get(k)
-        if not record or k in existing_contracts or k in terms or not detail.get('agreement'):
+        if not record or (k in existing_contracts and k not in pending_schedules) or k in terms or not detail.get('agreement'):
             continue
         category = record['category']
         if not (relevant(category) or category.startswith('Pay and Use - Lounges / Waiting / Retiring / Cloak Rooms')):

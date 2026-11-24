@@ -105,6 +105,18 @@ class McdoTests(unittest.TestCase):
         row = next(rows[0] for n,c,rows in plan['master'] if n == 3 and c == 1)
         self.assertEqual((entered(row[2]),entered(row[3])),(award['contract'],'SMVB'))
         self.assertIn('First 19 of 20 open installments shown',entered(row[36]))
+
+        pending = [{} for _ in range(37)]
+        pending[2] = cell(award['contract'])
+        pending[36] = cell('IREPS award confirmed. Installment schedule pending verification.')
+        payload['before']['master']['grid'].append(pending)
+        with patch.object(api,'contract_terms',return_value=terms):
+            plan = api.evidence_plan(payload,evidence)
+        self.assertEqual(plan['summary']['new_contracts'],0)
+        row = next(rows[0] for n,c,rows in plan['master'] if n == 3 and c == 1)
+        self.assertIsInstance(entered(row[17]),int)
+        self.assertIn('IREPS award confirmed.',entered(row[36]))
+        self.assertNotIn('pending verification',entered(row[36]))
     def test_interrupted_sheets_import_resumes_in_database_only_mode(self):
         from fastapi import BackgroundTasks
         with self.sessions.begin() as session:

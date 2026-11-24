@@ -4,6 +4,11 @@ from copy import deepcopy
 from datetime import date
 from .core import actual, entered, cell, literal, key, day, serial, earning_row, status_name, managed_note, unpaid_dates, master_contract_key, relevant
 
+PENDING_SCHEDULE_NOTE = 'Installment schedule pending verification.'
+
+def pending_master_schedule(row):
+    return len(row)>36 and not actual(row[17]) and PENDING_SCHEDULE_NOTE in str(entered(row[36]))
+
 def main_plan(earnings, master, payments, terms, statuses, failures, asof):
     if actual(earnings[0][19]) != 'Invoice' and 'invoice' not in str(actual(earnings[0][19])).lower():
         # Some maintained sheets use multi-row headings. Match invoice evidence in data instead.
@@ -53,6 +58,7 @@ def main_plan(earnings, master, payments, terms, statuses, failures, asof):
         n = bycontract[k]
         row = deepcopy(master[n-1]) if n-1 < len(master) else [{} for _ in range(37)]
         new = k in newcontracts
+        pending_schedule = not new and pending_master_schedule(row)
         if new:
             s = statuses[k]
             nums = re.search(r'^SBC-(\d+)-',s['contract'])
@@ -65,8 +71,8 @@ def main_plan(earnings, master, payments, terms, statuses, failures, asof):
         else:
             current = actual(master[n-1][17])
             if current == '':
-                # An empty due date can mean all installments were already paid.
-                dates = []
+                # A marked award did not yet have verified schedule dates.
+                dates = unpaid_dates(t,paid.get(k,set())) if pending_schedule else []
             else:
                 current = day(current)
                 if current not in t['dates']:
@@ -82,7 +88,10 @@ def main_plan(earnings, master, payments, terms, statuses, failures, asof):
         schedule_note = f"Paid installments verified {asof}; next due {dates[0].strftime('%d-%m-%Y') if dates else 'none (final installment paid)'}."
         if truncated:
             schedule_note += f' First 19 of {len(dates)} open installments shown.'
-        row[36] = literal(managed_note(entered(row[36]), schedule_note))
+        prior_note = str(entered(row[36]))
+        if pending_schedule:
+            prior_note = prior_note.replace(PENDING_SCHEDULE_NOTE, '').strip()
+        row[36] = literal(managed_note(prior_note, schedule_note))
         mpatches.append((n,1,[row]))
         if new:
             formats.append(('master', f'A{edge}:AK{edge}', f'A{n}:AK{n}'))

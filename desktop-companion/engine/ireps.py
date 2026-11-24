@@ -57,7 +57,7 @@ class Ireps:
         with self.page.expect_navigation(wait_until='domcontentloaded'):
             self.click_navigation_link(link)
         self.page.locator('#menuLink').wait_for(state='visible')
-        self.page.wait_for_function("document.querySelector('#menuLink')?.options.length > 0")
+        self.page.wait_for_function("document.querySelector('#menuLink')?.options.length > 0", polling=250)
 
     def click_navigation_link(self, label):
         link = self.page.get_by_role('link', name=label, exact=True)
@@ -105,7 +105,9 @@ class Ireps:
         # can satisfy a navigation wait while the OLD result page still exists.
         # Wait for a different document with a parsed result body. Images or
         # other unrelated resources can keep the full page loading indefinitely.
-        self.page.wait_for_function("(stamp) => performance.timeOrigin !== stamp && document.readyState !== 'loading' && /(?:\\d+\\s*Records Found|No (?:results|records) Found)/i.test(document.body?.innerText || '')",arg=previous_document)
+        self.page.wait_for_function(
+            "(stamp) => performance.timeOrigin !== stamp && document.readyState !== 'loading' && /(?:\\d+\\s*Records Found|No (?:results|records) Found)/i.test(document.body?.innerText || '')",
+            arg=previous_document, polling=250)
 
     def page_rows(self, mode):
         # Read rendered HTML only. No undocumented endpoints or transaction actions.
@@ -199,7 +201,18 @@ class Ireps:
                 subcategories = self.page.locator('#regSubCat').evaluate(
                     "(el) => [...el.options].filter(o => !o.disabled && o.value && o.value !== '-1').map(o => o.value)")
                 if len(subcategories)>1:
-                    rows = self.read_subcategories(navigation, category, filters, subcategories, exc.total)
+                    try:
+                        rows = self.read_subcategories(navigation, category, filters, subcategories, exc.total)
+                    except (IncompleteResultsError, TimeoutError):
+                        self.check()
+                        self.log(f'{category} subcategory query timed out. Retrying the full category with its numbered pager.')
+                        self.navigate(navigation)
+                        self.search(category, **filters)
+                        try:
+                            return self.all_rows(mode)
+                        except (IncompleteResultsError, TimeoutError):
+                            self.check()
+                        rows = None
                     if rows is not None:
                         return rows
             if dated_query:
