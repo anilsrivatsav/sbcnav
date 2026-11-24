@@ -251,8 +251,9 @@ class Controller:
                         from contract_collector import collect_inventory
                         contract_path = STATE / ('contracts-' + run['run_id'] + '.json')
                         try:
+                            options = {'master_contracts': set(cfg['master_contracts'])} if 'master_contracts' in cfg else {}
                             evidence['contract_reconciliation'] = collect_inventory(
-                                reader, self, cfg['end'], lambda data: write_state(contract_path, data))
+                                reader, self, cfg['end'], lambda data: write_state(contract_path, data), **options)
                         except (BrowserTimeout, IncompleteResultsError):
                             warning = ('Full contract inventory deferred: IREPS pagination or navigation '
                                        'failed. The completed receipts and Master check will continue.')

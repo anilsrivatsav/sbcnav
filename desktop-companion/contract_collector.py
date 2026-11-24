@@ -1,5 +1,6 @@
 """Read the official contract and receipt inventories in the existing IREPS session."""
 import re
+from core import day, relevant
 
 CONTRACT_START = '01/01/2020'
 
@@ -8,7 +9,7 @@ CATEGORIES = ['Advertising', 'Misc-Static-Services', 'Misc-Mobile-Services',
               'Catering', 'MPS', 'Pay and Use', 'Parcel']
 
 
-def collect_inventory(reader, controller, asof, checkpoint):
+def collect_inventory(reader, controller, asof, checkpoint, *, master_contracts=None):
     evidence = {'asof': asof, 'contracts': [], 'details': {}, 'payments': [], 'errors': [],
                 'contract_conflicts': {},
                 'warnings': [], 'completed_categories': [], 'completed_payment_categories': []}
@@ -37,7 +38,20 @@ def collect_inventory(reader, controller, asof, checkpoint):
         evidence['contracts'] = list(seen.values())
         evidence['completed_categories'].append(category)
         checkpoint(evidence)
-    ordered = sorted(seen.items(), key=lambda item: (not item[0].startswith('SBC-RDN-'), item[0]))
+    def needs_master_agreement(item):
+        key, record = item
+        if master_contracts is None or key in master_contracts or record['status'].upper() != 'LIVE':
+            return False
+        category = record['category']
+        if not (relevant(category) or category.startswith('Pay and Use - Lounges / Waiting / Retiring / Cloak Rooms')):
+            return False
+        try:
+            return day(record['end']) >= day(asof)
+        except ValueError:
+            return False
+
+    ordered = sorted(seen.items(), key=lambda item: (not needs_master_agreement(item),
+                     not item[0].startswith('SBC-RDN-'), item[0]))
     for index, (key, record) in enumerate(ordered, 1):
         controller.checkpoint()
         controller.log(f'Official contract details {index}/{len(ordered)}: {record["contract"]}')
@@ -70,6 +84,8 @@ def collect_inventory(reader, controller, asof, checkpoint):
                     schedule_page.close()
             evidence['details'][key] = {'contract': record['contract'],
                 'fields': fields, 'schedule': schedule, 'checked_through': asof}
+            if needs_master_agreement((key, record)):
+                evidence['details'][key]['agreement'] = reader.page.locator('body').inner_text()
         except Exception as exc:
             reader.check()  # Abort on a lost session or a closed window.
             evidence['errors'].append({'contract': record['contract'], 'stage': 'details',

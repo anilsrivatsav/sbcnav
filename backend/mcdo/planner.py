@@ -2,7 +2,7 @@
 import re
 from copy import deepcopy
 from datetime import date
-from .core import actual, entered, cell, literal, key, day, serial, earning_row, status_name, managed_note, unpaid_dates, master_contract_key
+from .core import actual, entered, cell, literal, key, day, serial, earning_row, status_name, managed_note, unpaid_dates, master_contract_key, relevant
 
 def main_plan(earnings, master, payments, terms, statuses, failures, asof):
     if actual(earnings[0][19]) != 'Invoice' and 'invoice' not in str(actual(earnings[0][19])).lower():
@@ -54,12 +54,12 @@ def main_plan(earnings, master, payments, terms, statuses, failures, asof):
         row = deepcopy(master[n-1]) if n-1 < len(master) else [{} for _ in range(37)]
         new = k in newcontracts
         if new:
-            p = next(p for p in payments if key(p['contract']) == k)
             s = statuses[k]
-            nums = re.search(r'^SBC-(\d+)-',p['contract'])
-            station = nums[1] if nums else next((v for v in ('SMVB','BWT','YPR','DPJ','YNK','KGI','HSRA','SBC') if v in s['asset'].split('-')[2:]),'')
+            nums = re.search(r'^SBC-(\d+)-',s['contract'])
+            asset = s['asset'].split('-')
+            station = nums[1] if nums else asset[2] if len(asset) >= 5 and asset[1] == 'SBC' and re.fullmatch(r'[A-Z]{1,5}', asset[2]) else ''
             policy = 'Parking' if s['category'].startswith('Parking') else 'PMBJK' if s['category'].startswith('PMBJK') else 'ATM' if s['category'].startswith('ATM') else 'OOH' if 'Out of Home' in s['category'] else 'MA' if s['category'].startswith('Advertising') else 'MISC'
-            for j,v in {1:s['firm'],2:p['contract'],3:station,4:policy,5:serial(s['contract_date']),6:s['category'],7:t['fee'],8:t['value'],10:status_name(t['status']),11:f'=H{n}/4',12:serial(t['start']),13:serial(t['end']),14:t['years'],15:'=TODAY()',16:f'=IF(R{n}="","",P{n}-R{n})'}.items():
+            for j,v in {1:s['firm'],2:s['contract'],3:station,4:policy,5:serial(s['contract_date']),6:s['category'],7:t['fee'],8:t['value'],10:status_name(t['status']),11:f'=H{n}/4',12:serial(t['start']),13:serial(t['end']),14:t['years'],15:'=TODAY()',16:f'=IF(R{n}="","",P{n}-R{n})'}.items():
                 row[j] = cell(v) if j in (11,15,16) else literal(v)
             dates = unpaid_dates(t,paid.get(k,set()))
         else:
@@ -72,13 +72,17 @@ def main_plan(earnings, master, payments, terms, statuses, failures, asof):
                 if current not in t['dates']:
                     raise RuntimeError(f"Existing due date for {t['contract']} disagrees with IREPS. Review before updating.")
                 dates = [d for d in unpaid_dates(t,paid.get(k,set())) if d >= current]
-        if len(dates) > 19:
+        truncated = len(dates) > 19
+        if truncated and not t.get('allow_schedule_preview'):
             raise RuntimeError('Payment schedule exceeds the available master columns R:AJ.')
         for j in range(17,36):
             row[j] = cell(serial(dates[j-17])) if j-17 < len(dates) else {}
         if not dates:
             row[16] = cell(f'=IF(R{n}="","",P{n}-R{n})')
-        row[36] = literal(managed_note(entered(row[36]), f"Paid installments verified {asof}; next due {dates[0].strftime('%d-%m-%Y') if dates else 'none (final installment paid)'}."))
+        schedule_note = f"Paid installments verified {asof}; next due {dates[0].strftime('%d-%m-%Y') if dates else 'none (final installment paid)'}."
+        if truncated:
+            schedule_note += f' First 19 of {len(dates)} open installments shown.'
+        row[36] = literal(managed_note(entered(row[36]), schedule_note))
         mpatches.append((n,1,[row]))
         if new:
             formats.append(('master', f'A{edge}:AK{edge}', f'A{n}:AK{n}'))
@@ -91,6 +95,8 @@ def main_plan(earnings, master, payments, terms, statuses, failures, asof):
             return None
         state = status_name(s['status'])
         issue = '; '.join(issue_bycontract.get(k,[]))
+        if not relevant(s['category']):
+            return f"Checked {asof}: contract {state}"
         return f"Checked {asof}: contract {state}" + ('; '+issue if issue else '; no beyond-grace payment failure listed')
     # Apply contract states only from explicit IREPS status, never from absence in a scan.
     for k,n in bycontract.items():
@@ -100,7 +106,8 @@ def main_plan(earnings, master, payments, terms, statuses, failures, asof):
         existing_patch = next((p for p in mpatches if p[0] == n),None)
         if existing_patch:
             existing_patch[2][0][10] = cell(status_name(statuses[k]['status']))
-            existing_patch[2][0][36] = literal(managed_note(entered(existing_patch[2][0][36]),msg))
+            note = entered(existing_patch[2][0][36])
+            existing_patch[2][0][36] = literal(note + ' ' + msg)
         else:
             if entered(master[n-1][10]) != status_name(statuses[k]['status']):
                 mpatches.append((n,11,[[cell(status_name(statuses[k]['status']))]]))
@@ -118,8 +125,10 @@ def main_plan(earnings, master, payments, terms, statuses, failures, asof):
     report = [['Checked on','Contract','Category','Contractor','Contract status','Failure status','Amount due','Pay by date','CP start','CP end']]
     for k,s in sorted(statuses.items()):
         failed = [f for f in failures if key(f['contract']) == k]
+        empty_failure_status = ('No beyond-grace failure listed' if relevant(s['category'])
+                                else 'Payment failures not checked for this category')
         for f in failed or [None]:
-            report.append([asof,s['contract'],s['category'],s['firm'],status_name(s['status']),f['status'] if f else 'No beyond-grace failure listed',f['amount'] if f else '',f['due'] if f else '',s['start'],s['end']])
+            report.append([asof,s['contract'],s['category'],s['firm'],status_name(s['status']),f['status'] if f else empty_failure_status,f['amount'] if f else '',f['due'] if f else '',s['start'],s['end']])
     if any(key(f['contract']) not in statuses for f in failures):
         raise RuntimeError('A failed-payment contract was missing from the contract scan. Expand contract_scan_from in config and rerun.')
     return dict(earnings=epatches, master=mpatches, formats=formats, status=[[literal(v) for v in r] for r in report],

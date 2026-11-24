@@ -14,7 +14,7 @@ def seven_day_failures(status_rows,asof):
     result=[]
     for row in status_rows[1:]:
         values=[entered(c) for c in row]
-        if values[5].startswith('No beyond-grace'):continue
+        if values[5].startswith('No beyond-grace') or not values[7]:continue
         due=day(values[7]);grace=due+timedelta(days=7)
         overdue=(day(asof)-grace).days
         if overdue>0:

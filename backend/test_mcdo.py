@@ -73,6 +73,38 @@ class McdoTests(unittest.TestCase):
         self.assertEqual(fake.calls,[]);self.assertEqual(self.state(),'needs_review')
     def test_incomplete_ireps_scan_is_refused(self):
         with self.assertRaisesRegex(ValueError,'incomplete'):api.evidence_plan({}, {'completed_categories':['Advertising']})
+
+    def test_live_award_creates_master_row_before_first_receipt(self):
+        last_receipt = [{} for _ in range(28)]
+        last_receipt[2] = cell('23/11/2026')
+        last_receipt[19] = cell('ES_EXISTING')
+        earnings_heading = [{} for _ in range(28)]
+        earnings_heading[19] = cell('Invoice')
+        master_heading = [{} for _ in range(37)]
+        master_heading[2], master_heading[16] = cell('Contract Number'), cell('Payment Due')
+        master_existing = [{} for _ in range(37)]
+        master_existing[2] = cell('SBC-Existing-26')
+        first, last = '23/11/2026', '24/11/2026'
+        payload = {'start':first,'end':last,'before':{
+            'earnings':{'grid':[earnings_heading,last_receipt]},
+            'master':{'grid':[master_heading,master_existing]}}}
+        award = {'contract':'SBC-Foodtruck-SMVT-26','contract_date':'18/11/2026','firm':'Example',
+                 'category':'Misc-Static-Services - Static General','asset':'MSS-SBC-SMVB-STGen-185',
+                 'start':'15/12/2026','end':'14/12/2031','status':'LIVE'}
+        contract_key = award['contract'].upper()
+        evidence = {'start':first,'end':last,'completed_categories':api.CATEGORIES,'contracts':[award],
+                    'contract_reconciliation':{'contracts':[award],'details':{
+                        contract_key:{'agreement':'Verified agreement','schedule':[]}}}}
+        terms = {'contract':award['contract'],'fee':3900000,'value':19500000,
+                 'start':date(2026,12,15),'end':date(2031,12,14),'status':'LIVE','years':5,
+                 'dates':[date(2026 + (11 + 3 * i) // 12, (11 + 3 * i) % 12 + 1, 15) for i in range(20)]}
+        with patch.object(api,'contract_terms',return_value=terms):
+            plan = api.evidence_plan(payload,evidence)
+        self.assertEqual(plan['summary']['new_contracts'],1)
+        self.assertEqual(plan['summary']['new_invoices'],0)
+        row = next(rows[0] for n,c,rows in plan['master'] if n == 3 and c == 1)
+        self.assertEqual((entered(row[2]),entered(row[3])),(award['contract'],'SMVB'))
+        self.assertIn('First 19 of 20 open installments shown',entered(row[36]))
     def test_interrupted_sheets_import_resumes_in_database_only_mode(self):
         from fastapi import BackgroundTasks
         with self.sessions.begin() as session:

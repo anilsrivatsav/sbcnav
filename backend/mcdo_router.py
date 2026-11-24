@@ -10,7 +10,7 @@ from sqlalchemy import select, text
 from database import SessionLocal, engine
 from models import McdoSyncRun, ContractRegistryContract
 from api_utils import envelope
-from mcdo.core import actual, entered, key, day, relevant, invoice, contract_terms, latest_recorded_date
+from mcdo.core import actual, entered, key, day, master_contract_key, relevant, invoice, contract_terms, latest_recorded_date
 from mcdo.planner import main_plan
 from mcdo.checkpoint import compatible, pending, seven_day_failures
 from mcdo.sheets_api import Sheets, SOURCES, computed_workbook
@@ -69,7 +69,8 @@ def bridge_config(row):
     before=row.payload['before']
     invoices=[str(actual(r[19])) for r in before['earnings']['grid'] if len(r)>19 and str(actual(r[19])).startswith('ES')]
     due={key(actual(r[2])):actual(r[17]) for r in before['master']['grid'][1:] if len(r)>17 and actual(r[2]) and actual(r[17])}
-    return {'run_id':row.run_id,'start':row.payload['start'],'end':row.payload['end'],'categories':CATEGORIES,'existing_invoices':invoices,'known_due':due,'full_contract_reconciliation':True}
+    master_contracts = sorted({k for r in before['master']['grid'][1:] if (k := master_contract_key(r))})
+    return {'run_id':row.run_id,'start':row.payload['start'],'end':row.payload['end'],'categories':CATEGORIES,'existing_invoices':invoices,'known_due':due,'master_contracts':master_contracts,'full_contract_reconciliation':True}
 
 @router.get('')
 def mcdo(year: str | None=Query(None,pattern=r'^20\d{2}-\d{2}$')):
@@ -173,7 +174,38 @@ def evidence_plan(payload, evidence):
             k=key(actual(r[2]))
             if day(actual(r[17])) in paid_due.get(k,set()):required.add(k)
     if not required.issubset(terms):raise ValueError('Official agreement/schedule evidence is missing for a paid installment.')
-    # A schedule-only update still needs a validated payment record for newly created contracts.
+    # Awards can reach the register before their first invoice. Only agreements
+    # from a complete inventory can create these additional Master rows.
+    inventory = evidence.get('contract_reconciliation') or {}
+    existing_contracts = {k for r in payload['before']['master']['grid'][1:] if (k := master_contract_key(r))}
+    lookup = {key(item['contract']):item for item in inventory.get('contracts',[])}
+    statuses.update({k:record for k,record in lookup.items() if k in existing_contracts})
+    paid_by_contract = {}
+    for record in inventory.get('payments',[]):
+        try:
+            if float(str(record['total']).replace(',','')) > 0:
+                paid_by_contract.setdefault(key(record['contract']), set()).add(day(record['due']))
+        except ValueError:
+            # Missing due dates cannot establish which installment was paid.
+            continue
+    for k, detail in inventory.get('details',{}).items():
+        record = lookup.get(k)
+        if not record or k in existing_contracts or k in terms or not detail.get('agreement'):
+            continue
+        category = record['category']
+        if not (relevant(category) or category.startswith('Pay and Use - Lounges / Waiting / Retiring / Cloak Rooms')):
+            continue
+        if key(record['status']) != 'LIVE' or day(record['end']) < day(payload['end']):
+            continue
+        try:
+            item = contract_terms(detail['agreement'],detail['schedule'],record['contract'],record['status'])
+        except ValueError as exc:
+            evidence.setdefault('warnings',[]).append(f"Master agreement needs review for {record['contract']}: {exc}")
+            continue
+        statuses[k] = record
+        item['allow_schedule_preview'] = True
+        item['paid_dates'] = sorted(paid_by_contract.get(k, set()))
+        terms[k] = item
     payments.sort(key=lambda p:(day(p['paid']),p['invoice']))
     plan=main_plan(payload['before']['earnings']['grid'],payload['before']['master']['grid'],payments,terms,statuses,evidence.get('failures',[]),payload['end'])
     return plan
