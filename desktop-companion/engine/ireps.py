@@ -15,6 +15,11 @@ class IncompleteResultsError(RuntimeError):
 class FilteredResultError(IncompleteResultsError):
     """The exact-contract result retained category-wide pagination metadata."""
 
+class DenseResultsError(IncompleteResultsError):
+    def __init__(self, total):
+        super().__init__(f'IREPS returned {total} results; split the search before paging.')
+        self.total = total
+
 class Ireps:
     def __init__(self, context, log, cancelled):
         self.context, self.log, self.cancelled = context, log, cancelled
@@ -67,10 +72,14 @@ class Ireps:
                 raise RuntimeError('IREPS read control unavailable: ' + label) from None
             link.evaluate('(element) => element.click()')
 
-    def search(self, category, kind=None, start=None, end=None, contract=''):
+    def search(self, category, kind=None, start=None, end=None, contract='', subcategory=None):
         self.check()
         self.page.locator('#regCat').select_option(label=category)
-        self.page.locator('#regSubCat').select_option(label='---All---')
+        subcategory_control = self.page.locator('#regSubCat')
+        if subcategory is None:
+            subcategory_control.select_option(label='---All---')
+        else:
+            subcategory_control.select_option(value=subcategory)
         if kind:
             self.page.locator('#status').select_option(label=kind)
         else:
@@ -84,6 +93,8 @@ class Ireps:
         stamp = self.page.evaluate('performance.timeOrigin')
         self.click_read_control(self.page.get_by_role('button', name='Search', exact=True), 'Search')
         self.wait_results(stamp)
+        if subcategory is not None and subcategory_control.input_value() != subcategory:
+            raise IncompleteResultsError('IREPS changed the selected subcategory.')
         if start is not None:
             selected = [self.page.locator('#'+field).input_value() for field in ('ddmmyyDateformat1','ddmmyyDateformat2')]
             if selected != [start,end]:
@@ -121,7 +132,7 @@ class Ireps:
             raise IncompleteResultsError('IREPS result count missing.')
         total, page_num, seen, output = int(m[1]), 1, set(), []
         if max_rows is not None and total > max_rows:
-            raise IncompleteResultsError(f'IREPS returned {total} results; split the date range before paging.')
+            raise DenseResultsError(total)
         while True:
             self.check()
             batch = self.page_rows(mode)
@@ -173,17 +184,45 @@ class Ireps:
         max_rows = 50 if dated_query and day(filters['start']) < day(filters['end']) else None
         try:
             self.search(category, **filters)
+        except TimeoutError:
+            self.check()
+            self.log('Retrying the interrupted IREPS search: ' + category)
+            self.navigate(navigation)
+            self.search(category, **filters)
+        try:
             return self.all_rows(mode, filtered=filtered, max_rows=max_rows)
         except FilteredResultError:
             raise
-        except (IncompleteResultsError, TimeoutError):
+        except (IncompleteResultsError, TimeoutError) as exc:
             self.check()
+            if isinstance(exc, DenseResultsError) and mode == 'contracts' and 'subcategory' not in filters:
+                subcategories = self.page.locator('#regSubCat').evaluate(
+                    "(el) => [...el.options].filter(o => !o.disabled && o.value && o.value !== '-1').map(o => o.value)")
+                if len(subcategories)>1:
+                    rows = self.read_subcategories(navigation, category, filters, subcategories, exc.total)
+                    if rows is not None:
+                        return rows
             if dated_query:
                 return self.read_date_partitions(navigation, category, mode, filters)
             self.log('Retrying the interrupted category: ' + category)
             self.navigate(navigation)
             self.search(category, **filters)
             return self.all_rows(mode, filtered=filtered)
+
+    def read_subcategories(self, navigation, category, filters, subcategories, displayed_count):
+        observed = {tuple(row['cells']) for row in self.page_rows('contracts')}
+        self.log(f'Reading {category} across {len(subcategories)} IREPS subcategories.')
+        rows = {}
+        for subcategory in subcategories:
+            self.check()
+            self.navigate(navigation)
+            for row in self.read_category_rows(navigation, category, 'contracts',
+                                               **{**filters, 'subcategory':subcategory}):
+                rows[tuple(row['cells'])] = row
+        if len(rows) >= displayed_count and observed.issubset(rows):
+            return list(rows.values())
+        self.log(f'{category} subcategories did not reproduce the displayed count. Checking the date windows.')
+        return None
 
     def read_date_partitions(self, navigation, category, mode, filters):
         """Read disjoint date windows when IREPS cannot advance its result pager."""

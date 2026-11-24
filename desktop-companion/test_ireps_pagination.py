@@ -1,5 +1,6 @@
 from unittest import TestCase
 from unittest.mock import Mock, patch
+from playwright.sync_api import TimeoutError
 
 from ireps import IncompleteResultsError, Ireps
 
@@ -58,6 +59,29 @@ class DatePartitionTests(TestCase):
         reader.page = Mock()
         reader.page.locator.return_value.inner_text.return_value = '71 Records Found'
         reader.page_rows = Mock()
-        with self.assertRaisesRegex(IncompleteResultsError, 'split the date range before paging'):
+        with self.assertRaisesRegex(IncompleteResultsError, 'split the search before paging'):
             reader.all_rows('contracts', max_rows=50)
         reader.page_rows.assert_not_called()
+
+    def test_search_timeout_retries_the_same_window(self):
+        reader = Ireps.__new__(Ireps)
+        reader.check = Mock()
+        reader.log = Mock()
+        reader.navigate = Mock()
+        reader.search = Mock(side_effect=[TimeoutError('Search took too long'), None])
+        reader.all_rows = Mock(return_value=[])
+        reader.read_category_rows('Contracts','Catering','contracts',start='08/01/2020',end='10/01/2020')
+        reader.navigate.assert_called_once_with('Contracts')
+        self.assertEqual(reader.search.call_args_list[0],reader.search.call_args_list[1])
+
+    def test_subcategories_must_cover_the_parent_results(self):
+        reader = Ireps.__new__(Ireps)
+        reader.check = Mock()
+        reader.log = Mock()
+        reader.navigate = Mock()
+        first, second = ({'cells':['first']},{'cells':['second']})
+        reader.page_rows = Mock(return_value=[first])
+        reader.read_category_rows = Mock(side_effect=[[first],[second]])
+        self.assertEqual(reader.read_subcategories('Contracts','Catering',{},['101151','101152'],2),[first,second])
+        reader.read_category_rows.side_effect = [[second],[second]]
+        self.assertIsNone(reader.read_subcategories('Contracts','Catering',{},['101151','101152'],2))

@@ -245,9 +245,13 @@ class Controller:
                                     self.log(f"Resuming today's contract checkpoint with {len(previous['completed_categories'])} categories already checked.")
                             evidence['contract_reconciliation'] = collect_inventory(
                                 reader, self, cfg['end'], lambda data: write_state(contract_path, data), **options)
-                        except (BrowserTimeout, IncompleteResultsError):
+                        except (BrowserTimeout, IncompleteResultsError) as exc:
+                            if action == 'inventory':
+                                self.log('Saved the contract inventory checkpoint. Retry continues from the last checked category.')
+                                raise
+                            reason = str(exc).split('\nCall log:', 1)[0]
                             warning = ('Full contract inventory deferred: IREPS pagination or navigation '
-                                       'failed. The completed receipts and Master check will continue.')
+                                       'failed. The completed receipts and Master check will continue. ' + reason)
                             evidence['warnings'] = [*reader.warnings, warning]
                             self.log(warning)
                         else:
