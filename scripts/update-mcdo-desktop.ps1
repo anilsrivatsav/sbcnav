@@ -81,7 +81,7 @@ if (!(Test-CompanionIdle)) {
 $temp = Join-Path ([System.IO.Path]::GetTempPath()) ('sbcnav-update-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temp | Out-Null
 $backup = Join-Path $temp 'backup'
-$replaced = @('server.py', 'launch.py', 'deskflow.py', 'engine', 'rp')
+$replaced = @('server.py', 'launch.py', 'deskflow.py', 'contract_collector.py', 'engine', 'rp')
 $stopped = $false
 $started = $false
 try {

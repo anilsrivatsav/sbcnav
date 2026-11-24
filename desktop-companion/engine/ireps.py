@@ -1,5 +1,6 @@
 """Read-only IREPS browser workflow, using a separate Chrome window."""
 import re, time
+from datetime import timedelta
 from playwright.sync_api import TimeoutError
 from urllib.parse import urljoin, urlparse
 from core import relevant, key, day, contract_terms
@@ -115,6 +116,8 @@ class Ireps:
         body = self.page.locator('body').inner_text()
         m = re.search(r'(\d+)\s*Records Found', body)
         if not m:
+            if re.search(r'No (?:results|records) Found', body, re.I) and not self.page_rows(mode):
+                return []
             raise IncompleteResultsError('IREPS result count missing.')
         total, page_num, seen, output = int(m[1]), 1, set(), []
         while True:
@@ -126,6 +129,8 @@ class Ireps:
             if signature in seen:
                 if filtered:raise FilteredResultError('Exact-contract pagination repeated a page.')
                 raise IncompleteResultsError(f'IREPS repeated page {page_num} of {mode}.')
+            if not batch and len(output) < total:
+                raise IncompleteResultsError(f'IREPS returned an empty page at {len(output)} of {total}.')
             seen.add(signature)
             output.extend(batch)
             if total > 10 and (page_num % 5 == 0 or len(output) >= total):
@@ -154,8 +159,7 @@ class Ireps:
                 raise IncompleteResultsError(f'IREPS pagination stopped at {len(output)} of {total}.')
             page_num = next_page
             stamp = self.page.evaluate('performance.timeOrigin')
-            with self.page.expect_navigation(wait_until='load'):
-                self.click_read_control(link, f'results page {page_num}')
+            self.click_read_control(link, f'results page {page_num}')
             self.wait_results(stamp)
         if len(output) != total:
             if filtered:raise FilteredResultError(f'Exact-contract row count mismatch: {len(output)} / {total}.')
@@ -170,10 +174,33 @@ class Ireps:
             raise
         except (IncompleteResultsError, TimeoutError):
             self.check()
+            if not filtered and mode in ('contracts', 'paid') and filters.get('start') and filters.get('end'):
+                return self.read_date_partitions(navigation, category, mode, filters)
             self.log('Retrying the interrupted category: ' + category)
             self.navigate(navigation)
             self.search(category, **filters)
             return self.all_rows(mode, filtered=filtered)
+
+    def read_date_partitions(self, navigation, category, mode, filters):
+        """Read disjoint date windows when IREPS cannot advance its result pager."""
+        first, last = day(filters['start']), day(filters['end'])
+        date_column = 1 if mode == 'contracts' else 7
+        if first >= last:
+            raise IncompleteResultsError(
+                f'IREPS could not read the complete {category} result on {first:%d/%m/%Y}.')
+        middle = first + (last - first) // 2
+        self.log(f'Reading smaller IREPS date windows for {category}: {first:%d/%m/%Y} to {last:%d/%m/%Y}.')
+        rows = []
+        for start, end in ((first, middle), (middle + timedelta(days=1), last)):
+            self.check()
+            self.navigate(navigation)
+            window = self.read_category_rows(
+                navigation, category, mode,
+                **{**filters, 'start': start.strftime('%d/%m/%Y'), 'end': end.strftime('%d/%m/%Y')})
+            if any(not start <= day(row['cells'][date_column]) <= end for row in window):
+                raise IncompleteResultsError(f'IREPS returned {category} records outside the selected date window.')
+            rows.extend(window)
+        return rows
 
     def payments(self, categories, start, end, queries=None, existing=None, known_due=None):
         self.navigate('Payments')

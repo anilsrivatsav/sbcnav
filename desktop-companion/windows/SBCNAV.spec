@@ -18,7 +18,7 @@ python_license = Path(sys.base_prefix) / 'LICENSE.txt'
 if python_license.exists():
     datas.append((str(python_license), 'licenses/python'))
 imports = playwright_imports + collect_submodules('rp') + [
-    'server', 'deskflow', 'app', 'core', 'planner', 'sheets', 'ireps',
+    'server', 'deskflow', 'contract_collector', 'app', 'core', 'planner', 'sheets', 'ireps',
     'incremental', 'resume', 'checkpoint', 'state_store', 'tkinter', 'tkinter.ttk',
     'tkinter.filedialog', 'tkinter.messagebox', 'openpyxl', 'lxml.etree', 'pypdf', 'psutil']
 a = Analysis([str(root / 'portable.py')], pathex=[str(root), str(root / 'engine')],
