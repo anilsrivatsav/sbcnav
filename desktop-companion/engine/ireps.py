@@ -30,7 +30,7 @@ class Ireps:
             raise RuntimeError('IREPS session expired. Run again and sign in; existing invoice numbers prevent duplicates.')
 
     def login(self):
-        self.page.goto(HOME)
+        self.page.goto(HOME, wait_until='domcontentloaded')
         self.log('Sign in to IREPS in the separate Chrome window. The app never reads your password or OTP.')
         for _ in range(1200):
             if self.cancelled():
@@ -44,12 +44,12 @@ class Ireps:
     def navigate(self, mode):
         self.check()
         self.page.bring_to_front()
-        self.page.goto(HOME)
+        self.page.goto(HOME, wait_until='domcontentloaded')
         self.log('Opening IREPS ' + mode + ' menu.')
         self.click_navigation_link(mode)
         link = 'Payments Received' if mode == 'Payments' else 'View Contracts'
         self.log('Opening IREPS ' + link + ' page.')
-        with self.page.expect_navigation(wait_until='load'):
+        with self.page.expect_navigation(wait_until='domcontentloaded'):
             self.click_navigation_link(link)
         self.page.locator('#menuLink').wait_for(state='visible')
         self.page.wait_for_function("document.querySelector('#menuLink')?.options.length > 0")
@@ -60,7 +60,7 @@ class Ireps:
 
     def click_read_control(self, link, label):
         try:
-            link.click(timeout=15000)
+            link.click(timeout=15000, no_wait_after=True)
         except TimeoutError:
             self.check()
             if link.count() != 1 or not link.is_visible():
@@ -82,8 +82,7 @@ class Ireps:
             for field, value in (('ddmmyyDateformat1', start), ('ddmmyyDateformat2', end)):
                 self.page.locator('#'+field).evaluate("(el, value) => {el.value = value; el.dispatchEvent(new Event('change', {bubbles:true}));}", value)
         stamp = self.page.evaluate('performance.timeOrigin')
-        with self.page.expect_navigation(wait_until='load'):
-            self.click_read_control(self.page.get_by_role('button', name='Search', exact=True), 'Search')
+        self.click_read_control(self.page.get_by_role('button', name='Search', exact=True), 'Search')
         self.wait_results(stamp)
         if start is not None:
             selected = [self.page.locator('#'+field).input_value() for field in ('ddmmyyDateformat1','ddmmyyDateformat2')]
@@ -93,8 +92,9 @@ class Ireps:
     def wait_results(self, previous_document):
         # Pagination links have href="#" plus form submission. The hash change
         # can satisfy a navigation wait while the OLD result page still exists.
-        # Wait for a different, fully loaded document before reading any rows.
-        self.page.wait_for_function("(stamp) => performance.timeOrigin !== stamp && document.readyState === 'complete' && /(?:\\d+\\s*Records Found|No (?:results|records) Found)/i.test(document.body?.innerText || '')",arg=previous_document)
+        # Wait for a different document with a parsed result body. Images or
+        # other unrelated resources can keep the full page loading indefinitely.
+        self.page.wait_for_function("(stamp) => performance.timeOrigin !== stamp && document.readyState !== 'loading' && /(?:\\d+\\s*Records Found|No (?:results|records) Found)/i.test(document.body?.innerText || '')",arg=previous_document)
 
     def page_rows(self, mode):
         # Read rendered HTML only. No undocumented endpoints or transaction actions.
