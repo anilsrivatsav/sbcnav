@@ -112,7 +112,7 @@ class Ireps:
           return found;
         }""", mode)
 
-    def all_rows(self, mode, filtered=False):
+    def all_rows(self, mode, filtered=False, max_rows=None):
         body = self.page.locator('body').inner_text()
         m = re.search(r'(\d+)\s*Records Found', body)
         if not m:
@@ -120,6 +120,8 @@ class Ireps:
                 return []
             raise IncompleteResultsError('IREPS result count missing.')
         total, page_num, seen, output = int(m[1]), 1, set(), []
+        if max_rows is not None and total > max_rows:
+            raise IncompleteResultsError(f'IREPS returned {total} results; split the date range before paging.')
         while True:
             self.check()
             batch = self.page_rows(mode)
@@ -167,14 +169,16 @@ class Ireps:
         return output
 
     def read_category_rows(self, navigation, category, mode, *, filtered=False, **filters):
+        dated_query = not filtered and mode in ('contracts', 'paid') and filters.get('start') and filters.get('end')
+        max_rows = 50 if dated_query and day(filters['start']) < day(filters['end']) else None
         try:
             self.search(category, **filters)
-            return self.all_rows(mode, filtered=filtered)
+            return self.all_rows(mode, filtered=filtered, max_rows=max_rows)
         except FilteredResultError:
             raise
         except (IncompleteResultsError, TimeoutError):
             self.check()
-            if not filtered and mode in ('contracts', 'paid') and filters.get('start') and filters.get('end'):
+            if dated_query:
                 return self.read_date_partitions(navigation, category, mode, filters)
             self.log('Retrying the interrupted category: ' + category)
             self.navigate(navigation)

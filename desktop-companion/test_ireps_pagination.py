@@ -1,5 +1,5 @@
 from unittest import TestCase
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from ireps import IncompleteResultsError, Ireps
 
@@ -16,7 +16,7 @@ class DatePartitionTests(TestCase):
             self.assertEqual('Catering', category)
             windows.append((start, end))
 
-        def rows(mode, filtered=False):
+        def rows(mode, filtered=False, max_rows=None):
             start, end = windows[-1]
             if (start, end) == ('21/11/2026', '24/11/2026'):
                 raise IncompleteResultsError('IREPS repeated page 6.')
@@ -45,10 +45,19 @@ class DatePartitionTests(TestCase):
     def test_undated_unsigned_contract_is_kept_once_across_windows(self):
         reader, _, search, rows = self.reader(date_column=1)
         unscheduled = {'cells':['SBC-AWARD-26','','','','','','','Pending for Sign (Bidder)','']}
-        def included_rows(mode, filtered=False):
-            return rows(mode, filtered) + [unscheduled]
+        def included_rows(mode, filtered=False, max_rows=None):
+            return rows(mode, filtered, max_rows) + [unscheduled]
         with patch.object(reader, 'search', search), patch.object(reader, 'all_rows', included_rows):
             found = reader.read_category_rows('Contracts', 'Catering', 'contracts',
                                                start='21/11/2026', end='24/11/2026')
         self.assertEqual(len(found), 3)
         self.assertEqual(found.count(unscheduled), 1)
+
+    def test_dense_window_splits_before_touching_the_pager(self):
+        reader = Ireps.__new__(Ireps)
+        reader.page = Mock()
+        reader.page.locator.return_value.inner_text.return_value = '71 Records Found'
+        reader.page_rows = Mock()
+        with self.assertRaisesRegex(IncompleteResultsError, 'split the date range before paging'):
+            reader.all_rows('contracts', max_rows=50)
+        reader.page_rows.assert_not_called()
