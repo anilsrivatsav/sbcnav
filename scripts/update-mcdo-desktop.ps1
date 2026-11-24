@@ -1,5 +1,6 @@
 param(
-    [switch]$ConfirmIdle
+    [switch]$ConfirmIdle,
+    [guid]$RecoverStalledRun
 )
 
 $ErrorActionPreference = 'Stop'
@@ -56,7 +57,20 @@ function Get-CompanionProcesses {
 function Test-CompanionIdle {
     try {
         $status = Invoke-RestMethod -Uri 'http://127.0.0.1:48722/status' -Headers @{ Origin = 'https://sbcnav-38t2.vercel.app' } -TimeoutSec 3
-        if ($status.busy -or $status.deskflow_busy) { return $false }
+        if ($status.deskflow_busy) { return $false }
+        if ($status.busy) {
+            if (!$RecoverStalledRun -or $status.run.run_id -ne $RecoverStalledRun.ToString() -or
+                $status.phase -ne 'collecting' -or $status.run.state -ne 'awaiting_ireps' -or !$status.logs) {
+                return $false
+            }
+            $lastLog = [string]$status.logs[-1]
+            if ($lastLog -notmatch '^([0-9]{2}:[0-9]{2}:[0-9]{2}) ') { return $false }
+            $age = [datetime]::UtcNow.AddMinutes(330).TimeOfDay - [timespan]::Parse($Matches[1])
+            if ($age.TotalSeconds -lt 0) { $age = $age.Add([timespan]::FromDays(1)) }
+            if ($age.TotalMinutes -lt 10) { return $false }
+            Write-Warning 'Restarting the specified stalled read-only IREPS collection. Saved evidence is retained.'
+            return $true
+        }
         if (($status.PSObject.Properties.Name -notcontains 'deskflow_busy') -and !$ConfirmIdle) {
             Write-Warning 'The older companion cannot report Deskflow activity. Run once with -ConfirmIdle after all work finishes.'
             return $false
@@ -71,7 +85,8 @@ function Test-CompanionIdle {
     }
 }
 
-# Never interrupt a Sheets update or an IREPS/Deskflow collection.
+# An operator can name a stagnant read-only collection. A Sheets write or
+# active Deskflow run always prevents the replacement.
 if (!(Test-CompanionIdle)) {
     Set-UpdateState 'busy' 'MCDO or Deskflow is working. Try the desktop update after it finishes.'
     Write-Output 'SBC NAV is working. The desktop update will retry on the next run.'
@@ -100,14 +115,14 @@ try {
     $pythonWindowless = $shell.CreateShortcut($shortcutPath).TargetPath
     if (!(Test-Path -LiteralPath $pythonWindowless)) { throw 'The configured pythonw.exe is missing.' }
 
-    # Recheck after the download; collection may have started while it arrived.
+    $servers = @(Get-CompanionProcesses)
+    # Recheck immediately before stopping the companion; work may have started during the download.
     if (!(Test-CompanionIdle)) {
         Set-UpdateState 'busy' 'MCDO or Deskflow started working. Try again after it finishes.'
         Write-Output 'SBC NAV started working during the download. The desktop update will retry on the next run.'
         return
     }
 
-    $servers = @(Get-CompanionProcesses)
     Set-UpdateState 'installing' 'Installing and restarting the desktop companion…'
     foreach ($server in $servers) { Stop-Process -Id $server.ProcessId -Force -ErrorAction Stop }
     $stopped = $servers.Count -gt 0
