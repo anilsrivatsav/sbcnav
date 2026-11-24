@@ -55,6 +55,43 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.controller.snapshot()['phase'], 'error')
         self.assertEqual(api.call_count, 2)
 
+    def test_full_inventory_failure_keeps_and_applies_completed_receipts(self):
+        run = {'run_id': 'today', 'state': 'awaiting_ireps', 'connector': {
+            'start': '16/11/2026', 'end': '24/11/2026', 'categories': ['Advertising'],
+            'existing_invoices': [], 'known_due': {}, 'full_contract_reconciliation': True,
+        }}
+        reader = unittest.mock.Mock(observed={'ES26TEST': {'invoice': 'ES26TEST'}}, warnings=[])
+        reader.contracts.return_value = {}
+        reader.payments.return_value = []
+        reader.failures.return_value = []
+        def interrupted_inventory(*args):
+            saved = server.read_state(server.STATE / 'today.json')
+            self.assertEqual(saved['completed_categories'], ['Advertising'])
+            self.assertEqual(saved['payments'], [{'invoice': 'ES26TEST'}])
+            self.assertNotIn('contract_reconciliation', saved)
+            raise server.IncompleteResultsError('IREPS repeated page 6.')
+        def request(path, payload=None):
+            if path == '/runs':
+                return run if payload is not None else []
+            if path == '/runs/today/evidence':
+                self.assertNotIn('contract_reconciliation', payload)
+                self.assertEqual(payload['payments'], [{'invoice': 'ES26TEST'}])
+                self.assertTrue(payload['warnings'][0].startswith('Full contract inventory deferred:'))
+                return {'run_id': 'today', 'state': 'preview_ready'}
+            if path == '/runs/today':
+                return {'run_id': 'today', 'state': 'complete',
+                        'warnings': ['Full contract inventory deferred: IREPS repeated a page.']}
+            self.assertIn(path, ('/session', '/runs/today/apply'))
+            return {}
+        with patch.object(server, 'request', side_effect=request) as api, \
+                patch.object(server, 'sync_playwright'), patch.object(server.app, 'browser'), \
+                patch.object(server, 'EvidenceReader', return_value=reader), \
+                patch('contract_collector.collect_inventory', side_effect=interrupted_inventory):
+            self.controller.work('start')
+        self.assertEqual(self.controller.snapshot()['phase'], 'complete')
+        self.assertIn('Full contract verification needs a retry', self.controller.snapshot()['message'])
+        self.assertEqual([call.args[0] for call in api.call_args_list].count('/runs/today/apply'), 1)
+
     def test_origin_and_dns_rebinding_protection(self):
         handler = object.__new__(server.Handler)
         handler.headers = {'Host': f'127.0.0.1:{server.PORT}', 'Origin': server.ORIGIN}

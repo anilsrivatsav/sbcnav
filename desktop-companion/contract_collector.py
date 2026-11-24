@@ -1,24 +1,11 @@
 """Read the official contract and receipt inventories in the existing IREPS session."""
 import re
-from playwright.sync_api import TimeoutError as BrowserTimeout
 
 CONTRACT_START = '01/01/2020'
 
 CATEGORIES = ['Advertising', 'Misc-Static-Services', 'Misc-Mobile-Services',
               'ATM/DBU/Banking e-Lobby', 'PMBJK', 'Parking', 'Hybrid NFR',
               'Catering', 'MPS', 'Pay and Use', 'Parcel']
-
-
-def scan_category(reader, navigation, category, mode, controller, **filters):
-    try:
-        reader.search(category, **filters)
-        return reader.all_rows(mode)
-    except BrowserTimeout:
-        reader.check()
-        controller.log('Retrying the interrupted category: ' + category)
-        reader.navigate(navigation)
-        reader.search(category, **filters)
-        return reader.all_rows(mode)
 
 
 def collect_inventory(reader, controller, asof, checkpoint):
@@ -30,8 +17,8 @@ def collect_inventory(reader, controller, asof, checkpoint):
     seen = {}
     for category in CATEGORIES:
         controller.log('Contract inventory: ' + category)
-        for row in scan_category(reader, 'Contracts', category, 'contracts', controller,
-                                 start=CONTRACT_START, end=asof):
+        for row in reader.read_category_rows('Contracts', category, 'contracts',
+                                             start=CONTRACT_START, end=asof):
             c = row['cells']
             if len(c) != 9 or not c[0].strip():
                 continue
@@ -93,8 +80,8 @@ def collect_inventory(reader, controller, asof, checkpoint):
     invoices = {}
     for category in CATEGORIES:
         controller.log('Full contract receipt inventory: ' + category)
-        for row in scan_category(reader, 'Payments', category, 'paid', controller,
-                                 kind='Previous Payments Made', start='01/01/1900', end='31/12/2099'):
+        for row in reader.read_category_rows('Payments', category, 'paid',
+                                             kind='Previous Payments Made', start='01/01/1900', end='31/12/2099'):
             c = row['cells']
             if len(c) != 9 or not re.fullmatch(r'ES\w+', c[8]):
                 continue

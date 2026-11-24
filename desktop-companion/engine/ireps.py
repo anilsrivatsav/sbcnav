@@ -7,7 +7,11 @@ from incremental import invoice_needed
 
 HOME = 'https://www.ireps.gov.in/epsn/home/showHome.do'
 
-class FilteredResultError(RuntimeError):
+class IncompleteResultsError(RuntimeError):
+    """A result set could not be read completely."""
+
+
+class FilteredResultError(IncompleteResultsError):
     """The exact-contract result retained category-wide pagination metadata."""
 
 class Ireps:
@@ -111,7 +115,7 @@ class Ireps:
         body = self.page.locator('body').inner_text()
         m = re.search(r'(\d+)\s*Records Found', body)
         if not m:
-            raise RuntimeError('IREPS result count missing; no spreadsheet writes will occur.')
+            raise IncompleteResultsError('IREPS result count missing.')
         total, page_num, seen, output = int(m[1]), 1, set(), []
         while True:
             self.check()
@@ -121,7 +125,7 @@ class Ireps:
             signature = repr(batch)
             if signature in seen:
                 if filtered:raise FilteredResultError('Exact-contract pagination repeated a page.')
-                raise RuntimeError('IREPS repeated a page; refusing an incomplete scan.')
+                raise IncompleteResultsError(f'IREPS repeated page {page_num} of {mode}.')
             seen.add(signature)
             output.extend(batch)
             if total > 10 and (page_num % 5 == 0 or len(output) >= total):
@@ -147,7 +151,7 @@ class Ireps:
                     self.log('Notice: '+warning)
                     return output
                 if filtered:raise FilteredResultError(f'Exact-contract pagination stopped at {len(output)} of {total}.')
-                raise RuntimeError(f'IREPS pagination stopped at {len(output)} of {total}.')
+                raise IncompleteResultsError(f'IREPS pagination stopped at {len(output)} of {total}.')
             page_num = next_page
             stamp = self.page.evaluate('performance.timeOrigin')
             with self.page.expect_navigation(wait_until='load'):
@@ -155,8 +159,21 @@ class Ireps:
             self.wait_results(stamp)
         if len(output) != total:
             if filtered:raise FilteredResultError(f'Exact-contract row count mismatch: {len(output)} / {total}.')
-            raise RuntimeError(f'IREPS row count mismatch: {len(output)} / {total}.')
+            raise IncompleteResultsError(f'IREPS row count mismatch: {len(output)} / {total}.')
         return output
+
+    def read_category_rows(self, navigation, category, mode, *, filtered=False, **filters):
+        try:
+            self.search(category, **filters)
+            return self.all_rows(mode, filtered=filtered)
+        except FilteredResultError:
+            raise
+        except (IncompleteResultsError, TimeoutError):
+            self.check()
+            self.log('Retrying the interrupted category: ' + category)
+            self.navigate(navigation)
+            self.search(category, **filters)
+            return self.all_rows(mode, filtered=filtered)
 
     def payments(self, categories, start, end, queries=None, existing=None, known_due=None):
         self.navigate('Payments')
@@ -169,13 +186,10 @@ class Ireps:
             # matches installment pay-by dates. Blank filters revert to 90 days,
             # so use an explicit broad range and scan every returned page before
             # selecting by the collection timestamp displayed in column one.
-            if contract:
-                self.search(cat, 'Previous Payments Made', from_due, to_due, contract=contract)
-            else:
-                self.search(cat, 'Previous Payments Made', from_due, to_due)
             cache_key=(cat,from_due,to_due)
             try:
-                scanned = self.all_rows('paid',filtered=True) if contract else self.all_rows('paid')
+                scanned = self.read_category_rows('Payments', cat, 'paid', filtered=bool(contract),
+                    kind='Previous Payments Made', start=from_due, end=to_due, contract=contract)
             except FilteredResultError as exc:
                 warning=f'IREPS exact-contract pagination is inconsistent for {contract}. Verifying the category results and filtering this contract locally.'
                 self.warnings.append(warning)
@@ -185,8 +199,8 @@ class Ireps:
                     # field on the faulty exact-contract result can retain
                     # server-side filtered state across pagination.
                     self.navigate('Payments')
-                    self.search(cat, 'Previous Payments Made', from_due, to_due, contract='')
-                    category_cache[cache_key]=self.all_rows('paid')
+                    category_cache[cache_key] = self.read_category_rows('Payments', cat, 'paid',
+                        kind='Previous Payments Made', start=from_due, end=to_due)
                 scanned=category_cache[cache_key]
             if not contract:category_cache[cache_key]=scanned
             selected = 0
@@ -228,8 +242,7 @@ class Ireps:
         output = []
         for cat in categories:
             self.log('Checking overdue payment failures: '+cat)
-            self.search(cat, 'Payment Failures (Beyond grace period)')
-            for row in self.all_rows('failed'):
+            for row in self.read_category_rows('Payments', cat, 'failed', kind='Payment Failures (Beyond grace period)'):
                 c = row['cells']
                 if len(c) != 8:
                     raise RuntimeError('Failed-payment columns changed.')
@@ -242,8 +255,7 @@ class Ireps:
         output = {}
         for cat in categories:
             self.log('Checking contract status: '+cat)
-            self.search(cat, start=start, end=end)
-            for row in self.all_rows('contracts'):
+            for row in self.read_category_rows('Contracts', cat, 'contracts', start=start, end=end):
                 c = row['cells']
                 if len(c) != 9:
                     raise RuntimeError('Contract columns changed.')

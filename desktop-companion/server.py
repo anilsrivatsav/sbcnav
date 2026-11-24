@@ -26,8 +26,8 @@ BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE / 'engine'))
 import app
 from core import day, key
-from ireps import Ireps, HOME
-from playwright.sync_api import sync_playwright
+from ireps import Ireps, HOME, IncompleteResultsError
+from playwright.sync_api import TimeoutError as BrowserTimeout, sync_playwright
 from state_store import read_state, write_state
 from rp.setup_download import installer_path
 
@@ -167,6 +167,8 @@ class Controller:
         if run['state'] == 'complete':
             report = (run.get('result') or {}).get('monthly_report') or {}
             message = 'Both Sheets and Oracle are verified.'
+            if any(w.startswith('Full contract inventory deferred:') for w in run.get('warnings', [])):
+                message += ' Receipts and Master changes were applied. Full contract verification needs a retry.'
             if report.get('status') == 'Ready to Download':
                 message += f" MCDO workbook for {report['period']} is ready to download."
             elif report:
@@ -185,8 +187,8 @@ class Controller:
                 run = request('/runs/' + saved['run_id'])
                 if run['state'] == 'awaiting_ireps':
                     evidence_path = STATE / (run['run_id'] + '.json')
-                    if evidence_path.exists():
-                        run = request('/runs/' + run['run_id'] + '/evidence', json.loads(evidence_path.read_text()))
+                    if evidence_path.exists() or evidence_path.with_suffix('.recovery.json').exists():
+                        run = request('/runs/' + run['run_id'] + '/evidence', read_state(evidence_path))
                     else:
                         raise RuntimeError('The interrupted scan has no complete evidence yet. Choose Check for new payments to restart safely.')
                 if run['state'] in ('preview_ready', 'needs_review', 'paused'):
@@ -240,12 +242,25 @@ class Controller:
                     evidence = dict(run_id=run['run_id'], start=cfg['start'], end=cfg['end'], completed_categories=categories,
                         contracts=list(statuses.values()), payments=list(reader.observed.values()), failures=failures,
                         terms=terms, pdfs=pdfs, warnings=reader.warnings)
+                    evidence_path = STATE / (run['run_id'] + '.json')
+                    if cfg.get('full_contract_reconciliation'):
+                        evidence['warnings'] = [*reader.warnings,
+                            'Full contract inventory deferred: only complete receipts and Master evidence was saved.']
+                    write_state(evidence_path, evidence)
                     if cfg.get('full_contract_reconciliation'):
                         from contract_collector import collect_inventory
                         contract_path = STATE / ('contracts-' + run['run_id'] + '.json')
-                        evidence['contract_reconciliation'] = collect_inventory(
-                            reader, self, cfg['end'], lambda data: write_state(contract_path, data))
-                    (STATE / (run['run_id'] + '.json')).write_text(json.dumps(evidence), encoding='utf-8')
+                        try:
+                            evidence['contract_reconciliation'] = collect_inventory(
+                                reader, self, cfg['end'], lambda data: write_state(contract_path, data))
+                        except (BrowserTimeout, IncompleteResultsError):
+                            warning = ('Full contract inventory deferred: IREPS pagination or navigation '
+                                       'failed. The completed receipts and Master check will continue.')
+                            evidence['warnings'] = [*reader.warnings, warning]
+                            self.log(warning)
+                        else:
+                            evidence['warnings'] = list(reader.warnings)
+                        write_state(evidence_path, evidence)
                 finally:
                     reader.page.close()
             self.checkpoint()
