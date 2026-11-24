@@ -50,8 +50,15 @@ def collect_inventory(reader, controller, asof, checkpoint, *, master_contracts=
         except ValueError:
             return False
 
-    ordered = sorted(seen.items(), key=lambda item: (not needs_master_agreement(item),
-                     not item[0].startswith('SBC-RDN-'), item[0]))
+    def detail_order(item):
+        key, record = item
+        try:
+            contract_date = day(record['contract_date']).toordinal()
+        except ValueError:
+            contract_date = 0
+        return not needs_master_agreement(item), -contract_date, key
+
+    ordered = sorted(seen.items(), key=detail_order)
     for index, (key, record) in enumerate(ordered, 1):
         controller.checkpoint()
         controller.log(f'Official contract details {index}/{len(ordered)}: {record["contract"]}')
