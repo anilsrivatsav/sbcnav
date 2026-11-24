@@ -10,7 +10,7 @@ export function deskflowError(reason:unknown, fallback:string):string {
 export async function deskflowResponse<T>(response:Response, fallback:string):Promise<T> {
   const data=await response.json().catch(()=>null);
   if(!response.ok){
-    const detail=data?.detail||data?.error;
+    const detail=data?.detail||data?.error||data?.message;
     const message=typeof detail==="string"?detail:Array.isArray(detail)?detail.map(item=>item.msg).filter(Boolean).join("; "):"";
     throw Error(message||(response.status===401?"Session expired. Unlock Deskflow again.":`${fallback} (HTTP ${response.status}). Try again shortly.`));
   }
