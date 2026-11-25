@@ -64,6 +64,10 @@
 .eauction-sheet .grid .schedule-col,.eauction-sheet .grid .catalogue-col{width:190px}
 .eauction-sheet .grid .actions-col{width:160px}
 .eauction-sheet .grid th,.eauction-sheet .grid td{height:68px;text-align:left;padding:12px 18px;border-bottom:1px solid #edf1ef;white-space:nowrap;background:#fff}
+.eauction-sheet .ireps-grid .ireps-date-col{width:120px}
+.eauction-sheet .ireps-grid .ireps-lot-col,.eauction-sheet .ireps-grid .ireps-category-col{width:175px}
+.eauction-sheet .ireps-grid td{height:auto;white-space:normal;overflow-wrap:anywhere}
+.eauction-sheet .ireps-grid td.date-cell,.eauction-sheet .ireps-grid td.time-cell{white-space:nowrap}
 .eauction-sheet .grid th{position:sticky;top:0;z-index:3;height:48px;background:#f6f9f7;color:#718078;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.09em;border-bottom:1px solid #dfe8e1}
 .eauction-sheet .grid tbody tr:last-child td{border-bottom:0}
 .eauction-sheet .grid tbody tr:nth-child(even) td{background:#fbfcfb}

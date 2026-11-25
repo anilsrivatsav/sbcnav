@@ -111,6 +111,7 @@ def overview():
                 by_lot[link.lot_key] = link
         result = {'collected_at': None, 'categories': [], 'lots': [], 'progress': {'busy': False, 'phase': 'waiting', 'message': 'Waiting for the Windows desktop companion.'}} | data
         result.pop('schedule_pdf_requests', None)
+        result.pop('published_ireps_schedule', None)
         result['lots'] = [_with_schedule_verification(lot, by_lot.get(lot.get('key'))) for lot in result['lots']]
         return {**result, 'desktop_connected': connected}
 
@@ -120,11 +121,35 @@ def eauction_rows():
     return {'data': live_schedule()}
 
 
+def _latest_ireps_schedule(*overviews):
+    latest = None
+    latest_at = datetime.min.replace(tzinfo=timezone.utc)
+    for overview in overviews:
+        candidates = [overview.get('published_ireps_schedule')]
+        requests = overview.get('schedule_pdf_requests')
+        if isinstance(requests, dict):
+            candidates.extend(requests.values())
+        for candidate in candidates:
+            if not isinstance(candidate, dict) or candidate.get('phase') != 'ready' or not isinstance(candidate.get('lots'), list):
+                continue
+            try:
+                checked_at = datetime.fromisoformat(candidate['checked_at'])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if checked_at.tzinfo is not None and checked_at > latest_at:
+                latest, latest_at = candidate, checked_at
+    return latest
+
+
 @router.get('/schedule-pdf', dependencies=[Depends(_browser)])
-def schedule_pdf_status(request_id: str = Query(pattern=r'^[a-f0-9-]{36}$')):
+def schedule_pdf_status(request_id: str | None = Query(default=None, pattern=r'^[a-f0-9-]{36}$')):
     with SessionLocal() as session:
         row = session.get(DeskflowRelay, 1)
-        result = (row.overview or {}).get('schedule_pdf_requests', {}).get(request_id) if row else None
+        overview = (row.overview or {}) if row else {}
+        if request_id is None:
+            result = _latest_ireps_schedule(overview)
+            return {**(result or {'phase': 'unavailable'}), 'desktop_connected': _desktop_connected(row)}
+        result = overview.get('schedule_pdf_requests', {}).get(request_id)
         if result:
             return {**result, 'desktop_connected': _desktop_connected(row)}
         if row and row.command_id == request_id:
@@ -227,7 +252,8 @@ def agent_sync(payload: dict = Body(...)):
         raise HTTPException(400, 'Invalid desktop state.')
     with SessionLocal.begin() as session:
         row = _row(session)
-        row.overview = overview
+        published = _latest_ireps_schedule(row.overview or {}, overview)
+        row.overview = {**overview, 'published_ireps_schedule': published}
         row.software_update = update
         row.last_seen_at = datetime.now(timezone.utc)
         if payload.get('ack_command_id') == row.command_id and row.command_id:

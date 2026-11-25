@@ -11,7 +11,7 @@ import type { IrepsScheduleLot } from '../../lib/ireps-schedule-pdf';
 type Stored = { holidays: Holiday[]; bookings: Booking[] };
 type CollectedLot = {key:string;lot:string;asset:string;category:string;subcategory?:string};
 type SchedulePdfStatus = {desktop_connected: boolean} & (
-  | {phase:'queued'}
+  | {phase:'queued'|'unavailable'}
   | {phase:'checking'|'error';message:string}
   | {phase:'ready';checked_at:string;lots:IrepsScheduleLot[]}
 );
@@ -38,6 +38,7 @@ export default function AuctionSchedulePage() {
   const [message,setMessage]=useState('');
   const [pdfStatus,setPdfStatus]=useState({busy:false,error:false,message:''});
   const [savedSchedule,setSavedSchedule]=useState<SavedSchedule|null>(null);
+  const [scheduleConnected,setScheduleConnected]=useState<boolean|null>(null);
   const [downloading,setDownloading]=useState(false);
   const pdfRequest=useRef<AbortController|null>(null);
   const [liveRows,setLiveRows]=useState<Booking[]|null>(null);
@@ -80,10 +81,40 @@ export default function AuctionSchedulePage() {
   useEffect(()=>{if(token)void refresh(token).catch(error=>setMessage(error.message));},[token]);
   useEffect(()=>{
     if (!token) return;
+    const controller = new AbortController();
+    let loading = false;
     try {
       const saved = JSON.parse(sessionStorage.getItem(scheduleKey) || 'null') as SavedSchedule | null;
       if (saved && typeof saved.checked_at === 'string' && Array.isArray(saved.lots)) setSavedSchedule(saved);
     } catch {}
+    async function loadPublishedSchedule() {
+      if (loading || document.hidden) return;
+      loading = true;
+      try {
+        const response = await fetch('/api/deskflow/schedule-pdf', {
+          headers: {Authorization: `Bearer ${token}`}, cache: 'no-store',
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(25000)]),
+        });
+        if (!response.ok || controller.signal.aborted) return;
+        const status: SchedulePdfStatus = await response.json();
+        if (controller.signal.aborted) return;
+        setScheduleConnected(status.desktop_connected);
+        if (status.phase === 'ready') {
+          const published = {checked_at:status.checked_at,lots:status.lots};
+          setSavedSchedule(current => !current || Date.parse(current.checked_at) <= Date.parse(published.checked_at) ? published : current);
+        }
+      } catch {
+        // A temporary relay interruption leaves the last verified schedule visible.
+      } finally {
+        loading = false;
+      }
+    }
+    void loadPublishedSchedule();
+    const timer = window.setInterval(loadPublishedSchedule, 15000);
+    return () => {
+      controller.abort();
+      window.clearInterval(timer);
+    };
   },[token]);
   useEffect(()=>()=>pdfRequest.current?.abort(),[]);
   useEffect(()=>{if(loaded)localStorage.setItem(storageKey,JSON.stringify(data));},[data,loaded]);
@@ -165,17 +196,18 @@ export default function AuctionSchedulePage() {
       while (Date.now() < deadline && !controller.signal.aborted) {
         const response = await request(query);
         const status = await deskflowResponse<SchedulePdfStatus>(response, 'The IREPS check could not be verified.');
+        setScheduleConnected(status.desktop_connected);
         if (status.phase === 'error') throw Error(status.message);
         if (status.phase === 'ready') {
           if (controller.signal.aborted) return;
           const saved = {checked_at:status.checked_at,lots:status.lots};
-          setSavedSchedule(saved);
+          setSavedSchedule(current => !current || Date.parse(current.checked_at) <= Date.parse(saved.checked_at) ? saved : current);
           try {sessionStorage.setItem(scheduleKey,JSON.stringify(saved));} catch {}
-          setPdfStatus({busy:false,error:false,message:'IREPS schedule updated. The PDF is ready to download.'});
+          setPdfStatus({busy:false,error:false,message:`IREPS check complete. ${saved.lots.length} upcoming SBC lots verified.`});
           return;
         }
         const statusMessage = !status.desktop_connected ? 'The Windows companion disconnected. Waiting for it to reconnect…'
-          : status.phase === 'queued' ? 'Waiting for the Windows companion…' : status.message;
+          : status.phase === 'checking' ? status.message : 'Waiting for the Windows companion…';
         setPdfStatus({busy:true,error:false,message:statusMessage});
         await new Promise<void>(resolve => window.setTimeout(resolve, 3000));
       }
@@ -213,6 +245,24 @@ export default function AuctionSchedulePage() {
       </div>
     </header>
     {token&&pdfStatus.message&&<p className={`schedule-pdf-status${pdfStatus.error?' schedule-pdf-error':''}`} role={pdfStatus.error?'alert':'status'}>{pdfStatus.message}</p>}
+    {token&&<section className="work-area" aria-labelledby="ireps-schedule-heading">
+      <div className="table-heading"><div className="table-title">
+        <h2 id="ireps-schedule-heading">Upcoming IREPS auctions</h2>
+        {savedSchedule&&<span className="row-count">{savedSchedule.lots.length} lots</span>}
+      </div></div>
+      {savedSchedule&&<p className="hint">Last checked {labelDate(savedSchedule.checked_at.slice(0,10))} at {labelTime(savedSchedule.checked_at.slice(11,16))} IST</p>}
+      {scheduleConnected===false&&<p className="hint">The Windows companion is offline. It must be running to start a fresh IREPS check.</p>}
+      {savedSchedule?.lots.length ? <div className="table-scroll"><table className="grid ireps-grid">
+        <colgroup><col className="ireps-date-col"/><col className="time-col"/><col className="catalogue-col"/>
+          <col className="ireps-lot-col"/><col className="ireps-category-col"/><col/></colgroup>
+        <thead><tr><th>Auction date</th><th>Time (IST)</th><th>Catalogue</th><th>Lot</th><th>Category</th><th>Description</th></tr></thead>
+        <tbody>{savedSchedule.lots.map(lot=><tr key={`${lot.source_id}|${lot.lot}`}>
+          <td className="date-cell">{labelDate(lot.start.slice(0,10))}</td>
+          <td className="time-cell">{labelTime(lot.start.slice(11,16))}</td>
+          <td className="id-cell">{lot.catalogue}</td><td>{lot.lot}</td><td>{lot.category}</td><td>{lot.description}</td>
+        </tr>)}</tbody>
+      </table></div> : <p className="hint">{savedSchedule?'IREPS returned no upcoming SBC lots.':'No verified IREPS schedule is available yet.'}</p>}
+    </section>}
     {!token?<form className="work-area" onSubmit={unlock}><div className="section-title"><h2>Unlock Auction Schedule</h2><span>Use the same password as Deskflow.</span></div><div className="entry-form"><label className="category-field">Password<input type="password" autoFocus required value={password} onChange={event=>setPassword(event.target.value)}/></label><button className="button primary" type="submit">Unlock</button></div>{message&&<p className="message" role="alert">{message}</p>}</form>:<section className="work-area">
       <div className="section-title"><h2>New row</h2><span>Choose a category. Date and time fill automatically.</span></div>
       <div className="entry-form">
@@ -226,7 +276,7 @@ export default function AuctionSchedulePage() {
       {proposal&&<div className="result-line"><span className={dateError||idError?'invalid':'valid'}>{dateError||idError||'✓ Available'}</span>{!editAutomatic&&<span>{proposal.daysAfterNotice} days from today{proposal.skipped.length?' · '+proposal.skipped.length+' unavailable date(s) skipped':''}</span>}<span>Saturday, Sunday and listed holidays excluded</span></div>}
       <div className="id-row"><label>EA Schedule ID <small>Next number for this category</small><input value={scheduleId} placeholder="Select category" readOnly={!editAutomatic} onChange={event=>setEditedScheduleId(event.target.value)} /></label><label>Catalogue ID <small>Next number across all auctions</small><input value={catalogueId} placeholder="Select category" readOnly={!editAutomatic} onChange={event=>setEditedCatalogueId(event.target.value)} /></label><button className="button primary" disabled={!proposal||!liveRows||!!dateError||!!idError} onClick={save}>Add to schedule</button></div>
       {message&&<p className="message" role="status">{message}</p>}
-      <div className="table-heading"><div className="table-title"><h2>Schedule</h2><span className="row-count">{sortedBookings.length} auctions</span></div><div><label className="button outline file-button">Import CSV<input type="file" accept=".csv,text/csv" onChange={importBookings} hidden /></label></div></div>
+      <div className="table-heading"><div className="table-title"><h2>Planning schedule</h2><span className="row-count">{sortedBookings.length} auctions</span></div><div><label className="button outline file-button">Import CSV<input type="file" accept=".csv,text/csv" onChange={importBookings} hidden /></label></div></div>
       <div className="table-scroll"><table className="grid">
         <colgroup><col className="number-col"/><col className="date-col"/><col className="time-col"/><col className="category-col"/><col className="schedule-col"/><col className="catalogue-col"/><col className="actions-col"/></colgroup>
         <thead><tr><th className="row-number">#</th><th>Date</th><th>Time</th><th>Category</th><th>EA Schedule ID</th><th>Catalogue ID</th><th>Actions</th></tr></thead>
