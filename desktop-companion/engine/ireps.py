@@ -82,6 +82,11 @@ class Ireps:
           element.click();
         }""", timeout=15000)
 
+    def open_payment_schedule(self, button):
+        with self.page.expect_popup() as popup:
+            self.click_read_control(button, 'Payment Schedule')
+        return popup.value
+
     def search(self, category, kind=None, start=None, end=None, contract='', subcategory=None):
         self.check()
         self.page.locator('#regCat').select_option(label=category)
@@ -407,9 +412,8 @@ class Ireps:
         with self.page.expect_navigation(wait_until='domcontentloaded'):
             self.click_read_control(link, 'Contract')
         text = self.page.locator('body').inner_text()
-        with self.page.expect_popup() as popup:
-            self.page.get_by_role('button', name='Payment Schedule', exact=True).click()
-        schedule_page = popup.value
+        button = self.page.get_by_role('button', name='Payment Schedule', exact=True)
+        schedule_page = self.open_payment_schedule(button)
         try:
             schedule_page.locator('tr[id^="row-"]').first.wait_for()
             schedule = schedule_page.locator('tr[id^="row-"]').evaluate_all('(rs)=>rs.map(r=>[...r.cells].map(c=>c.innerText.trim()))')

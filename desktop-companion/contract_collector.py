@@ -88,9 +88,7 @@ def collect_inventory(reader, controller, asof, checkpoint, *, master_contracts=
             schedule = []
             button = reader.page.get_by_role('button', name='Payment Schedule', exact=True)
             if button.count() == 1:
-                with reader.page.expect_popup() as popup:
-                    button.click()
-                schedule_page = popup.value
+                schedule_page = reader.open_payment_schedule(button)
                 try:
                     schedule_page.locator('body').wait_for()
                     heading = schedule_page.locator('body').inner_text()
