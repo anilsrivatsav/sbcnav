@@ -19,6 +19,7 @@ import time
 import urllib.error
 import urllib.request
 import zipfile
+from contextlib import suppress
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -27,7 +28,7 @@ sys.path.insert(0, str(BASE / 'engine'))
 import app
 from core import day, key
 from ireps import Ireps, HOME, IncompleteResultsError
-from playwright.sync_api import TimeoutError as BrowserTimeout, sync_playwright
+from playwright.sync_api import Error as BrowserError, TimeoutError as BrowserTimeout, sync_playwright
 from state_store import read_state, write_state
 from rp.setup_download import installer_path
 
@@ -111,7 +112,7 @@ class Controller:
             return {**self.state, 'busy': bool(self.thread and self.thread.is_alive()),
                     'deskflow_busy': deskflow_busy,
                     'connected': True, 'version': '2.2.0', 'configured': (STATE / 'operator.key').exists(),
-                    'monthly_reports': True, 'inventory_retry': True,
+                    'monthly_reports': True, 'inventory_retry': True, 'adaptive_retry': True,
                     'installer_available': installer_path(STATE) is not None}
 
     def log(self, message):
@@ -154,6 +155,8 @@ class Controller:
             if not (STATE / 'operator.key').exists():
                 raise RuntimeError('This computer needs administrator setup.')
             self.gate.set()
+            if action != 'resume':
+                self.save(scan_action=action)
             self.save(phase='connecting', error=None, message='Checking connection and saved progress…')
             self.thread = threading.Thread(target=self.work, args=(action,), daemon=True)
             self.thread.start()
@@ -185,17 +188,23 @@ class Controller:
             saved = self.state.get('run')
             if action == 'resume' and saved:
                 run = request('/runs/' + saved['run_id'])
+                retry_action = self.state.get('scan_action', 'start')
+                if retry_action not in ('start', 'inventory'):
+                    retry_action = 'start'
                 if run['state'] == 'awaiting_ireps':
-                    evidence_path = STATE / (run['run_id'] + '.json')
-                    if evidence_path.exists() or evidence_path.with_suffix('.recovery.json').exists():
-                        run = request('/runs/' + run['run_id'] + '/evidence', read_state(evidence_path))
+                    saved_evidence = read_state(STATE / (run['run_id'] + '.json'))
+                    inventory_pending = retry_action == 'inventory' and not saved_evidence.get('contract_reconciliation')
+                    if saved_evidence.get('end') == app.now().strftime('%d/%m/%Y') and not inventory_pending:
+                        run = request('/runs/' + run['run_id'] + '/evidence', saved_evidence)
                     else:
-                        raise RuntimeError('The interrupted scan has no complete evidence yet. Choose Check for new payments to restart safely.')
-                if run['state'] in ('preview_ready', 'needs_review', 'paused'):
-                    request('/runs/' + run['run_id'] + '/apply', {})
-                    run = request('/runs/' + run['run_id'])
-                self.monitor(run)
-                return
+                        action = retry_action
+                        self.log('Reopening IREPS to resume the interrupted read.')
+                if action == 'resume':
+                    if run['state'] in ('preview_ready', 'needs_review', 'paused'):
+                        request('/runs/' + run['run_id'] + '/apply', {})
+                        run = request('/runs/' + run['run_id'])
+                    self.monitor(run)
+                    return
             if action == 'sync':
                 self.monitor(request('/sync-sheets', {}))
                 return
@@ -210,55 +219,17 @@ class Controller:
             self.save(run=run, start=run['connector']['start'], end=run['connector']['end'])
             cfg = run['connector']
             checked = self.recent_receipt_evidence(recent_runs, cfg) if action == 'inventory' else None
-            with sync_playwright() as pw:
-                browser = app.browser(pw, {'ireps_only': True}, self.log)
-                reader = EvidenceReader(browser.contexts[0], self.log, self.checkpoint)
+            for attempt in range(2):
                 try:
-                    self.save(phase='login', message='Sign in to IREPS in the updater Chrome window using your digital token. This page continues automatically.')
-                    reader.page.bring_to_front()
-                    reader.login()
-                    self.save(phase='collecting')
-                    if checked:
-                        self.log('Using receipts already verified today. Starting a fresh contract inventory.')
-                        evidence = {**checked, 'run_id':run['run_id'], 'start':cfg['start']}
-                        evidence.pop('contract_reconciliation', None)
-                    else:
-                        evidence = self.collect_receipts(reader, run['run_id'], cfg)
-                    evidence_path = STATE / (run['run_id'] + '.json')
-                    if cfg.get('full_contract_reconciliation'):
-                        evidence['warnings'] = [*reader.warnings,
-                            'Full contract inventory deferred: only complete receipts and Master evidence was saved.']
-                    write_state(evidence_path, evidence)
-                    if cfg.get('full_contract_reconciliation'):
-                        from contract_collector import collect_inventory
-                        contract_path = STATE / ('contracts-' + run['run_id'] + '.json')
-                        try:
-                            options = {'master_contracts': set(cfg['master_contracts'])} if 'master_contracts' in cfg else {}
-                            if action == 'inventory' and saved and saved['run_id'] != run['run_id']:
-                                try:
-                                    previous = read_state(STATE / ('contracts-' + saved['run_id'] + '.json'))
-                                except (OSError, ValueError):
-                                    previous = None
-                                if previous and previous.get('asof') == cfg['end'] and not previous.get('collection_complete'):
-                                    options['previous'] = previous
-                                    write_state(contract_path, previous)
-                                    self.log(f"Resuming today's contract checkpoint with {len(previous['completed_categories'])} categories already checked.")
-                            evidence['contract_reconciliation'] = collect_inventory(
-                                reader, self, cfg['end'], lambda data: write_state(contract_path, data), **options)
-                        except (BrowserTimeout, IncompleteResultsError) as exc:
-                            if action == 'inventory':
-                                self.log('Saved the contract inventory checkpoint. Retry continues from the last checked category.')
-                                raise
-                            reason = str(exc).split('\nCall log:', 1)[0]
-                            warning = ('Full contract inventory deferred: IREPS pagination or navigation '
-                                       'failed. The completed receipts and Master check will continue. ' + reason)
-                            evidence['warnings'] = [*reader.warnings, warning]
-                            self.log(warning)
-                        else:
-                            evidence['warnings'] = list(reader.warnings)
-                        write_state(evidence_path, evidence)
-                finally:
-                    reader.page.close()
+                    evidence = self.collect_ireps_evidence(run['run_id'], cfg, action, checked, saved)
+                    break
+                except BrowserError as exc:
+                    reconnect = isinstance(exc, BrowserTimeout) or 'Target page, context or browser has been closed' in str(exc)
+                    if not reconnect:
+                        raise
+                    if attempt:
+                        raise RuntimeError('IREPS did not answer after reconnecting. Choose Retry MCDO update when IREPS is available.') from exc
+                    self.log('IREPS stopped responding. Reopening the updater browser and retrying automatically.')
             self.checkpoint()
             self.save(phase='validating', message='Validating invoices and official schedules before writes…')
             run = request('/runs/' + run['run_id'] + '/evidence', evidence)
@@ -270,6 +241,62 @@ class Controller:
             # Do not expose Playwright request diagnostics, which may include cookies.
             message = str(exc).split('\nCall log:', 1)[0][:1500]
             self.save(phase='error', error=message, message='Update stopped. Verified work and complete evidence are saved.')
+
+    def collect_ireps_evidence(self, run_id, cfg, action, checked, saved):
+        evidence_path = STATE / (run_id + '.json')
+        contract_path = STATE / ('contracts-' + run_id + '.json')
+        with sync_playwright() as pw:
+            browser = app.browser(pw, {'ireps_only': True}, self.log)
+            reader = EvidenceReader(browser.contexts[0], self.log, self.checkpoint)
+            try:
+                self.save(phase='login', message='Opening IREPS in the updater Chrome window. Sign in with your digital token if prompted.')
+                reader.page.bring_to_front()
+                reader.login()
+                self.save(phase='collecting')
+                evidence = read_state(evidence_path)
+                if not evidence and checked:
+                    self.log('Using receipts already verified today. Starting a fresh contract inventory.')
+                    evidence = {**checked, 'run_id':run_id, 'start':cfg['start']}
+                    evidence.pop('contract_reconciliation', None)
+                if not evidence:
+                    evidence = self.collect_receipts(reader, run_id, cfg)
+                if not cfg.get('full_contract_reconciliation'):
+                    write_state(evidence_path, evidence)
+                    return evidence
+                from contract_collector import collect_inventory
+                evidence['warnings'] = [*reader.warnings,
+                    'Full contract inventory deferred: only complete receipts and Master evidence was saved.']
+                write_state(evidence_path, evidence)
+                options = {'master_contracts': set(cfg['master_contracts'])} if 'master_contracts' in cfg else {}
+                previous = read_state(contract_path)
+                if not previous and action == 'inventory' and saved:
+                    previous = read_state(STATE / ('contracts-' + saved['run_id'] + '.json'))
+                    if previous.get('collection_complete'):
+                        previous = {}
+                if previous and previous.get('asof') == cfg['end']:
+                    options['previous'] = previous
+                    write_state(contract_path, previous)
+                    self.log(f"Resuming today's contract checkpoint with {len(previous['completed_categories'])} categories already checked.")
+                try:
+                    reconciliation = collect_inventory(reader, self, cfg['end'],
+                                                       lambda data: write_state(contract_path, data), **options)
+                except (BrowserTimeout, IncompleteResultsError) as exc:
+                    if action == 'inventory':
+                        self.log('Saved the contract inventory checkpoint. Retry continues from the last checked category.')
+                        raise
+                    reason = str(exc).split('\nCall log:', 1)[0]
+                    warning = ('Full contract inventory deferred: IREPS pagination or navigation '
+                               'failed. The completed receipts and Master check will continue. ' + reason)
+                    evidence['warnings'] = [*reader.warnings, warning]
+                    self.log(warning)
+                else:
+                    evidence['contract_reconciliation'] = reconciliation
+                    evidence['warnings'] = list(dict.fromkeys([*reader.warnings, *reconciliation.get('warnings', [])]))
+                write_state(evidence_path, evidence)
+                return evidence
+            finally:
+                with suppress(BrowserError):
+                    reader.page.close()
 
     def recent_receipt_evidence(self, runs, cfg):
         existing = set(cfg['existing_invoices'])

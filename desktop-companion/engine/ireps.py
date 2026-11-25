@@ -35,7 +35,7 @@ class Ireps:
             raise RuntimeError('IREPS session expired. Run again and sign in; existing invoice numbers prevent duplicates.')
 
     def login(self):
-        self.page.goto(HOME, wait_until='domcontentloaded')
+        self.open_home()
         self.log('Sign in to IREPS in the separate Chrome window. The app never reads your password or OTP.')
         for _ in range(1200):
             if self.cancelled():
@@ -46,15 +46,21 @@ class Ireps:
             time.sleep(1)
         raise RuntimeError('IREPS sign-in timed out after 20 minutes.')
 
+    def open_home(self):
+        # The authenticated controls are checked separately. Waiting for the
+        # whole IREPS document can stall on resources unrelated to the search.
+        self.page.goto(HOME, wait_until='commit', timeout=18000)
+
     def navigate(self, mode):
         self.check()
-        self.page.bring_to_front()
-        self.page.goto(HOME, wait_until='domcontentloaded')
+        menu = self.page.get_by_role('link', name=mode, exact=True)
+        if not menu.is_visible():
+            self.open_home()
         self.log('Opening IREPS ' + mode + ' menu.')
         self.click_navigation_link(mode)
         link = 'Payments Received' if mode == 'Payments' else 'View Contracts'
         self.log('Opening IREPS ' + link + ' page.')
-        with self.page.expect_navigation(wait_until='domcontentloaded'):
+        with self.page.expect_navigation(wait_until='commit'):
             self.click_navigation_link(link)
         self.page.locator('#menuLink').wait_for(state='visible')
         self.page.wait_for_function("document.querySelector('#menuLink')?.options.length > 0", polling=250)
@@ -183,7 +189,8 @@ class Ireps:
 
     def read_category_rows(self, navigation, category, mode, *, filtered=False, **filters):
         dated_query = not filtered and mode in ('contracts', 'paid') and filters.get('start') and filters.get('end')
-        max_rows = 50 if dated_query and day(filters['start']) < day(filters['end']) else None
+        # A normal IREPS pager group has ten numbered pages of ten records.
+        max_rows = 100 if dated_query and day(filters['start']) < day(filters['end']) else None
         try:
             self.search(category, **filters)
         except TimeoutError:
@@ -228,7 +235,6 @@ class Ireps:
         rows = {}
         for subcategory in subcategories:
             self.check()
-            self.navigate(navigation)
             for row in self.read_category_rows(navigation, category, 'contracts',
                                                **{**filters, 'subcategory':subcategory}):
                 rows[tuple(row['cells'])] = row
@@ -250,7 +256,6 @@ class Ireps:
         undated_contracts = set()
         for start, end in ((first, middle), (middle + timedelta(days=1), last)):
             self.check()
-            self.navigate(navigation)
             window = self.read_category_rows(
                 navigation, category, mode,
                 **{**filters, 'start': start.strftime('%d/%m/%Y'), 'end': end.strftime('%d/%m/%Y')})

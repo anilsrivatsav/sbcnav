@@ -3,7 +3,7 @@ os.environ.setdefault('DATABASE_URL','sqlite:///:memory:')
 import unittest
 from copy import deepcopy
 from unittest.mock import patch
-from datetime import date
+from datetime import date, datetime, timezone
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from fastapi import HTTPException
@@ -45,6 +45,21 @@ class McdoTests(unittest.TestCase):
         return grids
     def state(self):
         with self.sessions() as session:return api.find_run(session,'test').state
+    def test_sheet_import_preserves_the_last_verified_ireps_date(self):
+        with self.sessions.begin() as session:
+            session.add_all([
+                McdoSyncRun(run_id='ireps',state='complete',updated_at=datetime(2026,11,24,tzinfo=timezone.utc),
+                            payload={'end':'24/11/2026','plan':{'summary':{'new_invoices':2}}},result={}),
+                McdoSyncRun(run_id='sheets',state='complete',updated_at=datetime(2026,11,25,tzinfo=timezone.utc),
+                            payload={'mode':'sheets_to_oracle'},result={'monthly_report':{'period':'2026-10'}}),
+            ])
+        with patch.object(api,'read_ledger',return_value=([], None)), patch.object(api,'dashboard',return_value={}), \
+                patch.object(api,'list_registry_contracts',return_value=[]):
+            result = api.mcdo()['data']
+        self.assertEqual(result['last_verified_check']['through'],'24/11/2026')
+        self.assertEqual(result['last_verified_check']['new_invoices'],2)
+        self.assertEqual(result['report_update']['period'],'2026-10')
+
     def test_manual_edit_aborts_both_writes(self):
         grids=self.run_fixture();fake=FakeSheets(grids);fake.grids['master'][0][0]=cell('manual edit')
         with patch.object(api,'Sheets',return_value=fake),patch.object(api,'import_sources') as importer:api.apply_worker('test')

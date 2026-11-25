@@ -7,8 +7,8 @@ import {McdoDeadlines,type Deadlines} from "./mcdo-deadlines";
 import {McdoMonthly} from "./mcdo-monthly";
 
 type Run={run_id:string;state:string;mode?:string;summary?:Record<string,number>;result?:Record<string,unknown>;warnings?:string[];overdue?:unknown[][];error?:string};
-type Status={configured:boolean;busy:boolean;phase:string;message:string;error?:string;start?:string;end?:string;run?:Run;logs:string[];installer_available?:boolean;inventory_retry?:boolean};
-type Summary={last_verified_check?:{through:string;verified_at:string;new_invoices:number}|null;report_update?:{period:string;status:string;workbook?:{id:string;filename:string};pending?:string[];issues?:string[]}|null;deadlines?:Deadlines;earnings:{latest_receipt_date:string|null;source:{row_count:number}|null}};
+type Status={configured:boolean;busy:boolean;phase:string;message:string;error?:string;start?:string;end?:string;run?:Run;logs:string[];installer_available?:boolean;inventory_retry?:boolean;adaptive_retry?:boolean};
+type Summary={last_verified_check?:{through:string|null;verified_at:string;new_invoices:number}|null;report_update?:{period:string;status:string;workbook?:{id:string;filename:string};pending?:string[];issues?:string[]}|null;deadlines?:Deadlines;earnings:{latest_receipt_date:string|null;source:{row_count:number}|null}};
 const LOCAL="http://127.0.0.1:48722";
 const money=(v:number|undefined)=>v===undefined?"—":v.toLocaleString("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:2});
 const date=(v:string|null|undefined)=>v?new Date(v).toLocaleDateString("en-IN",{timeZone:"Asia/Kolkata"}):"Not yet checked";
@@ -64,7 +64,9 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
     finally{setDownloading(false);}
   }
   const busy=Boolean(status?.busy),paused=status?.phase==="paused",run=status?.run;
-  const resume=Boolean(run&&["error","interrupted","paused"].includes(status?.phase||""));
+  const failed=["error","interrupted"].includes(status?.phase||"");
+  const resume=Boolean(run&&(paused||(failed&&(status?.adaptive_retry||run.state!=="awaiting_ireps"))));
+  const actionLabel=paused?"Resume MCDO update":busy?status?.phase==="login"?"Waiting for IREPS sign-in…":"Update in progress…":failed?"Retry MCDO update":"Run MCDO update";
   const ready=reachable&&status?.configured&&!sending;
   const oracleOnly=run?.mode==="sheets_to_oracle";
   const steps=[
@@ -87,7 +89,7 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
       <p className="text-sm text-muted">Choose <strong>Run MCDO update</strong> and sign in to IREPS when prompted. The same run checks earnings and contracts, updates both Google Sheets and SBC NAV, and prepares the latest closed month’s Excel report when the required inputs are verified.</p>
       <div className="my-4 rounded-lg border border-line p-4">
         <p className="font-bold text-ink">Latest receipt in Oracle: {date(summary?.earnings.latest_receipt_date)}</p>
-        {summary?.last_verified_check&&<p className="mt-1 text-sm font-bold text-ink">Last successful IREPS search: through {summary.last_verified_check.through}. Sheets and Oracle verified.</p>}
+        {summary?.last_verified_check?.through&&<p className="mt-1 text-sm font-bold text-ink">IREPS checked through {summary.last_verified_check.through}. Sheets and Oracle verified.</p>}
         {summary?.report_update&&<p className="mt-1 text-sm text-muted">Monthly workbook for {summary.report_update.period} · {summary.report_update.status}. {summary.report_update.workbook&&<a className="font-bold underline" href={`/api/mcdo/monthly/${summary.report_update.period}/download/${summary.report_update.workbook.id}`}>Download Excel</a>}</p>}
         {status?.start&&status.end&&busy&&<p className="mt-1 text-sm text-muted">Checking: {status.start} to {status.end}. Existing invoices are skipped.</p>}
         <p className="mt-1 text-xs text-muted">Latest receipt is the newest payment date. A successful search may cover later days with no collected payments in the configured categories.</p>
@@ -98,8 +100,7 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
       </div>}
       {reachable&&!status?.configured&&<p role="alert" className="mb-4 text-sm text-red-700">The desktop connection needs administrator setup on this computer.</p>}
       <div className="flex flex-wrap gap-3">
-        {resume&&<Button onClick={()=>command("resume")} disabled={!ready||(busy&&!paused)}><Play size={16}/>Resume saved update</Button>}
-        <Button onClick={()=>command("start")} disabled={!ready||busy}><RefreshCw size={16}/>{busy?status?.phase==="login"?"Waiting for IREPS sign-in…":"Update in progress…":"Run MCDO update"}</Button>
+        <Button onClick={()=>command(resume?"resume":"start")} disabled={!ready||(busy&&!paused)}>{paused?<Play size={16}/>:<RefreshCw size={16}/>} {actionLabel}</Button>
         {busy&&!paused&&<Button variant="secondary" onClick={()=>command("pause")} disabled={!ready}><Pause size={16}/>Pause safely</Button>}
       </div>
       <p role="status" aria-live="polite" className="mt-4 text-sm font-bold text-ink">{reachable?status?.message:"The dashboard remains available while the desktop connection is offline."}</p>

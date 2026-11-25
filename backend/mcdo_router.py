@@ -78,18 +78,20 @@ def mcdo(year: str | None=Query(None,pattern=r'^20\d{2}-\d{2}$')):
     with SessionLocal() as session:
         rows,source=read_ledger(session)
         payload = McdoSyncRun.payload
-        latest_id = (select(McdoSyncRun.run_id).where(McdoSyncRun.state == 'complete')
-                     .order_by(McdoSyncRun.updated_at.desc()).limit(1).scalar_subquery())
+        latest_report = session.scalar(select(McdoSyncRun.result).where(McdoSyncRun.state == 'complete')
+                                       .order_by(McdoSyncRun.updated_at.desc()).limit(1))
         completed = session.execute(select(McdoSyncRun.updated_at, payload['end'].as_string(),
-                payload['plan']['summary']['new_invoices'], McdoSyncRun.result)
-            .where(McdoSyncRun.run_id == latest_id)).first()
+                payload['plan']['summary']['new_invoices'])
+            .where(McdoSyncRun.state == 'complete', payload['end'].as_string().is_not(None),
+                   payload['mode'].as_string().is_distinct_from('sheets_to_oracle'))
+            .order_by(McdoSyncRun.updated_at.desc()).limit(1)).first()
         last_verified_check = {'through': completed[1], 'verified_at': completed[0].isoformat(),
                                'new_invoices': completed[2]} if completed else None
     data=dashboard(rows,source,year)
     contracts = list_registry_contracts()
     counts = Counter(row['status'] for row in contracts if row['source']['system'] == 'e_auction')
     return envelope({'stage_controls':True,'earnings':data,'last_verified_check':last_verified_check,
-                     'report_update': (completed[3] or {}).get('monthly_report') if completed else None,
+                     'report_update': (latest_report or {}).get('monthly_report'),
                      'contracts':dict(counts),'deadlines':deadline_lists(contracts,today()),'sources':SOURCES,'configured':bool(os.getenv('MCDO_GOOGLE_CREDENTIALS')) and len(os.getenv('MCDO_ADMIN_TOKEN',''))>=32,'authentication':'IREPS digital-token sign-in in your browser'})
 
 @router.post('/runs',dependencies=[Depends(administrator)])

@@ -54,12 +54,20 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.controller.snapshot()['phase'], 'complete')
         self.assertEqual([call.args[0] for call in api.call_args_list].count('/runs/saved/apply'), 1)
 
-    def test_resume_incomplete_scan_does_not_write(self):
+    def test_resume_incomplete_scan_reconnects_and_submits_only_fresh_evidence(self):
         self.controller.save(run={'run_id': 'saved'})
-        with patch.object(server, 'request', side_effect=[{}, {'run_id': 'saved', 'state': 'awaiting_ireps'}]) as api:
+        new = {'run_id':'fresh','state':'awaiting_ireps','connector':{'start':'23/11/2026','end':'25/11/2026'}}
+        receipt_evidence = {'run_id':'fresh','completed_categories':['Advertising']}
+        responses = [{}, {'run_id':'saved','state':'awaiting_ireps'}, [], new,
+                     {'run_id':'fresh','state':'preview_ready'}, {}, {'run_id':'fresh','state':'complete'}]
+        with patch.object(server, 'request', side_effect=responses) as api, \
+                patch.object(self.controller, 'collect_ireps_evidence',
+                             side_effect=[server.BrowserTimeout('Navigation stalled'), receipt_evidence]) as reader:
             self.controller.work('resume')
-        self.assertEqual(self.controller.snapshot()['phase'], 'error')
-        self.assertEqual(api.call_count, 2)
+        self.assertEqual(self.controller.snapshot()['phase'], 'complete')
+        self.assertEqual(reader.call_count, 2)
+        self.assertIn(unittest.mock.call('/runs/fresh/evidence', receipt_evidence), api.call_args_list)
+        self.assertNotIn('/runs/saved/evidence', [call.args[0] for call in api.call_args_list])
 
     def test_inventory_reuses_only_verified_same_day_receipts_already_in_earnings(self):
         completed = {'run_id':'prior','state':'complete','result':{'earnings_verified':True}}
