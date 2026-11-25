@@ -76,6 +76,22 @@ class DatePartitionTests(TestCase):
         reader.navigate.assert_called_once_with('Contracts')
         self.assertEqual(reader.search.call_args_list[0],reader.search.call_args_list[1])
 
+    def test_empty_contract_window_overrides_stale_category_count(self):
+        reader = Ireps.__new__(Ireps)
+        reader.page = Mock()
+        locator = reader.page.locator.return_value
+        locator.inner_text.return_value = '3 Records Found\nNo results Found'
+        locator.count.return_value = 0
+        reader.check = Mock()
+        reader.page_rows = Mock(return_value=[])
+
+        self.assertEqual(reader.all_rows('contracts'), [])
+        with self.assertRaises(IncompleteResultsError):
+            reader.all_rows('contracts', filtered=True)
+        locator.count.return_value = 1
+        with self.assertRaises(IncompleteResultsError):
+            reader.all_rows('contracts')
+
     def test_subcategories_must_cover_the_parent_results(self):
         reader = Ireps.__new__(Ireps)
         reader.check = Mock()

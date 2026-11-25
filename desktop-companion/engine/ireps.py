@@ -138,9 +138,13 @@ class Ireps:
     def all_rows(self, mode, filtered=False, max_rows=None):
         body = self.page.locator('body').inner_text()
         m = re.search(r'(\d+)\s*Records Found', body)
-        if not m:
-            if re.search(r'No (?:results|records) Found', body, re.I) and not self.page_rows(mode):
+        empty = re.search(r'No (?:results|records) Found', body, re.I)
+        # IREPS can retain a positive category count when the contract table
+        # explicitly says the selected dates have no results.
+        if empty and (not m or mode == 'contracts' and not filtered):
+            if not self.page_rows(mode) and not self.page.locator('a[onclick*="menuexpand("]').count():
                 return []
+        if not m:
             raise IncompleteResultsError('IREPS result count missing.')
         total, page_num, seen, output = int(m[1]), 1, set(), []
         if max_rows is not None and total > max_rows:
@@ -228,8 +232,11 @@ class Ireps:
                         rows = None
                     if rows is not None:
                         return rows
-            if dated_query:
+            if dated_query and day(filters['start']) < day(filters['end']):
                 return self.read_date_partitions(navigation, category, mode, filters)
+            if dated_query:
+                self.log(f'{category} on {filters["start"]}: {str(exc).splitlines()[0]}')
+                raise
             self.log('Retrying the interrupted category: ' + category)
             self.navigate(navigation)
             self.search(category, **filters)
