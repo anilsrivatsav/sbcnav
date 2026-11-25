@@ -276,6 +276,17 @@ class Ireps:
                 rows.append(row)
         return rows
 
+    def receipt_filters(self, category):
+        if category != 'Parking':
+            return {}
+        # The routine earnings scope includes radio taxi only. The full
+        # contract inventory still reads the entire Parking category.
+        self.page.locator('#regCat').select_option(label=category)
+        options = self.page.locator('#regSubCat').evaluate(
+            "(el) => [...el.options].filter(o => !o.disabled && o.value !== '-1').map(o => [o.text.trim(), o.value])")
+        matches = [value for label, value in options if 'RADIOTAXI' in key(label)]
+        return {'subcategory': matches[0]} if len(matches) == 1 else {}
+
     def payments(self, categories, start, end, queries=None, existing=None, known_due=None):
         self.navigate('Payments')
         records = {}
@@ -288,9 +299,10 @@ class Ireps:
             # so use an explicit broad range and scan every returned page before
             # selecting by the collection timestamp displayed in column one.
             cache_key=(cat,from_due,to_due)
+            filters = self.receipt_filters(cat)
             try:
                 scanned = self.read_category_rows('Payments', cat, 'paid', filtered=bool(contract),
-                    kind='Previous Payments Made', start=from_due, end=to_due, contract=contract)
+                    kind='Previous Payments Made', start=from_due, end=to_due, contract=contract, **filters)
             except FilteredResultError as exc:
                 warning=f'IREPS exact-contract pagination is inconsistent for {contract}. Verifying the category results and filtering this contract locally.'
                 self.warnings.append(warning)
@@ -301,7 +313,7 @@ class Ireps:
                     # server-side filtered state across pagination.
                     self.navigate('Payments')
                     category_cache[cache_key] = self.read_category_rows('Payments', cat, 'paid',
-                        kind='Previous Payments Made', start=from_due, end=to_due)
+                        kind='Previous Payments Made', start=from_due, end=to_due, **filters)
                 scanned=category_cache[cache_key]
             if not contract:category_cache[cache_key]=scanned
             selected = 0
@@ -343,7 +355,7 @@ class Ireps:
         output = []
         for cat in categories:
             self.log('Checking overdue payment failures: '+cat)
-            for row in self.read_category_rows('Payments', cat, 'failed', kind='Payment Failures (Beyond grace period)'):
+            for row in self.read_category_rows('Payments', cat, 'failed', kind='Payment Failures (Beyond grace period)', **self.receipt_filters(cat)):
                 c = row['cells']
                 if len(c) != 8:
                     raise RuntimeError('Failed-payment columns changed.')
@@ -356,7 +368,7 @@ class Ireps:
         output = {}
         for cat in categories:
             self.log('Checking contract status: '+cat)
-            for row in self.read_category_rows('Contracts', cat, 'contracts', start=start, end=end):
+            for row in self.read_category_rows('Contracts', cat, 'contracts', start=start, end=end, **self.receipt_filters(cat)):
                 c = row['cells']
                 if len(c) != 9:
                     raise RuntimeError('Contract columns changed.')

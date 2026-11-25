@@ -85,3 +85,12 @@ class DatePartitionTests(TestCase):
         self.assertEqual(reader.read_subcategories('Contracts','Catering',{},['101151','101152'],2),[first,second])
         reader.read_category_rows.side_effect = [[second],[second]]
         self.assertIsNone(reader.read_subcategories('Contracts','Catering',{},['101151','101152'],2))
+
+    def test_routine_parking_uses_the_visible_radio_taxi_filter(self):
+        reader = Ireps.__new__(Ireps)
+        reader.page = Mock()
+        control = reader.page.locator.return_value
+        control.evaluate.return_value = [['Parking - General','1'],['Parking - Radio Taxi','2']]
+        self.assertEqual(reader.receipt_filters('Parking'),{'subcategory':'2'})
+        control.evaluate.return_value.append(['Radio Taxi (Other)','3'])
+        self.assertEqual(reader.receipt_filters('Parking'),{})
