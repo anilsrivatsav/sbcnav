@@ -80,6 +80,22 @@ class ControllerTests(unittest.TestCase):
         self.assertIsNone(self.controller.recent_receipt_evidence([completed],{**config,'existing_invoices':[]}))
         self.assertIsNone(self.controller.recent_receipt_evidence([completed],{**config,'end':'25/11/2026'}))
 
+    def test_receipt_retry_preserves_completed_read_stages(self):
+        cfg = {'start':'23/11/2026','end':'25/11/2026','categories':['Advertising'],
+               'existing_invoices':[],'known_due':{}}
+        reader = unittest.mock.Mock(observed={},warnings=[],confirmed_paid_due={})
+        reader.contracts.return_value = {}
+        reader.failures.return_value = []
+        reader.payments.side_effect = [server.BrowserTimeout('Payments took too long'), []]
+        with self.assertRaises(server.BrowserTimeout):
+            self.controller.collect_receipts(reader,'original',cfg,None)
+        prior = {'run_id':'original','state':'awaiting_ireps'}
+        verified = self.controller.collect_receipts(reader,'retry',cfg,prior)
+        self.assertEqual(verified['run_id'],'retry')
+        self.assertEqual(verified['completed_categories'],['Advertising'])
+        reader.contracts.assert_called_once()
+        reader.failures.assert_called_once()
+
     def test_inventory_resumes_at_unchecked_category(self):
         from contract_collector import collect_inventory
         asof = '24/11/2026'
@@ -102,7 +118,7 @@ class ControllerTests(unittest.TestCase):
             'start': '16/11/2026', 'end': '24/11/2026', 'categories': ['Advertising'],
             'existing_invoices': [], 'known_due': {}, 'full_contract_reconciliation': True,
         }}
-        reader = unittest.mock.Mock(observed={'ES26TEST': {'invoice': 'ES26TEST'}}, warnings=[])
+        reader = unittest.mock.Mock(observed={'ES26TEST': {'invoice': 'ES26TEST'}}, warnings=[], confirmed_paid_due={})
         reader.contracts.return_value = {}
         reader.payments.return_value = []
         reader.failures.return_value = []

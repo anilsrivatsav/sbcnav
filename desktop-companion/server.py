@@ -259,7 +259,7 @@ class Controller:
                     evidence = {**checked, 'run_id':run_id, 'start':cfg['start']}
                     evidence.pop('contract_reconciliation', None)
                 if not evidence:
-                    evidence = self.collect_receipts(reader, run_id, cfg)
+                    evidence = self.collect_receipts(reader, run_id, cfg, saved)
                 if not cfg.get('full_contract_reconciliation'):
                     write_state(evidence_path, evidence)
                     return evidence
@@ -313,12 +313,32 @@ class Controller:
                 continue
         return None
 
-    def collect_receipts(self, reader, run_id, cfg):
+    def collect_receipts(self, reader, run_id, cfg, saved):
         categories = cfg['categories']
-        statuses = reader.contracts(categories, '01/01/2020', cfg['end'])
-        failures = reader.failures(categories)
-        records = reader.payments(categories, cfg['start'], cfg['end'],
-            existing=set(cfg['existing_invoices']), known_due=collector_due_dates(cfg['known_due']))
+        scope = {name:cfg[name] for name in ('start','end','categories','existing_invoices','known_due')}
+        progress_path = STATE / ('receipts-' + run_id + '.json')
+        progress = read_state(progress_path)
+        if not progress and saved and saved.get('state') == 'awaiting_ireps':
+            progress = read_state(STATE / ('receipts-' + saved['run_id'] + '.json'))
+        if progress.get('scope') != scope:
+            progress = {'scope':scope}
+        elif 'statuses' in progress:
+            write_state(progress_path, progress)
+            self.log('Continuing from verified IREPS read stages already saved for this update.')
+        if 'statuses' not in progress:
+            progress['statuses'] = reader.contracts(categories, '01/01/2020', cfg['end'])
+            write_state(progress_path, progress)
+        if 'failures' not in progress:
+            progress['failures'] = reader.failures(categories)
+            write_state(progress_path, progress)
+        if 'records' not in progress:
+            progress['records'] = reader.payments(categories, cfg['start'], cfg['end'],
+                existing=set(cfg['existing_invoices']), known_due=collector_due_dates(cfg['known_due']))
+            progress['observed'] = list(reader.observed.values())
+            progress['paid_due'] = {contract:sorted(value.isoformat() for value in dates)
+                                    for contract, dates in reader.confirmed_paid_due.items()}
+            write_state(progress_path, progress)
+        statuses, failures, records = (progress[name] for name in ('statuses','failures','records'))
         pdfs = {}
         folder = STATE / ('Invoices-' + run_id)
         folder.mkdir(exist_ok=True)
@@ -328,7 +348,7 @@ class Controller:
             pdfs[record['invoice']] = base64.b64encode(reader.download(record, folder / (record['invoice'] + '.pdf'))).decode()
         wanted = {key(r['contract']) for r in records}
         for contract, due in cfg['known_due'].items():
-            if day(due) in reader.confirmed_paid_due.get(key(contract), set()):
+            if day(due).isoformat() in progress['paid_due'].get(key(contract), ()):
                 wanted.add(key(contract))
         terms = {}
         for contract in sorted(wanted):
@@ -338,7 +358,7 @@ class Controller:
             self.log('Checking official unpaid schedule: ' + statuses[contract]['contract'])
             terms[contract] = reader.terms({**statuses[contract], 'asof': cfg['end']}, raw=True)
         return dict(run_id=run_id, start=cfg['start'], end=cfg['end'], completed_categories=categories,
-                    contracts=list(statuses.values()), payments=list(reader.observed.values()), failures=failures,
+                    contracts=list(statuses.values()), payments=progress['observed'], failures=failures,
                     terms=terms, pdfs=pdfs, warnings=reader.warnings)
 
 

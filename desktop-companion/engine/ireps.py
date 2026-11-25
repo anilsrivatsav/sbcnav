@@ -1,6 +1,6 @@
 """Read-only IREPS browser workflow, using a separate Chrome window."""
 import re, time
-from datetime import timedelta
+from datetime import date, timedelta
 from playwright.sync_api import TimeoutError
 from urllib.parse import urljoin, urlparse
 from core import relevant, key, day, contract_terms
@@ -254,10 +254,16 @@ class Ireps:
             raise IncompleteResultsError(
                 f'IREPS could not read the complete {category} result on {first:%d/%m/%Y}.')
         middle = first + (last - first) // 2
+        windows = ((first, middle), (middle + timedelta(days=1), last))
+        lower, upper = date(2020, 1, 1), date(date.today().year + 10, 1, 1)
+        if mode == 'paid' and first < lower < upper <= last:
+            # Keep the full due-date range. Read the long outer stretches
+            # once instead of repeatedly bisecting them around recent awards.
+            windows = ((first, lower - timedelta(days=1)), (lower, upper - timedelta(days=1)), (upper, last))
         self.log(f'Reading smaller IREPS date windows for {category}: {first:%d/%m/%Y} to {last:%d/%m/%Y}.')
         rows = []
         undated_contracts = set()
-        for start, end in ((first, middle), (middle + timedelta(days=1), last)):
+        for start, end in windows:
             self.check()
             window = self.read_category_rows(
                 navigation, category, mode,

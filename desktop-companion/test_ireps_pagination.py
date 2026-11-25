@@ -1,6 +1,8 @@
 from unittest import TestCase
 from unittest.mock import Mock, patch
+from datetime import timedelta
 from playwright.sync_api import TimeoutError
+from core import day
 
 from ireps import IncompleteResultsError, Ireps
 
@@ -94,3 +96,16 @@ class DatePartitionTests(TestCase):
         self.assertEqual(reader.receipt_filters('Parking'),{'subcategory':'2'})
         control.evaluate.return_value.append(['Radio Taxi (Other)','3'])
         self.assertEqual(reader.receipt_filters('Parking'),{})
+
+    def test_wide_payment_windows_are_contiguous(self):
+        reader = Ireps.__new__(Ireps)
+        reader.check = Mock()
+        reader.log = Mock()
+        reader.read_category_rows = Mock(return_value=[])
+        reader.read_date_partitions('Payments','Advertising','paid',{'start':'01/01/1900','end':'31/12/2099'})
+        windows = [call.kwargs for call in reader.read_category_rows.call_args_list]
+        self.assertEqual(len(windows),3)
+        self.assertEqual(windows[0]['start'],'01/01/1900')
+        self.assertEqual(windows[-1]['end'],'31/12/2099')
+        self.assertTrue(all(day(left['end']) + timedelta(days=1) == day(right['start'])
+                            for left,right in zip(windows,windows[1:])))
