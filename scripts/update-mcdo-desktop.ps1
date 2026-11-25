@@ -60,8 +60,12 @@ function Test-CompanionIdle {
         if ($status.deskflow_busy) { return $false }
         if ($status.busy) {
             if (!$RecoverStalledRun -or $status.run.run_id -ne $RecoverStalledRun.ToString() -or
-                $status.phase -ne 'collecting' -or $status.run.state -ne 'awaiting_ireps' -or !$status.logs) {
+                $status.phase -notin @('collecting','paused') -or $status.run.state -ne 'awaiting_ireps' -or !$status.logs) {
                 return $false
+            }
+            if ($status.phase -eq 'paused') {
+                Write-Warning 'Restarting the specified paused read-only IREPS collection. Saved evidence is retained.'
+                return $true
             }
             $lastLog = [string]$status.logs[-1]
             if ($lastLog -notmatch '^([0-9]{2}:[0-9]{2}:[0-9]{2}) ') { return $false }
