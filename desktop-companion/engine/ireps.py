@@ -207,7 +207,9 @@ class Ireps:
             if isinstance(exc, DenseResultsError) and mode == 'contracts' and 'subcategory' not in filters:
                 subcategories = self.page.locator('#regSubCat').evaluate(
                     "(el) => [...el.options].filter(o => !o.disabled && o.value && o.value !== '-1').map(o => o.value)")
-                if len(subcategories)>1:
+                # Wide category menus are cheaper to read in date windows
+                # than through dozens of individual searches.
+                if 1 < len(subcategories) <= 10:
                     try:
                         rows = self.read_subcategories(navigation, category, filters, subcategories, exc.total)
                     except (IncompleteResultsError, TimeoutError):
@@ -233,8 +235,9 @@ class Ireps:
         observed = {tuple(row['cells']) for row in self.page_rows('contracts')}
         self.log(f'Reading {category} across {len(subcategories)} IREPS subcategories.')
         rows = {}
-        for subcategory in subcategories:
+        for index, subcategory in enumerate(subcategories, 1):
             self.check()
+            self.log(f'Checking {category} subcategory {index}/{len(subcategories)}.')
             for row in self.read_category_rows(navigation, category, 'contracts',
                                                **{**filters, 'subcategory':subcategory}):
                 rows[tuple(row['cells'])] = row
