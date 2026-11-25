@@ -71,12 +71,16 @@ class Ireps:
 
     def click_read_control(self, link, label):
         try:
-            link.click(timeout=15000, no_wait_after=True)
+            link.wait_for(state='visible', timeout=15000)
         except TimeoutError:
             self.check()
-            if link.count() != 1 or not link.is_visible():
-                raise RuntimeError('IREPS read control unavailable: ' + label) from None
-            link.evaluate('(element) => element.click()')
+            raise RuntimeError('IREPS read control unavailable: ' + label) from None
+        # These controls only open or refresh source records. Their handlers
+        # do not need a foreground mouse or a pointer animation.
+        link.evaluate("""(element) => {
+          if (element.matches(':disabled, [aria-disabled="true"]')) throw Error('IREPS read control is disabled');
+          element.click();
+        }""", timeout=15000)
 
     def search(self, category, kind=None, start=None, end=None, contract='', subcategory=None):
         self.check()
@@ -394,7 +398,7 @@ class Ireps:
         status = rows[0]['cells'][7]
         link = self.page.get_by_role('link', name='Contract', exact=True)
         with self.page.expect_navigation(wait_until='domcontentloaded'):
-            link.click()
+            self.click_read_control(link, 'Contract')
         text = self.page.locator('body').inner_text()
         with self.page.expect_popup() as popup:
             self.page.get_by_role('button', name='Payment Schedule', exact=True).click()
