@@ -75,7 +75,7 @@ function ReviewDetails({ lot, onFindLot }: { lot: Lot; onFindLot: (lot: string) 
       <div><dt>Workbook RP</dt><dd><Money value={workbook.value}/> {review.rate_unit}</dd></div>
     </dl>}
     {workbook?.notes && <p className="auction-review-remark"><strong>Workbook justification</strong><br/>{workbook.notes}</p>}
-    {proposal?.justification && <p className="auction-review-remark"><strong>IREPS justification</strong> <small>{proposal.justification.length}/300 characters</small><br/>{proposal.justification}</p>}
+    {proposal?.value != null && proposal.justification && <p className="auction-review-remark"><strong>IREPS justification</strong> <small>{proposal.justification.length}/300 characters</small><br/>{proposal.justification}</p>}
     {workbookPath && <p className="auction-review-hint">Workbook record · {workbookPath}{workbook?.sheet && ` · ${workbook.sheet}`}{workbook?.row && ` · row ${workbook.row}`}</p>}
     {!!review.precedents?.length && <details className="auction-review-history">
       <summary>Prior auction evidence <span>{review.precedents.length}</span></summary>
