@@ -3,7 +3,9 @@ import base64
 import os
 import threading
 from collections import Counter
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
+from typing import Literal
+from pydantic import BaseModel, ConfigDict
 from uuid import uuid4
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Query, Body
 from sqlalchemy import select, text
@@ -26,7 +28,7 @@ router = APIRouter(prefix='/api/mcdo', tags=['MCDO'])
 def workflow_readiness():
     with SessionLocal() as session:
         session.execute(select(ContractRegistryContract.ireps_checked_at).limit(1)).first()
-    return envelope({'full_contract_reconciliation': True, 'monthly_workbook': True})
+    return envelope({'full_contract_reconciliation': True, 'incremental_updates': True, 'monthly_workbook': True})
 
 @router.post('/session',dependencies=[Depends(administrator)])
 def start_session():
@@ -71,7 +73,18 @@ def bridge_config(row):
     due={key(actual(r[2])):actual(r[17]) for r in before['master']['grid'][1:] if len(r)>17 and actual(r[2]) and actual(r[17])}
     master_contracts = sorted({k for r in before['master']['grid'][1:]
                                if (k := master_contract_key(r)) and not pending_master_schedule(r)})
-    return {'run_id':row.run_id,'start':row.payload['start'],'end':row.payload['end'],'categories':CATEGORIES,'existing_invoices':invoices,'known_due':due,'master_contracts':master_contracts,'full_contract_reconciliation':True}
+    watch = []
+    for r in before['master']['grid'][1:]:
+        k = master_contract_key(r)
+        if not k:
+            continue
+        watch.append({'contract': str(actual(r[2])), 'status': str(actual(r[10])),
+                      'dues': [actual(c) for c in r[17:36] if actual(c) != ''],
+                      'pending': pending_master_schedule(r)})
+    return {'run_id':row.run_id,'start':row.payload['start'],'end':row.payload['end'],'categories':CATEGORIES,'existing_invoices':invoices,'known_due':due,'master_contracts':master_contracts,
+            'master_watch': watch, 'contracts_since': row.payload.get('contracts_since', row.payload['start']),
+            'scan_mode': row.payload.get('scan_mode', 'full'),
+            'full_contract_reconciliation': row.payload.get('scan_mode', 'full') == 'full'}
 
 @router.get('')
 def mcdo(year: str | None=Query(None,pattern=r'^20\d{2}-\d{2}$')):
@@ -94,13 +107,27 @@ def mcdo(year: str | None=Query(None,pattern=r'^20\d{2}-\d{2}$')):
                      'report_update': (latest_report or {}).get('monthly_report'),
                      'contracts':dict(counts),'deadlines':deadline_lists(contracts,today()),'sources':SOURCES,'configured':bool(os.getenv('MCDO_GOOGLE_CREDENTIALS')) and len(os.getenv('MCDO_ADMIN_TOKEN',''))>=32,'authentication':'IREPS digital-token sign-in in your browser'})
 
+class BeginRun(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    scan_mode: Literal['incremental', 'full'] = 'incremental'
+
+
 @router.post('/runs',dependencies=[Depends(administrator)])
-def begin_run():
+def begin_run(options: BeginRun = Body(default=BeginRun())):
     sheets=Sheets()
     before={name:sheets.read(name) for name in SOURCES}
     latest=latest_recorded_date(before['earnings']['grid'])
     if latest>today():raise HTTPException(422,'Latest invoice is future-dated; review Main Sheet before syncing.')
-    row=McdoSyncRun(run_id=str(uuid4()),state='awaiting_ireps',payload={'before':before,'start':latest.strftime('%d/%m/%Y'),'end':today().strftime('%d/%m/%Y')},result={})
+    # The last successful IREPS check covers contract discovery as well as receipts.
+    # A seven-day overlap includes recently published/backdated awards; invoice IDs deduplicate.
+    with SessionLocal() as session:
+        previous = session.scalar(select(McdoSyncRun).where(McdoSyncRun.state == 'complete',
+            McdoSyncRun.payload['mode'].as_string().is_distinct_from('sheets_to_oracle'))
+            .order_by(McdoSyncRun.updated_at.desc()).limit(1))
+        covered = day(previous.payload['end']) if previous and previous.payload.get('end') else latest - timedelta(days=90)
+    since = min(covered, today()) - timedelta(days=7)
+    row=McdoSyncRun(run_id=str(uuid4()),state='awaiting_ireps',payload={'before':before,'start':latest.strftime('%d/%m/%Y'),'end':today().strftime('%d/%m/%Y'),
+        'scan_mode':options.scan_mode, 'contracts_since':since.strftime('%d/%m/%Y')},result={})
     with SessionLocal.begin() as session:
         session.add(row);session.flush()
         result={**public_run(row),'connector':bridge_config(row)}
@@ -179,7 +206,7 @@ def evidence_plan(payload, evidence):
     if not required.issubset(terms):raise ValueError('Official agreement/schedule evidence is missing for a paid installment.')
     # Awards can reach the register before their first invoice. Only agreements
     # from a complete inventory can create these additional Master rows.
-    inventory = evidence.get('contract_reconciliation') or {}
+    inventory = evidence.get('contract_reconciliation') or evidence.get('contract_updates') or {}
     existing_contracts = {k for r in payload['before']['master']['grid'][1:] if (k := master_contract_key(r))}
     pending_schedules = {k for r in payload['before']['master']['grid'][1:]
                          if (k := master_contract_key(r)) and pending_master_schedule(r)}

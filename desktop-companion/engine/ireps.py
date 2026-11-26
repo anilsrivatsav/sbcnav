@@ -426,6 +426,21 @@ class Ireps:
         finally:
             schedule_page.close()
 
+    def contract_record(self, contract, asof):
+        """Read one watched contract; an absent row never establishes closure."""
+        self.navigate('Contracts')
+        self.log('Checking watched contract: ' + contract)
+        self.search('---All---', start='01/01/1900', end=asof, contract=contract)
+        rows = self.all_rows('contracts', filtered=True)
+        matching = [r['cells'] for r in rows if key(r['cells'][0]) == key(contract)]
+        if len(matching) != 1:
+            raise IncompleteResultsError('Watched contract could not be verified: ' + contract)
+        c = matching[0]
+        if len(c) != 9:
+            raise RuntimeError('Contract columns changed.')
+        return dict(contract=c[0], contract_date=c[1], firm=c[2], category=c[3],
+                    asset=c[4], start=c[5], end=c[6], status=c[7])
+
     def download(self, record, path):
         for attempt in range(3):
             self.check()

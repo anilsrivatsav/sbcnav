@@ -27,6 +27,8 @@ BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE / 'engine'))
 import app
 from core import day, key
+from core import status_name
+from web_incremental import watched_contracts, payment_queries
 from ireps import Ireps, HOME, IncompleteResultsError
 from playwright.sync_api import Error as BrowserError, TimeoutError as BrowserTimeout, sync_playwright
 from state_store import read_state, write_state
@@ -111,8 +113,9 @@ class Controller:
             deskflow_busy = bool(deskflow_instance and deskflow_instance.thread and deskflow_instance.thread.is_alive())
             return {**self.state, 'busy': bool(self.thread and self.thread.is_alive()),
                     'deskflow_busy': deskflow_busy,
-                    'connected': True, 'version': '2.2.0', 'configured': (STATE / 'operator.key').exists(),
+                    'connected': True, 'version': '2.2.1', 'configured': (STATE / 'operator.key').exists(),
                     'monthly_reports': True, 'inventory_retry': True, 'adaptive_retry': True,
+                    'incremental_updates': True,
                     'installer_available': installer_path(STATE) is not None}
 
     def log(self, message):
@@ -215,7 +218,7 @@ class Controller:
                     self.save(run=old)
                     self.monitor(old)
                     return
-            run = request('/runs', {})
+            run = request('/runs', {'scan_mode': 'full' if action == 'inventory' else 'incremental'})
             self.save(run=run, start=run['connector']['start'], end=run['connector']['end'])
             cfg = run['connector']
             checked = self.recent_receipt_evidence(recent_runs, cfg) if action == 'inventory' else None
@@ -316,6 +319,11 @@ class Controller:
     def collect_receipts(self, reader, run_id, cfg, saved):
         categories = cfg['categories']
         scope = {name:cfg[name] for name in ('start','end','categories','existing_invoices','known_due')}
+        incremental = cfg.get('scan_mode') == 'incremental'
+        if incremental:
+            if 'master_watch' not in cfg:
+                raise RuntimeError('Update the SBC NAV backend before using incremental collection.')
+            scope.update(scan_mode='incremental', master_watch=cfg['master_watch'], contracts_since=cfg['contracts_since'])
         progress_path = STATE / ('receipts-' + run_id + '.json')
         progress = read_state(progress_path)
         if not progress and saved and saved.get('state') == 'awaiting_ireps':
@@ -325,14 +333,31 @@ class Controller:
         elif 'statuses' in progress:
             write_state(progress_path, progress)
             self.log('Continuing from verified IREPS read stages already saved for this update.')
-        if 'statuses' not in progress:
-            progress['statuses'] = reader.contracts(categories, '01/01/2020', cfg['end'])
-            write_state(progress_path, progress)
         if 'failures' not in progress:
             progress['failures'] = reader.failures(categories)
             write_state(progress_path, progress)
+        if 'statuses' not in progress:
+            if incremental and 'discovered_statuses' not in progress:
+                self.log('Routine update: recent awards, watched active contracts and pending dues. Full history is skipped.')
+                statuses = reader.contracts(categories, cfg['contracts_since'], cfg['end'])
+                progress['discovered_statuses'] = statuses
+                write_state(progress_path, progress)
+            elif not incremental:
+                progress['statuses'] = reader.contracts(categories, '01/01/2020', cfg['end'])
+                write_state(progress_path, progress)
+        if incremental and 'statuses' not in progress:
+            statuses = progress['discovered_statuses']
+            for k, contract in sorted(watched_contracts(cfg, progress['failures']).items()):
+                if k not in statuses:
+                    statuses[k] = reader.contract_record(contract, cfg['end'])
+                    progress['discovered_statuses'] = statuses
+                    write_state(progress_path, progress)
+            progress['statuses'] = statuses
+            write_state(progress_path, progress)
         if 'records' not in progress:
+            queries = payment_queries(cfg, progress['statuses'], progress['failures']) if incremental else None
             progress['records'] = reader.payments(categories, cfg['start'], cfg['end'],
+                queries=queries,
                 existing=set(cfg['existing_invoices']), known_due=collector_due_dates(cfg['known_due']))
             progress['observed'] = list(reader.observed.values())
             progress['paid_due'] = {contract:sorted(value.isoformat() for value in dates)
@@ -347,6 +372,10 @@ class Controller:
             self.log('Verifying invoice ' + record['invoice'])
             pdfs[record['invoice']] = base64.b64encode(reader.download(record, folder / (record['invoice'] + '.pdf'))).decode()
         wanted = {key(r['contract']) for r in records}
+        if incremental:
+            known = set(cfg['master_contracts'])
+            wanted.update(k for k, r in statuses.items()
+                          if k not in known and status_name(r['status']) == 'Running')
         for contract, due in cfg['known_due'].items():
             if day(due).isoformat() in progress['paid_due'].get(key(contract), ()):
                 wanted.add(key(contract))
@@ -357,9 +386,19 @@ class Controller:
                 raise RuntimeError('Paid contract is absent from the official contract list: ' + contract)
             self.log('Checking official unpaid schedule: ' + statuses[contract]['contract'])
             terms[contract] = reader.terms({**statuses[contract], 'asof': cfg['end']}, raw=True)
-        return dict(run_id=run_id, start=cfg['start'], end=cfg['end'], completed_categories=categories,
+        result = dict(run_id=run_id, start=cfg['start'], end=cfg['end'], completed_categories=categories,
                     contracts=list(statuses.values()), payments=progress['observed'], failures=failures,
                     terms=terms, pdfs=pdfs, warnings=reader.warnings)
+        if incremental:
+            result['contract_updates'] = {'contracts': list(statuses.values()), 'payments': progress['observed'],
+                'details': {k: {'agreement': v['text'], 'schedule': v['schedule']} for k, v in terms.items()}}
+            # Unpaid awards are handled by the agreement-backed award path, which
+            # permits a marked preview when the master has room for only 19 dues.
+            required = {key(r['contract']) for r in records}
+            required.update(key(c) for c, d in cfg['known_due'].items()
+                            if day(d).isoformat() in progress['paid_due'].get(key(c), ()))
+            result['terms'] = {k: v for k, v in terms.items() if k in required}
+        return result
 
 
 controller = Controller()
@@ -768,7 +807,19 @@ def serve():
     # while a companion already owns the local endpoint.
     server = SingleCompanionServer(('127.0.0.1', PORT), Handler)
     threading.Thread(target=deskflow_relay_loop, daemon=True).start()
+    threading.Thread(target=daily_routine_loop, daemon=True).start()
     server.serve_forever()
+
+
+def daily_routine_loop():
+    from daily_routine import tick
+    while True:
+        try:
+            if not software_update_running():
+                tick(controller, deskflow, STATE / 'daily-routine.json')
+        except Exception:
+            pass  # Preserve the checkpoint; interactive actions remain available.
+        time.sleep(60)
 
 
 if __name__ == '__main__':

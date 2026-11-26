@@ -16,9 +16,9 @@ if (!$SkipApplicationBuild) {
 }
 & $InnoCompiler ('/DBuildDir=' + (Join-Path $Output 'app/SBCNAVUpdater')) ('/DOutputDir=' + $Output) (Join-Path $root 'desktop-companion/windows/setup.iss')
 if ($LASTEXITCODE -ne 0) { throw 'Windows installer build failed.' }
-$installer = Join-Path $Output 'SBC-NAV-Setup-2.2.0.exe'
+$installer = Join-Path $Output 'SBC-NAV-Setup-2.2.1.exe'
 $hash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
-[IO.File]::WriteAllText((Join-Path $Output 'SBC-NAV-Setup-2.2.0.sha256'), "$hash  SBC-NAV-Setup-2.2.0.exe`n")
+[IO.File]::WriteAllText((Join-Path $Output 'SBC-NAV-Setup-2.2.1.sha256'), "$hash  SBC-NAV-Setup-2.2.1.exe`n")
 Write-Output "Built: $installer"
 if ($PrivateConnection) {
     if (!$PrivateOutput) { throw 'PrivateOutput must be outside the public build directory.' }

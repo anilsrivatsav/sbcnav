@@ -11,7 +11,7 @@ import urllib.error
 import urllib.request
 import webbrowser
 
-VERSION = '2.2.0'
+VERSION = '2.2.1'
 ORIGIN = 'https://sbcnav-38t2.vercel.app'
 API = 'https://sbcnav.137-23-58-53.sslip.io/api/mcdo'
 DASHBOARD = ORIGIN + '/?view=mcdo'
@@ -118,6 +118,13 @@ def diagnostics(output):
     from rp.browser_runtime import browser_reader_runtime
     from rp.export_review import export_review
     report = {'version': VERSION, 'frozen': bool(getattr(sys, 'frozen', False)), 'python': platform.python_version()}
+    from web_incremental import watched_contracts, payment_queries
+    from daily_routine import tick
+    assert watched_contracts({'master_watch': []}, []) == {}
+    assert payment_queries({'master_watch': [], 'categories': []}, {}, []) == []
+    assert server.controller.snapshot()['incremental_updates'] is True
+    report['incremental_collector'] = True
+    report['daily_routine'] = callable(tick)
     report['configured'] = (STATE / 'operator.key').is_file()
     node, module = browser_reader_runtime()
     probe = subprocess.run([str(node), '-e', 'console.log(typeof require(process.argv[1]).chromium.connectOverCDP)', str(module)],

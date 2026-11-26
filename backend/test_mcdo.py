@@ -89,6 +89,24 @@ class McdoTests(unittest.TestCase):
     def test_incomplete_ireps_scan_is_refused(self):
         with self.assertRaisesRegex(ValueError,'incomplete'):api.evidence_plan({}, {'completed_categories':['Advertising']})
 
+    def test_bridge_separates_routine_scans_from_full_and_legacy_runs(self):
+        from types import SimpleNamespace
+        master = [{} for _ in range(37)]
+        master[2], master[10], master[17] = cell('OLD-ACTIVE'), cell('Running'), cell(45000)
+        before = {'earnings': {'grid': []}, 'master': {'grid': [[{}]*37, master]}}
+        payload = {'before': before, 'start': '23/11/2026', 'end': '26/11/2026',
+                   'contracts_since': '16/11/2026', 'scan_mode': 'incremental'}
+        cfg = api.bridge_config(SimpleNamespace(run_id='routine',payload=payload))
+        self.assertFalse(cfg['full_contract_reconciliation'])
+        self.assertEqual(cfg['master_watch'][0]['dues'],[45000])
+        self.assertEqual(cfg['contracts_since'],'16/11/2026')
+        for mode in ('full', None):
+            full = dict(payload)
+            if mode: full['scan_mode'] = mode
+            else: full.pop('scan_mode')
+            self.assertTrue(api.bridge_config(SimpleNamespace(run_id='full',payload=full))['full_contract_reconciliation'])
+        self.assertEqual(api.BeginRun().scan_mode,'incremental')
+
     def test_live_award_creates_master_row_before_first_receipt(self):
         last_receipt = [{} for _ in range(28)]
         last_receipt[2] = cell('23/11/2026')
@@ -120,6 +138,13 @@ class McdoTests(unittest.TestCase):
         row = next(rows[0] for n,c,rows in plan['master'] if n == 3 and c == 1)
         self.assertEqual((entered(row[2]),entered(row[3])),(award['contract'],'SMVB'))
         self.assertIn('First 19 of 20 open installments shown',entered(row[36]))
+        # Targeted, officially read awards use the same verified agreement path
+        # without claiming a complete lifecycle inventory.
+        targeted = {k:v for k,v in evidence.items() if k != 'contract_reconciliation'}
+        targeted['contract_updates'] = evidence['contract_reconciliation']
+        with patch.object(api,'contract_terms',return_value=terms):
+            incremental = api.evidence_plan(payload,targeted)
+        self.assertEqual(incremental['master'],plan['master'])
 
         pending = [{} for _ in range(37)]
         pending[2] = cell(award['contract'])

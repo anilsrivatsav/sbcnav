@@ -1,5 +1,42 @@
 # MCDO source updater
 
+## Routine incremental updates (26 November 2026)
+
+The web updater defaults to `scan_mode=incremental`. It reads recent award
+listings from the last successful IREPS check with a seven-day overlap, plus
+exact lookups for known active contracts, unpaid schedules, pending Master
+schedules and current beyond-grace failures. It does not run the all-contract
+inventory or download every historical agreement. Initial discovery uses a
+90-day lookback from the latest recorded receipt; use full reconciliation to
+recover older awards absent from the maintained sources.
+
+Receipt collection still selects actual collection dates from the latest
+recorded invoice day through today, with existing invoice identity deduplication.
+IREPS's date control filters installment due dates, so searches cover the
+Master's unpaid schedule ranges and explicit failures, including older dues.
+New awards and missing schedules get exact-contract payment searches. Paid,
+closed contracts without a known balance are left for full reconciliation.
+Missing exact lookups stop the run; absence never changes a contract's status.
+All write, invoice-PDF validation and two-source readback guards remain active.
+
+**Activity and other options → Run full reconciliation** creates a separate
+`scan_mode=full` run. It retains the full contract/receipt inventory, lifecycle
+checks and same-day resumable evidence. Existing runs without a scan mode retain
+their original full scope, so deploying does not silently change a saved run.
+Desktop companion and Windows installers are version 2.2.1; both package the
+same incremental collector. The generic installer contains no office key;
+the private office installer is distributed only through the paired PC.
+
+While the Windows companion is running, its daily routine checks after
+09:30 IST, including weekends. It starts only the incremental receipts action,
+then refreshes the upcoming SBC auction schedule through the existing
+`schedule-pdf` collector (`all_scheduled`, `scheduled_only`). The verified schedule
+is published through the existing authenticated relay. Closed-auction history,
+RP proposal writes and full contract reconciliation are not scheduled. Durable
+daily checkpoints prevent repeated attempts; paused or failed work needs its
+normal retry rather than an automatic full scan. The daily routine is bundled
+in the EXE and also copied by the source updater.
+
 ## Monthly SBC MCDO Excel (2 November 2026)
 
 The top of `/mcdo` and `/?view=mcdo` now provides financial-year/month selection,

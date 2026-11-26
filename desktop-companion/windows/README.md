@@ -8,14 +8,14 @@ Build using a Python environment with `playwright`, `pypdf`, `openpyxl`, `lxml`,
 ./scripts/build-mcdo-windows.ps1 -Python C:/Python312/python.exe -InnoCompiler 'C:/Program Files (x86)/Inno Setup 6/ISCC.exe'
 ```
 
-The output is `dist/windows/SBC-NAV-Setup-2.2.0.exe` and its SHA256 file. Keep the `dist/windows/app` directory for diagnostics. Build output is ignored by Git.
+The output is `dist/windows/SBC-NAV-Setup-2.2.1.exe` and its SHA256 file. Keep the `dist/windows/app` directory for diagnostics. Build output is ignored by Git.
 
-For a single private office EXE, add `-PrivateConnection C:/private/Connection.sbcnav -PrivateOutput C:/private/Office-setup`. This compiles the private connection into `SBC-NAV-Office-Setup-2.2.0.exe`. Never publish this executable. Installation saves a private copy and a manifest in the operator's state folder for onward downloads from the connected MCDO page. The loopback download accepts only an empty JSON POST from the exact production dashboard origin, checks the configured device and fixed installer path, and sends an uncached attachment. It never returns the operator key as a JSON value or string to browser JavaScript. The public web download redirects only to the fixed generic GitHub release asset.
+For a single private office EXE, add `-PrivateConnection C:/private/Connection.sbcnav -PrivateOutput C:/private/Office-setup`. This compiles the private connection into `SBC-NAV-Office-Setup-2.2.1.exe`. Never publish this executable. Installation saves a private copy and a manifest in the operator's state folder for onward downloads from the connected MCDO page. The loopback download accepts only an empty JSON POST from the exact production dashboard origin, checks the configured device and fixed installer path, and sends an uncached attachment. It never returns the operator key as a JSON value or string to browser JavaScript. The public web download redirects only to the fixed generic GitHub release asset.
 
 Create a private authorised-operator transfer package separately:
 
 ```powershell
-python ./scripts/package-mcdo-private.py --key-file C:/private/operator.key --installer ./dist/windows/SBC-NAV-Setup-2.2.0.exe --output C:/private/SBC-NAV-Setup
+python ./scripts/package-mcdo-private.py --key-file C:/private/operator.key --installer ./dist/windows/SBC-NAV-Setup-2.2.1.exe --output C:/private/SBC-NAV-Setup
 ```
 
 Never commit or publish the connection file or private ZIP. The installer looks for the adjacent `SBC NAV Connection.sbcnav` file and puts it in the user's pending setup folder. The setup wizard validates it against the fixed SBC NAV HTTPS API before saving `operator.key`; it does not accept arbitrary API endpoints. Only the existing authorised dashboard origin can invoke loopback commands. The app retains the source installation's state directory so completed work and recovery checkpoints survive migration. Existing source installations still use their source updater; frozen installations use the Windows installer.

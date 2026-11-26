@@ -96,6 +96,24 @@ class ControllerTests(unittest.TestCase):
         reader.contracts.assert_called_once()
         reader.failures.assert_called_once()
 
+    def test_routine_collector_uses_recent_awards_and_exact_watch_queries(self):
+        cfg = {'start':'23/11/2026','end':'26/11/2026','categories':['Advertising'],
+               'existing_invoices':[], 'known_due':{}, 'master_contracts':['ACTIVE'],
+               'scan_mode':'incremental', 'contracts_since':'16/11/2026',
+               'master_watch':[{'contract':'ACTIVE','status':'Running','pending':False,'dues':[]}]}
+        reader = unittest.mock.Mock(observed={}, warnings=[], confirmed_paid_due={})
+        reader.contracts.return_value = {}
+        reader.contract_record.return_value = {'contract':'ACTIVE','category':'Advertising','status':'LIVE'}
+        reader.failures.return_value = []
+        reader.payments.return_value = []
+        result = self.controller.collect_receipts(reader,'routine',cfg,None)
+        reader.contracts.assert_called_once_with(['Advertising'],'16/11/2026','26/11/2026')
+        reader.contract_record.assert_called_once_with('ACTIVE','26/11/2026')
+        self.assertEqual(reader.payments.call_args.kwargs['queries'],[])
+        reader.terms.assert_not_called()
+        self.assertNotIn('contract_reconciliation',result)
+        self.assertIn('contract_updates',result)
+
     def test_inventory_resumes_at_unchecked_category(self):
         from contract_collector import collect_inventory
         asof = '24/11/2026'

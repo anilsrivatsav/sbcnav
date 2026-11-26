@@ -57,7 +57,7 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
       const file=await response.blob();
       if(file.size<1000000)throw new Error("The installer download was incomplete. Please retry.");
       const url=URL.createObjectURL(file),link=document.createElement("a");
-      link.href=url;link.download="SBC-NAV-Office-Setup-2.2.0.exe";document.body.appendChild(link);link.click();link.remove();
+      link.href=url;link.download="SBC-NAV-Office-Setup-2.2.1.exe";document.body.appendChild(link);link.click();link.remove();
       setTimeout(()=>URL.revokeObjectURL(url),60000);
       setDownloadMessage("Download started. Copy this single EXE to the new PC and run it. It includes the private office connection; share it only with authorised operators.");
     }catch(e){setDownloadMessage(e instanceof Error?e.message:"The installer could not download. Reconnect and retry.");}
@@ -75,24 +75,11 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
     {label:"Import and verify Oracle",done:run?.state==="complete",active:status?.phase==="applying"&&run?.result?.active_stage===5,skip:false}
   ];
   return <div className="space-y-4">
-    <McdoMonthly refreshKey={status?.phase==="complete"?status.run?.run_id:undefined}/>
-    <Panel title="Set up another Windows PC" subtitle="One installer. Guided checks. No Codex or separate Python installation.">
-      <p className="text-sm text-muted">Run setup on Windows 10 or 11. It installs the desktop connection and shortcuts, offers missing Chrome and IREPS Signer, and verifies your digital-token sign-in before showing Ready.</p>
-      <div className="mt-4 flex flex-wrap items-center gap-3">
-        {reachable&&status?.installer_available?<Button onClick={downloadOfficeSetup} disabled={downloading}><Download size={16}/>{downloading?"Preparing download…":"Download ready-to-use office setup (.exe)"}</Button>:<a className="focus-ring inline-flex h-11 items-center gap-2 rounded-lg border border-accent bg-accent px-4 text-sm font-extrabold text-white" href="/downloads/sbc-nav-windows"><Download size={16}/>Download Windows setup (.exe)</a>}
-        <span className="text-xs text-muted">64-bit Windows · about 40 MB</span>
-      </div>
-      <p className="mt-3 text-xs text-muted">{reachable&&status?.installer_available?"This office installer includes the saved connection. Copy the EXE to the new PC; no separate key file is needed.":"For setup with the office connection included, download the ready-to-use office EXE from MCDO on an already connected office PC. The public installer needs that private connection during setup."}</p>
-      {downloadMessage&&<p role="status" aria-live="polite" className="mt-3 text-sm font-bold text-ink">{downloadMessage}</p>}
-    </Panel>
-    <Panel title="Update from IREPS" subtitle="The working desktop updater, controlled from this page.">
-      <p className="text-sm text-muted">Choose <strong>Run MCDO update</strong> and sign in to IREPS when prompted. The same run checks earnings and contracts, updates both Google Sheets and SBC NAV, and prepares the latest closed month’s Excel report when the required inputs are verified.</p>
+    <Panel title="MCDO" subtitle="Daily checks at 9:30 AM · Receipts, dues, contracts and auction schedules">
       <div className="my-4 rounded-lg border border-line p-4">
-        <p className="font-bold text-ink">Latest receipt in Oracle: {date(summary?.earnings.latest_receipt_date)}</p>
-        {summary?.last_verified_check?.through&&<p className="mt-1 text-sm font-bold text-ink">IREPS checked through {summary.last_verified_check.through}. Sheets and Oracle verified.</p>}
-        {summary?.report_update&&<p className="mt-1 text-sm text-muted">Monthly workbook for {summary.report_update.period} · {summary.report_update.status}. {summary.report_update.workbook&&<a className="font-bold underline" href={`/api/mcdo/monthly/${summary.report_update.period}/download/${summary.report_update.workbook.id}`}>Download Excel</a>}</p>}
+        <p className="font-bold text-ink">Latest receipt: {date(summary?.earnings.latest_receipt_date)}</p>
+        {summary?.last_verified_check?.through&&<p className="mt-1 text-sm font-bold text-ink">IREPS checked through {summary.last_verified_check.through}.</p>}
         {status?.start&&status.end&&busy&&<p className="mt-1 text-sm text-muted">Checking: {status.start} to {status.end}. Existing invoices are skipped.</p>}
-        <p className="mt-1 text-xs text-muted">Latest receipt is the newest payment date. A successful search may cover later days with no collected payments in the configured categories.</p>
       </div>
       {!reachable&&<div className="mb-4 rounded-lg border border-amber-400 p-4 text-sm" role="status">
         <p className="font-bold">{checking?"Connecting to the desktop updater…":"Connect this computer"}</p>
@@ -104,17 +91,18 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
         {busy&&!paused&&<Button variant="secondary" onClick={()=>command("pause")} disabled={!ready}><Pause size={16}/>Pause safely</Button>}
       </div>
       <p role="status" aria-live="polite" className="mt-4 text-sm font-bold text-ink">{reachable?status?.message:"The dashboard remains available while the desktop connection is offline."}</p>
-      <p className="mt-2 text-xs text-muted">You can close this page during an update. Keep the computer and updater Chrome window open; reopen this page to see progress.</p>
       {(error||status?.error)&&<p role="alert" className="mt-4 rounded-lg border border-red-300 p-3 text-sm text-red-700">{error||status?.error}</p>}
+      <details className="mt-4"><summary className="cursor-pointer text-sm font-bold">Update details</summary>
       {run&&<>
         <ol aria-label="Update progress" className="mt-4 grid gap-2 md:grid-cols-3">{steps.map((s,i)=><li key={s.label} className="rounded-lg border border-line p-3 text-sm"><p className="font-bold">{i+1}. {s.label}</p><p className="mt-2 flex items-center gap-2 text-muted">{s.skip?"Existing Sheets import — skipped":s.done?<><CheckCircle2 size={16}/>Verified</>:s.active?"In progress":paused?"Paused":"Waiting"}</p></li>)}</ol>
         {run.summary&&<p className="mt-4 text-sm text-muted">{run.summary.new_invoices??0} new invoices · {run.summary.new_contracts??0} new contracts · {money(run.summary.earnings_amount)} licence earnings</p>}
         {run.warnings?.map((w,i)=><p key={i} className="mt-2 text-xs text-amber-700">{w}</p>)}
         {Boolean(run.overdue?.length)&&<div className="mt-4 overflow-auto"><table className="w-full text-left text-xs"><caption className="mb-2 text-left font-bold">Payments unpaid beyond the seven-day grace period</caption><thead><tr>{["Contract","Contractor","Amount due","Due date","Grace ends","Days past grace"].map(h=><th key={h} className="p-2">{h}</th>)}</tr></thead><tbody>{run.overdue?.map((r,i)=><tr key={i}>{r.map((v,j)=><td key={j} className="border-t border-line p-2">{String(v)}</td>)}</tr>)}</tbody></table></div>}
       </>}
-      <details className="mt-4 rounded-lg border border-line p-3"><summary className="cursor-pointer text-sm font-bold">Activity and other options</summary>
+      </details>
+      <details className="mt-4 border-t border-line pt-3"><summary className="cursor-pointer text-sm font-bold">Activity and other options</summary>
         <div className="mt-3 flex flex-wrap gap-3">
-          {status?.inventory_retry&&<Button variant="secondary" disabled={!ready||busy} onClick={()=>command("inventory")}>Retry contract inventory</Button>}
+          {status?.inventory_retry&&<Button variant="secondary" disabled={!ready||busy} onClick={()=>command("inventory")}>Run full reconciliation</Button>}
           <Button variant="secondary" disabled={!ready||busy} onClick={()=>command("sync")}>Import existing Sheets into Oracle</Button>
           <Button variant="secondary" onClick={()=>refreshReport()}>Refresh report</Button>
         </div>
@@ -122,6 +110,16 @@ export function Mcdo({onUpdated}:{onUpdated?:()=>void}) {
       </details>
       {reportError&&<p role="alert" className="mt-3 text-sm text-red-700">{reportError}</p>}
     </Panel>
-    <McdoDeadlines data={summary?.deadlines}/>
+    <McdoMonthly refreshKey={status?.phase==="complete"?status.run?.run_id:undefined}/>
+    <details className="rounded-lg border border-line p-4"><summary className="cursor-pointer text-sm font-bold">Payments and contract expiry</summary><div className="mt-4"><McdoDeadlines data={summary?.deadlines}/></div></details>
+    <details className="rounded-lg border border-line p-4"><summary className="cursor-pointer text-sm font-bold">Install on another PC</summary><div className="mt-4"><Panel title="Set up another Windows PC" subtitle="One installer. Guided checks. No Codex or separate Python installation.">
+      <p className="text-sm text-muted">Run setup on Windows 10 or 11. It installs the desktop connection and shortcuts, offers missing Chrome and IREPS Signer, and verifies your digital-token sign-in before showing Ready.</p>
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        {reachable&&status?.installer_available?<Button onClick={downloadOfficeSetup} disabled={downloading}><Download size={16}/>{downloading?"Preparing download…":"Download ready-to-use office setup (.exe)"}</Button>:<a className="focus-ring inline-flex h-11 items-center gap-2 rounded-lg border border-accent bg-accent px-4 text-sm font-extrabold text-white" href="/downloads/sbc-nav-windows"><Download size={16}/>Download Windows setup (.exe)</a>}
+        <span className="text-xs text-muted">64-bit Windows · Version 2.2.1</span>
+      </div>
+      <p className="mt-3 text-xs text-muted">{reachable&&status?.installer_available?"This office installer includes the saved connection. Copy the EXE to the new PC; no separate key file is needed.":"For setup with the office connection included, download the ready-to-use office EXE from MCDO on an already connected office PC. The public installer needs that private connection during setup."}</p>
+      {downloadMessage&&<p role="status" aria-live="polite" className="mt-3 text-sm font-bold text-ink">{downloadMessage}</p>}
+    </Panel></div></details>
   </div>;
 }

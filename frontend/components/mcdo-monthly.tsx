@@ -119,7 +119,7 @@ export function McdoMonthly({refreshKey=""}:{refreshKey?:string}){
       }
     }catch(e){setError(e instanceof Error?e.message:"Could not save the report.");}finally{setBusy(false);}
   }
-  return <Panel title="Monthly MCDO · SBC Division" subtitle="Complete the month once all earnings and the dated IREPS asset position have been reconciled.">
+  return <Panel title="Monthly report" subtitle="SBC Division · Available when the month’s data is complete">
     <div className="flex flex-wrap items-end gap-3">
       <label className="grid gap-1 text-xs font-bold">Financial year<select className={input} value={year||overview?.selected_year||""} disabled={busy} onChange={e=>{setYear(e.target.value);setMessage("");}}>{overview?.years.map(y=><option key={y}>{y}</option>)}</select></label>
       <label className="grid gap-1 text-xs font-bold">Month<select className={input} value={period} disabled={busy} onChange={e=>{setPeriod(e.target.value);setMessage("");}}>{overview?.months.map(m=><option key={m.period} value={m.period}>{m.month_name} {m.period.slice(0,4)} · {m.status}{m.versions.length?` · ${m.versions.length} saved`:""}</option>)}</select></label>
@@ -129,7 +129,8 @@ export function McdoMonthly({refreshKey=""}:{refreshKey?:string}){
     {message&&<p role="status" className="mt-3 text-sm font-bold">{message}</p>}
     {loading&&<p role="status" className="mt-3 text-sm">Loading monthly data…</p>}
     {report&&<>
-      <div className="my-4 flex flex-wrap gap-3 rounded-lg border border-line p-3 text-sm"><strong>{dirty?"Unsaved inputs":report.status}</strong><span>{report.origin==="supplied_reference"?"Original supplied workbook · downloaded unchanged":`${report.row_count} financial-year receipts through this month`}</span><span>Source: {report.source?.filename||"Not imported"}</span></div>
+      <p className="my-4 text-sm font-bold">{dirty?"Unsaved inputs":report.status}</p>
+      <details className="my-4 border-t border-line pt-3"><summary className="cursor-pointer text-sm font-bold">Report figures and completion details</summary><div className="mt-3">
       <div className="grid gap-3 sm:grid-cols-3">{[["Previous cumulative · ₹ crore",report.earnings.previous_crore],["Selected month · ₹ crore",report.earnings.current_crore],["Cumulative · ₹ crore",report.earnings.cumulative_crore]].map(([label,value])=><div key={label} className="soft-inset rounded-lg border border-line p-3"><p className="text-xs text-muted">{label}</p><p className="mt-1 text-lg font-bold">{format(value)}</p></div>)}</div>
       {(report.issues.length>0||report.pending.length>0)&&<div className="my-4 rounded-lg border border-amber-300 p-3"><p className="text-sm font-bold">Required before completion</p><ul className="mt-2 list-disc space-y-1 pl-5 text-sm">{[...report.issues,...report.pending].map((issue,i)=><li key={i}>{issue}</li>)}</ul></div>}
       <details className="my-4 rounded-lg border border-line p-3"><summary className="cursor-pointer text-sm font-bold">Monthly inputs and completion</summary>
@@ -149,13 +150,14 @@ export function McdoMonthly({refreshKey=""}:{refreshKey?:string}){
       </details>
       {Boolean(report.notes?.length)&&<details className="my-4 text-sm"><summary className="cursor-pointer font-bold">Source reporting notes · {report.notes?.length}</summary><p className="mt-2 text-xs text-muted">Year/Month and Detailed Head control this report, matching the maintained earnings sheet. Original receipt dates and allocation codes remain unchanged.</p><ul className="mt-2 list-disc space-y-1 pl-5 text-xs">{report.notes?.map((note,i)=><li key={i}>{note}</li>)}</ul></details>}
       <details className="my-4 text-sm"><summary className="cursor-pointer font-bold">Policy totals · ₹ crore</summary><div className="mt-2 grid grid-cols-3 gap-2">{Object.entries(report.policies_crore).map(([code,value])=><p key={code}>{code}: <strong>{format(value)}</strong></p>)}</div><p className="mt-2 text-xs text-muted">Uses NFR earnings excluding GST. PUB and NFR overlap and are not added. The Excel template's percentages show excess / shortfall against target.</p></details>
-      <div className="flex flex-wrap items-end gap-3 border-t border-line pt-4">
-        <label className="grid gap-1 text-xs font-bold">Completed report version<select className={input} value={selectedVersion} onChange={e=>setSelectedVersion(e.target.value)} disabled={busy||!report.versions.length}>{!report.versions.length&&<option value="">No completed version</option>}{report.versions.map(v=><option key={v.id} value={v.id}>Version {v.version} · {new Date(v.created_at).toLocaleString("en-IN",{timeZone:"Asia/Kolkata"})}</option>)}</select></label>
+      </div></details>
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="grid gap-1 text-xs font-bold">Saved report<select className={input} value={selectedVersion} onChange={e=>setSelectedVersion(e.target.value)} disabled={busy||!report.versions.length}>{!report.versions.length&&<option value="">No completed version</option>}{report.versions.map(v=><option key={v.id} value={v.id}>Version {v.version}</option>)}</select></label>
         <Button onClick={download} disabled={busy||!selectedVersion}><Download size={15}/>Download MCDO Excel</Button>
         <Button variant="secondary" onClick={chooseFolder} disabled={busy}><FolderOpen size={15}/>{folder?`Folder: ${folder.name}`:"Choose MCDO folder"}</Button>
         {folder&&<Button variant="ghost" disabled={busy} onClick={()=>setFolder(null)}>Use browser downloads</Button>}
       </div>
-      <p className="mt-3 break-words text-xs text-muted">Preferred folder: {defaultFolder}. Choose it once to remember it in this browser. Existing files and earlier report versions are preserved.</p>
+      <details className="mt-3 text-xs text-muted"><summary className="cursor-pointer">Download location</summary><p className="mt-2 break-words">{defaultFolder}</p><p className="mt-1">Choose this folder once in this browser. Existing files are preserved.</p></details>
       {report.versions.length>0&&report.status!=="Ready to Download"&&<p className="mt-2 text-xs text-muted">Saved versions remain available. Changed source data or inputs require completion of a revised version.</p>}
     </>}
   </Panel>;

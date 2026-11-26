@@ -2,7 +2,7 @@
 from pathlib import Path
 import json
 
-FILENAME = 'SBC-NAV-Office-Setup-2.2.0.exe'
+FILENAME = 'SBC-NAV-Office-Setup-2.2.1.exe'
 
 
 def installer_path(state):

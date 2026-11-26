@@ -9,6 +9,11 @@ playwright_data, playwright_binaries, playwright_imports = collect_all('playwrig
 datas = playwright_data + [(str(root / 'rp' / name), 'rp') for name in ('collect.mjs', 'reader.js')]
 datas += [(str(root / 'engine' / 'config.json'), 'engine')]
 datas += [(str(Path(SPECPATH) / 'QUICK START.html'), '.')]
+# Some managed Python runtimes load an additional trust-policy file from next
+# to ssl.py. Preserve it in the frozen layout rather than weakening TLS checks.
+trust_policy = Path(sys.base_prefix) / 'Lib' / 'codex-rejected-cas.pem'
+if trust_policy.is_file():
+    datas.append((str(trust_policy), '.'))
 for name in ('playwright', 'openpyxl', 'lxml', 'pypdf', 'psutil', 'greenlet', 'pyee'):
     distribution = importlib.metadata.distribution(name)
     for file in distribution.files or []:
@@ -18,8 +23,8 @@ python_license = Path(sys.base_prefix) / 'LICENSE.txt'
 if python_license.exists():
     datas.append((str(python_license), 'licenses/python'))
 imports = playwright_imports + collect_submodules('rp') + [
-    'server', 'deskflow', 'contract_collector', 'app', 'core', 'planner', 'sheets', 'ireps',
-    'incremental', 'resume', 'checkpoint', 'state_store', 'tkinter', 'tkinter.ttk',
+    'server', 'deskflow', 'daily_routine', 'contract_collector', 'app', 'core', 'planner', 'sheets', 'ireps',
+    'incremental', 'web_incremental', 'resume', 'checkpoint', 'state_store', 'tkinter', 'tkinter.ttk',
     'tkinter.filedialog', 'tkinter.messagebox', 'openpyxl', 'lxml.etree', 'pypdf', 'psutil']
 a = Analysis([str(root / 'portable.py')], pathex=[str(root), str(root / 'engine')],
     binaries=playwright_binaries, datas=datas, hiddenimports=imports,
