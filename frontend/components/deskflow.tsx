@@ -1,11 +1,12 @@
 "use client";
 
-import {useCallback, useEffect, useState, type FormEvent} from "react";
+import {useCallback, useEffect, useRef, useState, type FormEvent} from "react";
 import {ArrowLeft, LockKeyhole} from "lucide-react";
 import Link from "next/link";
 import {deskflowError, deskflowResponse} from "../lib/deskflow-errors";
 
 import {DeskflowAnalysis} from "./deskflow-analysis";
+import {DeskflowAuctionLots} from "./deskflow-auction-lots";
 import {type ReviewLot} from "./deskflow-review";
 import {DeskflowWorkflow,type LibraryStatus,type WorkflowAction} from "./deskflow-workflow";
 
@@ -28,6 +29,7 @@ export function Deskflow(){
   const [category,setCategory]=useState("");
   const [libraryCategories,setLibraryCategories]=useState<string[]>([]);
   const [assetQuery,setAssetQuery]=useState("");
+  const assetSearchInput=useRef<HTMLInputElement>(null);
   const [assetSearch,setAssetSearch]=useState("");
   const [reviewFilter,setReviewFilter]=useState("all");
   useEffect(()=>{const timer=setTimeout(()=>setAssetSearch(assetQuery.trim()),300);return()=>clearTimeout(timer);},[assetQuery]);
@@ -36,7 +38,7 @@ export function Deskflow(){
   const [overviewError,setOverviewError]=useState("");
   const [softwareError,setSoftwareError]=useState("");
   const [softwareUpdate,setSoftwareUpdate]=useState<SoftwareUpdate|null>(null);
-  useEffect(()=>{setToken(sessionStorage.getItem(TOKEN_KEY)||"");setAssetQuery(new URLSearchParams(window.location.search).get("asset")||"");},[]);
+  useEffect(()=>{setToken(sessionStorage.getItem(TOKEN_KEY)||"");},[]);
   const fetchOverview=useCallback(async(accessToken:string)=>{
     const response=await fetch(`${LOCAL}/overview`,{headers:{Authorization:`Bearer ${accessToken}`},cache:"no-store",signal:AbortSignal.timeout(18000)});
     if(response.status===401){sessionStorage.removeItem(TOKEN_KEY);setToken("");setOverview(null);setError("Session expired. Unlock Deskflow again.");throw Error("Session expired. Unlock Deskflow again.");}
@@ -69,7 +71,8 @@ export function Deskflow(){
     <div className="mx-auto max-w-6xl">
       <header className="mb-5 flex items-center justify-between gap-4"><div className="flex items-center gap-3"><Link href="/" aria-label="Back to SBCNAV" className="rounded-lg border border-slate-200 bg-white p-2"><ArrowLeft size={18}/></Link><h1 className="text-2xl font-bold">Deskflow</h1></div>{token&&<button onClick={()=>{sessionStorage.removeItem(TOKEN_KEY);setToken("");setOverview(null);}} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">Lock</button>}</header>
       {!token?<form onSubmit={unlock} className="mx-auto mt-16 max-w-sm rounded-xl border border-slate-200 bg-white p-6"><LockKeyhole className="mb-3 text-emerald-700" size={24}/><h2 className="text-lg font-semibold">Unlock Deskflow</h2><label htmlFor="deskflow-password" className="mt-5 block text-sm">Password</label><input id="deskflow-password" type="password" autoFocus required value={password} onChange={e=>setPassword(e.target.value)} className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2"/><button disabled={busy} className="mt-4 w-full rounded-lg bg-emerald-700 px-4 py-2 font-semibold text-white disabled:opacity-50">Unlock</button>{error&&<p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}</form>:<div className="space-y-4">
-        <label className="block text-sm font-medium">Search asset, train, station or lot<input type="search" value={assetQuery} onChange={e=>setAssetQuery(e.target.value)} placeholder="e.g. 17294, Yelahanka, parking" className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2"/></label>
+        <DeskflowAuctionLots token={token} onFindLot={lot=>{setAssetQuery(lot);setCategory("");setReviewFilter("all");assetSearchInput.current?.focus();}}/>
+        <label className="block text-sm font-medium">Search asset, train, station or lot<input ref={assetSearchInput} type="search" value={assetQuery} onChange={e=>setAssetQuery(e.target.value)} placeholder="e.g. 17294, Yelahanka, parking" className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2"/></label>
         <details className="rounded-xl border border-slate-200 bg-white p-4"><summary className="cursor-pointer text-sm font-semibold text-slate-700">Refresh, sync and review tools</summary><div className="mt-4"><DeskflowWorkflow library={overview?.history_library} working={Boolean(working)} collecting={Boolean(overview?.progress.busy)} archiveBusy={Boolean(overview?.archive_sync?.busy)} reviewed={overview?.lots.filter(lot=>lot.proposal?.status==="reviewed").length||0} command={action=>void collect(action)} updateDesktop={()=>void updateDesktop()} filter={reviewFilter} setFilter={setReviewFilter}/></div></details>
         {error&&<div role="alert" className="flex justify-between gap-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800"><span>{error}</span><button onClick={()=>setError("")} aria-label="Dismiss command error" className="underline">Dismiss</button></div>}
         {overviewError&&<p role="alert" className="text-sm text-red-700">{overviewError} {overview?"Showing previously loaded rows.":""}</p>}

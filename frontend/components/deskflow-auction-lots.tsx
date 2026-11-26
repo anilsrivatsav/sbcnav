@@ -1,10 +1,10 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
 import { ChevronDown, ClipboardCheck, History } from 'lucide-react';
-import { type Booking, labelDate, labelTime, normalizeTime } from '../../lib/eauction-scheduler';
-import { deskflowError, deskflowResponse } from '../../lib/deskflow-errors';
+import { type Booking, labelDate, labelTime, normalizeTime } from '../lib/eauction-scheduler';
+import { deskflowError, deskflowResponse } from '../lib/deskflow-errors';
+import './deskflow-auction-lots.css';
 
 type Proposal = {
   status?: string; value?: string | number; formula?: string; justification?: string; policy_version?: string;
@@ -57,7 +57,7 @@ function Money({ value }: { value: string | number }) {
   return <>{rupees.format(Number(value))}</>;
 }
 
-function ReviewDetails({ lot }: { lot: Lot }) {
+function ReviewDetails({ lot, onFindLot }: { lot: Lot; onFindLot: (lot: string) => void }) {
   const review = lot.review;
   const proposal = review.proposal;
   const workbook = review.workbook;
@@ -71,7 +71,7 @@ function ReviewDetails({ lot }: { lot: Lot }) {
       {(review.rule || proposal.policy_version) && <div><dt>Rule</dt><dd>{[review.rule?.replaceAll('_', ' '), proposal.policy_version].filter(Boolean).join(' · ')}</dd></div>}
     </dl>}
     {proposal?.justification && <p className="auction-review-remark"><strong>IREPS justification</strong> <small>{proposal.justification.length}/300 characters</small><br/>{proposal.justification}</p>}
-    {workbookPath && <p className="hint">Workbook record · {workbookPath}{workbook?.sheet && ` · ${workbook.sheet}`}{workbook?.row && ` · row ${workbook.row}`}</p>}
+    {workbookPath && <p className="auction-review-hint">Workbook record · {workbookPath}{workbook?.sheet && ` · ${workbook.sheet}`}{workbook?.row && ` · row ${workbook.row}`}</p>}
     {!!review.precedents?.length && <details className="auction-review-history">
       <summary>Prior auction evidence <span>{review.precedents.length}</span></summary>
       <ul>{review.precedents.map((event, index) => <li key={index}>
@@ -93,17 +93,44 @@ function ReviewDetails({ lot }: { lot: Lot }) {
         </>}
       </li>)}</ol>
     </details>
-    <Link className="button outline" href={`/deskflow?asset=${encodeURIComponent(lot.lot)}`}>Open Deskflow</Link>
+    <button type="button" className="auction-review-button" onClick={() => onFindLot(lot.lot)}>Find in asset analysis</button>
   </div>;
 }
 
-export default function AuctionLotReview({ token, scheduleCheckedAt, bookings }:
-  { token: string; scheduleCheckedAt?: string; bookings: Booking[] | null }) {
+export function DeskflowAuctionLots({ token, onFindLot }: { token: string; onFindLot: (lot: string) => void }) {
+  const [bookings, setBookings] = useState<Booking[] | null>(null);
   const [view, setView] = useState<'upcoming' | 'history'>('upcoming');
   const [month, setMonth] = useState(monthInIST);
   const [filter, setFilter] = useState<Filter>('all');
   const [result, setResult] = useState<{ query: string; data?: Queue; error?: string }>();
   const query = view === 'history' ? `?month=${month}` : '';
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let busy = false;
+    async function loadSchedule() {
+      if (document.hidden || busy) return;
+      busy = true;
+      try {
+        const response = await fetch('/api/deskflow/eauction', {
+          headers: { Authorization: `Bearer ${token}` }, cache: 'no-store',
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(18000)]),
+        });
+        const { data } = await deskflowResponse<{ data: Booking[] }>(response, 'Workbook schedule is unavailable.');
+        if (!controller.signal.aborted) setBookings(data);
+      } catch {
+        if (!controller.signal.aborted) setBookings(null);
+      } finally {
+        busy = false;
+      }
+    }
+    void loadSchedule();
+    const timer = window.setInterval(loadSchedule, 120000);
+    return () => {
+      controller.abort();
+      clearInterval(timer);
+    };
+  }, [token]);
 
   useEffect(() => {
     if (view === 'history' && !month) return;
@@ -138,7 +165,7 @@ export default function AuctionLotReview({ token, scheduleCheckedAt, bookings }:
       clearInterval(timer);
       document.removeEventListener('visibilitychange', load);
     };
-  }, [token, query, view, month, scheduleCheckedAt]);
+  }, [token, query, view, month]);
 
   const data = result?.query === query ? result.data : undefined;
   const error = result?.query === query ? result.error : undefined;
@@ -152,15 +179,15 @@ export default function AuctionLotReview({ token, scheduleCheckedAt, bookings }:
     : lot.status === filter && !lot.conflict));
   const next = view === 'upcoming' ? lots[0] : undefined;
 
-  return <section className="work-area auction-review" aria-labelledby="auction-review-heading">
+  return <section className="auction-review" aria-labelledby="auction-review-heading">
     <div className="auction-review-header">
       <div>
         <h2 id="auction-review-heading"><ClipboardCheck size={19} aria-hidden/> Auction lot review</h2>
         {next && <p>Next auction · <strong>{formatStamp(next.start)} IST</strong></p>}
       </div>
       <div className="auction-review-view" aria-label="Auction lot view">
-        <button type="button" className="button" aria-pressed={view === 'upcoming'} onClick={() => { setView('upcoming'); setFilter('all'); }}>Upcoming</button>
-        <button type="button" className="button" aria-pressed={view === 'history'} onClick={() => { setView('history'); setFilter('all'); }}><History size={14} aria-hidden/> History</button>
+        <button type="button" className="auction-review-button" aria-pressed={view === 'upcoming'} onClick={() => { setView('upcoming'); setFilter('all'); }}>Upcoming</button>
+        <button type="button" className="auction-review-button" aria-pressed={view === 'history'} onClick={() => { setView('history'); setFilter('all'); }}><History size={14} aria-hidden/> History</button>
       </div>
     </div>
     <div className="auction-review-meta">
@@ -168,8 +195,8 @@ export default function AuctionLotReview({ token, scheduleCheckedAt, bookings }:
       {data?.checked_at && <span>IREPS schedule checked {formatStamp(data.checked_at)} IST</span>}
       {bookings === null && <span>Workbook schedule comparison unavailable</span>}
     </div>
-    {error && <p className="schedule-pdf-error auction-review-notice" role="status">{error}{data && ' Showing the last loaded results.'}</p>}
-    {!data && !error && <p className="hint" role="status">{view === 'history' && !month ? 'Choose an auction month.' : 'Loading auction lots…'}</p>}
+    {error && <p className="auction-review-notice" role="status">{error}{data && ' Showing the last loaded results.'}</p>}
+    {!data && !error && <p className="auction-review-hint" role="status">{view === 'history' && !month ? 'Choose an auction month.' : 'Loading auction lots…'}</p>}
     {data && <>
       <div className="auction-review-filters" aria-label="Filter auction lots">
         {([
@@ -191,7 +218,7 @@ export default function AuctionLotReview({ token, scheduleCheckedAt, bookings }:
         {(lot.conflict || lot.reasons.length > 0) && <ul className="auction-review-reasons">
           {lot.conflict && <li>{lot.conflict}</li>}{lot.reasons.map((reason, index) => <li key={index}>{reason}</li>)}
         </ul>}
-        <ReviewDetails lot={lot}/>
+        <ReviewDetails lot={lot} onFindLot={onFindLot}/>
       </details>)}</div> : <p className="auction-review-empty">{lots.length
         ? 'No lots match this filter.'
         : view === 'history' ? 'No lot history has been recorded for this month.'
