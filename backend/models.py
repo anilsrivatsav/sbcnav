@@ -968,6 +968,16 @@ class DeskflowWorkbookArchive(Base):
     ciphertext: Mapped[str] = mapped_column(Text, nullable=False)
 
 
+class AuctionLotHistory(Base):
+    __tablename__ = 'auction_lot_history'
+    catalogue: Mapped[str] = mapped_column(String(160), primary_key=True)
+    lot: Mapped[str] = mapped_column(String(200), primary_key=True)
+    auction_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    schedule: Mapped[dict] = mapped_column(JSON, nullable=False)
+    review: Mapped[dict] = mapped_column(JSON, nullable=False)
+    events: Mapped[list] = mapped_column(JSON, nullable=False)
+
+
 class AuctionHoliday(Base):
     __tablename__ = 'auction_holidays'
     day: Mapped[date] = mapped_column(Date, primary_key=True)

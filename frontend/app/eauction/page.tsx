@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { ArrowLeft, Ban, CircleX, CloudUpload, Download, RefreshCw, RotateCcw } from 'lucide-react';
 import { Booking, Holiday, Proposal, auctionDateError, identifierError, categories, findDate, labelDate, labelTime, normalizeDate, normalizeTime, readCSV, csv, nextIdentifiers, idCategory } from '../../lib/eauction-scheduler';
 import './eauction.css';
+import AuctionLotReview from './auction-lot-review';
 import { deskflowError, deskflowResponse } from '../../lib/deskflow-errors';
 import type { IrepsScheduleLot } from '../../lib/ireps-schedule-pdf';
 
@@ -245,6 +246,7 @@ export default function AuctionSchedulePage() {
       </div>
     </header>
     {token&&pdfStatus.message&&<p className={`schedule-pdf-status${pdfStatus.error?' schedule-pdf-error':''}`} role={pdfStatus.error?'alert':'status'}>{pdfStatus.message}</p>}
+    {token&&<AuctionLotReview token={token} scheduleCheckedAt={savedSchedule?.checked_at} bookings={liveRows}/>}
     {token&&<section className="work-area" aria-labelledby="ireps-schedule-heading">
       <div className="table-heading"><div className="table-title">
         <h2 id="ireps-schedule-heading">Upcoming IREPS auctions</h2>

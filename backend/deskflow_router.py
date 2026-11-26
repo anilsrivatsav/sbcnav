@@ -15,6 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from sqlalchemy import select
 
 from database import SessionLocal
+from auction_lot_review import list_lots, record_lots
 from mcdo.auth import administrator
 from models import AuctionScheduleLink, DeskflowRelay, DeskflowWorkbookArchive
 from mcdo.eauction import _category, live_schedule, save_schedule, list_holidays, save_holidays, delete_holiday
@@ -141,6 +142,16 @@ def _latest_ireps_schedule(*overviews):
     return latest
 
 
+@router.get('/auction-lots', dependencies=[Depends(_browser)])
+def auction_lots(month: str | None = Query(default=None, pattern=r'^\d{4}-(0[1-9]|1[0-2])$')):
+    if month and not 1 <= int(month[:4]) <= 9998:
+        raise HTTPException(422, 'Choose a valid auction month.')
+    with SessionLocal() as session:
+        row = session.get(DeskflowRelay, 1)
+        published = _latest_ireps_schedule(row.overview or {}) if row else None
+        return list_lots(session, published, month, datetime.now(timezone.utc))
+
+
 @router.get('/schedule-pdf', dependencies=[Depends(_browser)])
 def schedule_pdf_status(request_id: str | None = Query(default=None, pattern=r'^[a-f0-9-]{36}$')):
     with SessionLocal() as session:
@@ -253,6 +264,7 @@ def agent_sync(payload: dict = Body(...)):
     with SessionLocal.begin() as session:
         row = _row(session)
         published = _latest_ireps_schedule(row.overview or {}, overview)
+        record_lots(session, published, overview, datetime.now(timezone.utc))
         row.overview = {**overview, 'published_ireps_schedule': published}
         row.software_update = update
         row.last_seen_at = datetime.now(timezone.utc)

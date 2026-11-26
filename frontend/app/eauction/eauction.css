@@ -106,3 +106,55 @@
 @media(max-width:900px){.eauction-sheet .entry-form{grid-template-columns:repeat(2,minmax(0,1fr))}.eauction-sheet .entry-form>*:nth-child(2){border-right:0}.eauction-sheet .entry-form>*:nth-child(-n+2){border-bottom:1px solid #e0e6e3}}
 @media(max-width:700px){.eauction-sheet .grid{width:1022px}.eauction-sheet .actions-cell{gap:3px}.eauction-sheet .icon-action{width:28px;height:28px}.eauction-sheet .grid th,.eauction-sheet .grid td{padding-left:12px;padding-right:12px}}
 @media(max-width:600px){.eauction-sheet .sheet-header{padding:16px;align-items:flex-start}.eauction-sheet .sheet-header>.button{font-size:10px;padding:7px}.eauction-sheet .title{gap:9px}.eauction-sheet .file-icon{width:34px;height:34px;font-size:22px}.eauction-sheet h1{font-size:16px}.eauction-sheet .tabs{padding:0 16px;gap:17px;font-size:11px}.eauction-sheet .work-area{padding:20px 16px}.eauction-sheet .section-title{display:block}.eauction-sheet .section-title span{display:block;margin-top:5px}.eauction-sheet .entry-form{grid-template-columns:1fr}.eauction-sheet .entry-form>*{min-height:71px;border-right:0!important;border-bottom:1px solid #e0e6e3}.eauction-sheet .entry-form>*:last-child{border-bottom:0}.eauction-sheet .id-row{flex-wrap:wrap}.eauction-sheet .id-row label{max-width:none;min-width:calc(50% - 6px)}.eauction-sheet .id-row .button{width:100%}.eauction-sheet .table-heading{align-items:flex-start}.eauction-sheet .table-heading>div{flex-wrap:wrap;justify-content:flex-end}.eauction-sheet footer{padding:15px 16px 22px}}
+
+/* Auction review sits above the existing schedule and uses the same workbook theme. */
+.eauction-sheet .auction-review { background: #f8fbf9; border-block: 1px solid #e1ebe3; }
+.auction-review-header, .auction-review-meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 18px; }
+.auction-review-header h2 { display: flex; align-items: center; gap: 8px; }
+.auction-review-header h2 svg { color: #188038; }
+.auction-review-header p, .auction-review-meta { color: #53645a; font-size: 12px; margin: 6px 0 0; }
+.auction-review-view { display: flex; gap: 5px; }
+.auction-review-view .button { gap: 5px; }
+.auction-review-view [aria-pressed=true] { background: #e6f3e9; border-color: #a2c6ac; color: #135f2b; }
+.auction-review-meta { margin: 10px 0; justify-content: flex-start; }
+.auction-review-meta label { display: flex; align-items: center; gap: 8px; }
+.auction-review-meta input { border: 1px solid #cbd9cf; border-radius: 5px; padding: 5px 8px; color: #273a2d; background: white; }
+.auction-review-filters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 12px 0; }
+.auction-review-filters button { display: flex; gap: 9px; align-items: baseline; flex-wrap: wrap; text-align: left; border: 1px solid #dae4dd; border-radius: 7px; background: #fff; padding: 10px 12px; color: #34463b; }
+.auction-review-filters strong { font-size: 20px; font-variant-numeric: tabular-nums; color: #135f2b; }
+.auction-review-filters span { font-size: 12px; }
+.auction-review-filters [aria-pressed=true] { border-color: #548f64; background: #edf7ef; }
+.auction-review-list { display: grid; gap: 6px; }
+.auction-review-lot { min-width: 0; border: 1px solid #dce5df; border-radius: 7px; background: #fff; }
+.auction-review-lot > summary { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: center; gap: 4px 14px; padding: 10px 12px; list-style: none; cursor: pointer; }
+.auction-review-lot > summary::-webkit-details-marker { display: none; }
+.auction-review-lot[open] .auction-review-chevron { transform: rotate(180deg); }
+.auction-review-id { display: grid; gap: 1px; overflow-wrap: anywhere; font-size: 13px; }
+.auction-review-id small, .auction-review-date, .auction-review-reason { color: #55645c; font-size: 11px; }
+.auction-review-state { border-radius: 5px; padding: 3px 7px; white-space: nowrap; color: #294a38; background: #edf4ef; font-size: 11px; font-weight: 650; }
+.auction-review-state.ready, .auction-review-state.saved { color: #12602e; background: #e5f3e9; }
+.auction-review-state.pending { color: #795008; background: #fdf2dc; }
+.auction-review-state.conflict { color: #9b2424; background: #feeeee; }
+.auction-review-reason { grid-column: 1 / -1; }
+.auction-review-details { border-top: 1px solid #e4ebe6; padding: 12px; font-size: 12px; overflow-wrap: anywhere; }
+.auction-review-description, .auction-review-reasons { padding-inline: 13px; margin: 0 0 8px; font-size: 12px; }
+.auction-review-reasons { padding-inline-start: 28px; color: #74480a; }
+.auction-review-reasons li { list-style: disc; }
+.auction-review-facts { display: flex; flex-wrap: wrap; gap: 12px 24px; margin: 0 0 12px; }
+.auction-review-facts dt, .auction-review-remark small { color: #59675e; margin-bottom: 2px; }
+.auction-review-facts dd { margin: 0; font-weight: 650; }
+.auction-review-remark { background: #f4f7f5; border-radius: 5px; padding: 7px 9px; }
+.auction-review-remark small { margin-inline-start: 7px; }
+.auction-review-history { margin: 8px 0; }
+.auction-review-history summary { cursor: pointer; color: #216537; font-weight: 650; }
+.auction-review-history summary span { margin-inline-start: 4px; color: #52655a; }
+.auction-review-history ol, .auction-review-history ul { margin: 5px 0; padding-inline-start: 18px; }
+.auction-review-history li { list-style: disc; padding: 3px 0; }
+.auction-review-history li small { display: block; color: #53645a; }
+.auction-review-empty, .auction-review-notice { padding: 9px 12px; border-radius: 5px; font-size: 12px; }
+.auction-review-empty { background: #fff; border: 1px dashed #c9d9cf; color: #52655a; }
+@media (max-width: 640px) {
+  .auction-review-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .auction-review-lot > summary { grid-template-columns: minmax(0, 1fr) auto auto; gap: 5px 8px; }
+  .auction-review-date { grid-row: 2; grid-column: 1 / -1; }
+}

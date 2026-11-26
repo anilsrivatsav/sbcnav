@@ -36,7 +36,7 @@ export function Deskflow(){
   const [overviewError,setOverviewError]=useState("");
   const [softwareError,setSoftwareError]=useState("");
   const [softwareUpdate,setSoftwareUpdate]=useState<SoftwareUpdate|null>(null);
-  useEffect(()=>{setToken(sessionStorage.getItem(TOKEN_KEY)||"");},[]);
+  useEffect(()=>{setToken(sessionStorage.getItem(TOKEN_KEY)||"");setAssetQuery(new URLSearchParams(window.location.search).get("asset")||"");},[]);
   const fetchOverview=useCallback(async(accessToken:string)=>{
     const response=await fetch(`${LOCAL}/overview`,{headers:{Authorization:`Bearer ${accessToken}`},cache:"no-store",signal:AbortSignal.timeout(18000)});
     if(response.status===401){sessionStorage.removeItem(TOKEN_KEY);setToken("");setOverview(null);setError("Session expired. Unlock Deskflow again.");throw Error("Session expired. Unlock Deskflow again.");}
