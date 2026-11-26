@@ -8,6 +8,7 @@ from sqlalchemy import select, tuple_
 from models import AuctionLotHistory
 
 IST = timezone(timedelta(hours=5, minutes=30))
+SCHEDULE_FIELDS = 'catalogue lot category start description time_known'
 
 
 def _at(value):
@@ -43,11 +44,13 @@ def _unique(entries):
 
 
 def _schedule(entry):
-    start = _at(entry.get('start') or entry.get('date'))
+    raw_start = entry.get('start') or entry.get('date')
+    start = _at(raw_start)
     if not start:
         return None
     result = {field: entry.get(field) or '' for field in ('catalogue', 'lot', 'category')}
-    return {**result, 'start': start.isoformat(), 'description': entry.get('description') or entry.get('details') or ''}
+    return {**result, 'start': start.isoformat(), 'time_known': len(raw_start.strip()) > 10,
+            'description': entry.get('description') or entry.get('details') or ''}
 
 
 def _fields(entry, names):
@@ -69,8 +72,21 @@ def _review(entry, collected_at):
         'basis': _fields(inputs, 'benchmark_source continuation'),
         'contract': _fields(sources.get('contract') or {}, 'id contract_id lar rate_unit status source award_date start end closed'),
         'precedents': entry.get('history') or [],
-        'workbook': _fields(entry.get('workbook_source') or {}, 'workbook path sheet row value notes'),
+        'workbook': _fields(entry.get('workbook_source') or {}, 'file workbook path sheet row value notes'),
     }
+
+
+def _matches_review(work, announced, collected, changed):
+    if not work or work['start'][:10] != announced['start'][:10]:
+        return False
+    for field in ('category', 'description'):
+        if ' '.join(work[field].split()).casefold() != ' '.join(announced[field].split()).casefold():
+            return False
+    if work['time_known'] and announced['time_known']:
+        return work['start'] == announced['start']
+    # Legacy Deskflow retains only the auction date. After an observed time change,
+    # require a new collection before attaching any date-only evidence again.
+    return changed is None or collected >= changed
 
 
 def _rows(session, keys):
@@ -103,21 +119,29 @@ def record_lots(session, published, overview, observed_at):
         source_at = published_at if published_schedule else collected_at
         stored_at = _at(row.schedule.get('observed_at')) if row else None
         previous = row.schedule if row else {}
-        if not row and published_at and not published_schedule and collected_at <= published_at:
+        if (not row and published_at and not published_schedule and collected_at <= published_at
+                and _at(incoming['start']).date() >= published_at.date()):
             continue
-        if stored_at is not None and source_at < stored_at:
-            incoming = _fields(previous, 'catalogue lot category start description')
+        previous_core = _fields(previous, SCHEDULE_FIELDS)
+        if previous_core:
+            previous_core.setdefault('time_known', True)
+        if stored_at is not None and (
+            source_at < stored_at or previous_core['time_known'] and not incoming['time_known']
+        ):
+            incoming = previous_core
             source_at = stored_at
-        previous_core = _fields(previous, 'catalogue lot category start description')
-        next_schedule = {**incoming, 'observed_at': source_at.isoformat()}
+        changed_at = _at(previous.get('last_change_at'))
         events = list(row.events) if row else []
         review = row.review if row else {}
         if incoming != previous_core:
             events.append({'at': source_at.isoformat(), 'kind': 'schedule', 'data': incoming})
-            if previous:
+            if previous_core and previous_core['time_known']:
+                changed_at = source_at
                 review = {}
+        next_schedule = {**incoming, 'observed_at': source_at.isoformat(),
+                         'last_change_at': changed_at.isoformat() if changed_at else None}
         prior_collection = _at(review.get('collected_at'))
-        if (work_schedule and work_schedule == incoming
+        if (_matches_review(work_schedule, incoming, collected_at, changed_at)
                 and (prior_collection is None or collected_at >= prior_collection)):
             candidate = _review(entry, collected_at)
             if _review_content(candidate) != _review_content(review):

@@ -82,3 +82,30 @@ class AuctionLotReviewTests(unittest.TestCase):
         [lot] = self.read(self.sync([LOT], invalid))
         self.assertEqual(lot['status'], 'pending')
         self.assertTrue(any('300' in reason for reason in lot['reasons']))
+
+    def test_legacy_date_only_rows_show_workbook_amount_without_replacing_ireps_time(self):
+        entry = self.review(start=START[:10], proposal={'status': 'needs_evidence'},
+                            workbook_source={'value': '37786', 'file': 'Parcel workbook.xlsx', 'row': 857})
+        [lot] = self.read(self.sync([LOT], entry))
+        self.assertEqual(lot['review']['workbook']['value'], '37786')
+        self.assertEqual(lot['status'], 'pending')
+        self.assertEqual(lot['start'], START)
+        self.assertTrue(lot['time_known'])
+
+        moved = {**LOT, 'start': '2026-11-23T15:00:00+05:30'}
+        refreshed = '2026-11-20T11:00:00+05:30'
+        [moved_lot] = self.read(self.sync([moved], entry, refreshed))
+        self.assertEqual(moved_lot['review'], {})
+        entry['collected_at'] = refreshed
+        [rechecked] = self.read(self.sync([moved], entry, refreshed))
+        self.assertEqual(rechecked['review']['workbook']['value'], '37786')
+        self.assertEqual(rechecked['start'], moved['start'])
+
+    def test_workbook_evidence_remains_visible_for_past_date_only_collections(self):
+        entry = self.review(start=START[:10], workbook_source={'value': '37786'})
+        now = '2026-11-26T10:00:00+05:30'
+        published = self.sync([], entry, now)
+        [lot] = self.read(published, now, month='2026-11')
+        self.assertFalse(lot['time_known'])
+        self.assertFalse(lot['current'])
+        self.assertEqual(lot['review']['workbook']['value'], '37786')

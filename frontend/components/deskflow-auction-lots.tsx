@@ -13,10 +13,10 @@ type Review = {
   collected_at?: string; key?: string; rate_unit?: string; rule?: string; proposal?: Proposal;
   basis?: { benchmark_source?: string; continuation?: { source?: string; policy?: string } };
   contract?: { contract_id?: string; id?: string; status?: string; source?: string };
-  workbook?: { workbook?: string; path?: string; sheet?: string; row?: number };
+  workbook?: { file?: string; workbook?: string; path?: string; sheet?: string; row?: number; value?: string | number; notes?: string };
   precedents?: { date: string; lot: string; outcome: string; accepted_rate?: string; rate_unit?: string; source?: string }[];
 };
-type Schedule = { catalogue: string; lot: string; start: string; category: string; description: string };
+type Schedule = { catalogue: string; lot: string; start: string; category: string; description: string; time_known?: boolean };
 type Event = { at: string } & ({ kind: 'schedule'; data: Schedule } | { kind: 'review'; data: Review });
 type Status = 'ready' | 'pending' | 'reviewed' | 'saved';
 type Lot = Schedule & { current: boolean; status: Status; reasons: string[]; review: Review; events: Event[] };
@@ -30,10 +30,11 @@ const indianTime = new Intl.DateTimeFormat('en-IN', {
 const rupees = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 });
 const monthInIST = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 7);
 const formatStamp = (stamp: string) => indianTime.format(new Date(stamp));
+const scheduleTime = (lot: Schedule) => lot.time_known === false ? 'Time unavailable' : labelTime(lot.start.slice(11, 16)) + ' IST';
 
 function worksheetIssue(lot: Lot, bookings: Booking[] | null) {
   const matches = (bookings ?? []).filter(row => row.catalogueId?.trim().toUpperCase() === lot.catalogue.trim().toUpperCase());
-  if (!matches.length) return '';
+  if (!matches.length || lot.time_known === false) return '';
   if (matches.length > 1) return `The schedule workbook has ${matches.length} rows for this catalogue.`;
   const row = matches[0];
   const expectedTime = lot.start.slice(11, 16);
@@ -61,7 +62,7 @@ function ReviewDetails({ lot, onFindLot }: { lot: Lot; onFindLot: (lot: string) 
   const review = lot.review;
   const proposal = review.proposal;
   const workbook = review.workbook;
-  const workbookPath = workbook?.workbook || workbook?.path;
+  const workbookPath = workbook?.workbook || workbook?.file || workbook?.path;
   const source = review.basis?.benchmark_source || review.basis?.continuation?.source;
   return <div className="auction-review-details">
     {proposal?.value != null && <dl className="auction-review-facts">
@@ -70,6 +71,10 @@ function ReviewDetails({ lot, onFindLot }: { lot: Lot; onFindLot: (lot: string) 
       {source && <div><dt>Evidence source</dt><dd>{source}</dd></div>}
       {(review.rule || proposal.policy_version) && <div><dt>Rule</dt><dd>{[review.rule?.replaceAll('_', ' '), proposal.policy_version].filter(Boolean).join(' · ')}</dd></div>}
     </dl>}
+    {workbook?.value != null && workbook.value !== '' && <dl className="auction-review-facts">
+      <div><dt>Workbook RP</dt><dd><Money value={workbook.value}/> {review.rate_unit}</dd></div>
+    </dl>}
+    {workbook?.notes && <p className="auction-review-remark"><strong>Workbook justification</strong><br/>{workbook.notes}</p>}
     {proposal?.justification && <p className="auction-review-remark"><strong>IREPS justification</strong> <small>{proposal.justification.length}/300 characters</small><br/>{proposal.justification}</p>}
     {workbookPath && <p className="auction-review-hint">Workbook record · {workbookPath}{workbook?.sheet && ` · ${workbook.sheet}`}{workbook?.row && ` · row ${workbook.row}`}</p>}
     {!!review.precedents?.length && <details className="auction-review-history">
@@ -85,7 +90,7 @@ function ReviewDetails({ lot, onFindLot }: { lot: Lot; onFindLot: (lot: string) 
       <ol>{[...lot.events].reverse().map((event, index) => <li key={index}>
         <small>{formatStamp(event.at)} IST</small>
         {event.kind === 'schedule'
-          ? <>{index === lot.events.length - 1 ? 'Schedule recorded' : 'Schedule changed'} · {formatStamp(event.data.start)} IST</>
+          ? <>{index === lot.events.length - 1 ? 'Schedule recorded' : 'Schedule changed'} · {labelDate(event.data.start.slice(0, 10))} · {scheduleTime(event.data)}</>
           : <>RP evidence recorded{event.data.proposal?.value != null && <> · <Money value={event.data.proposal.value}/> {event.data.rate_unit}</>}{event.data.proposal?.status && ` · ${event.data.proposal.status.replaceAll('_', ' ')}`}</>}
         {event.kind === 'review' && <>
           {event.data.proposal?.formula && <small>{event.data.proposal.formula}</small>}
@@ -209,7 +214,7 @@ export function DeskflowAuctionLots({ token, onFindLot }: { token: string; onFin
       {visible.length ? <div className="auction-review-list">{visible.map(lot => <details className="auction-review-lot" key={`${lot.catalogue}|${lot.lot}`}>
         <summary>
           <div className="auction-review-id"><strong>{lot.lot}</strong><small>{lot.catalogue} · {lot.category}</small></div>
-          <span className="auction-review-date">{view === 'history' && !lot.current && <>Recorded · </>}{labelDate(lot.start.slice(0, 10))} · {labelTime(lot.start.slice(11, 16))} IST</span>
+          <span className="auction-review-date">{view === 'history' && !lot.current && <>Recorded · </>}{labelDate(lot.start.slice(0, 10))} · {scheduleTime(lot)}</span>
           <span className={`auction-review-state ${lot.conflict ? 'conflict' : lot.status}`}>{lot.conflict ? 'Schedule conflict' : statusLabels[lot.status]}</span>
           <ChevronDown className="auction-review-chevron" size={16} aria-hidden/>
           {(lot.conflict || lot.reasons[0]) && <span className="auction-review-reason">{lot.conflict || lot.reasons[0]}</span>}
